@@ -1,2 +1,14 @@
+<<<<<<< HEAD
 # local
 .github/copilot-instructions.md
+=======
+# Python 가상환경
+venv/
+
+# PyCharm 설정 파일
+.idea/
+
+# OS별 캐시 파일
+*.pyc
+__pycache__/
+>>>>>>> master
