@@ -1,0 +1,32 @@
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* pending: gray */
+.pending {
+  background-color: #edf2f7;
+  color: #718096;
+}
+
+/* confirmed: red */
+.confirmed {
+  background-color: #fff5f5;
+  color: #e53e3e;
+}
+
+/* false_positive: blue */
+.falsePositive {
+  background-color: #ebf8ff;
+  color: #3182ce;
+}
+
+/* hold: yellow */
+.hold {
+  background-color: #fffff0;
+  color: #d69e2e;
+}

@@ -1,0 +1,49 @@
+.card {
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 160px;
+  flex: 1;
+}
+
+.label {
+  font-size: 13px;
+  color: #718096;
+  font-weight: 500;
+}
+
+.value {
+  font-size: 30px;
+  font-weight: 700;
+  color: #1a202c;
+  line-height: 1.1;
+}
+
+.bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+}
+
+.sub {
+  font-size: 12px;
+  color: #a0aec0;
+}
+
+.trend {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.up {
+  color: #e53e3e;
+}
+
+.down {
+  color: #38a169;
+}
