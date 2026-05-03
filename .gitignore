@@ -1,19 +1,28 @@
 # local
 .github/copilot-instructions.md
 
+<<<<<<< HEAD
+# Python virtual environment
+=======
 # Python 가상환경
+>>>>>>> main
 venv/
 
-# PyCharm 설정 파일
+# IDE settings
 .idea/
 
-# OS별 캐시 파일
+# Python cache
 *.pyc
 __pycache__/
 
+<<<<<<< HEAD
+# SQLite database files
+backend/db/*.db
+=======
 # SQLite DB 파일
 backend/db/*.db
 
 # Node.js
 node_modules/
 frontend/dist/
+>>>>>>> main
