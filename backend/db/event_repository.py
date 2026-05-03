@@ -110,6 +110,91 @@ def get_all_candidate_events() -> list[dict[str, Any]]:
         rows = conn.execute(query).fetchall()
         return [dict(row) for row in rows]
 
+def get_candidate_events(
+    ppe_type: str | None = None,
+    event_status: str | None = None,
+    zone_name: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    min_confidence: float | None = None,
+) -> list[dict[str, Any]]:
+    """
+    조건에 맞는 후보 이벤트 목록 조회.
+
+    Args:
+        ppe_type (str | None):
+            PPE 유형 필터.
+        event_status (str | None):
+            이벤트 상태 필터.
+        zone_name (str | None):
+            구역 이름 필터.
+        date_from (str | None):
+            조회 시작 날짜.
+        date_to (str | None):
+            조회 종료 날짜.
+        min_confidence (float | None):
+            최소 AI 신뢰도 필터.
+
+    Returns:
+        list[dict[str, Any]]:
+            조건에 맞는 후보 이벤트 목록 반환.
+    """
+    query = """
+        SELECT
+            ce.event_id,
+            ce.camera_id,
+            ci.zone_name,
+            ci.process_type,
+            ce.tracking_id,
+            ce.ppe_type,
+            ce.timestamp_start,
+            ce.timestamp_end,
+            ce.duration_sec,
+            ce.frame_sample_count,
+            ce.thumbnail_path,
+            ce.video_clip_path,
+            ce.ai_confidence,
+            ce.person_detected,
+            ce.ppe_detected,
+            ce.model_version,
+            ce.event_status
+        FROM candidate_event ce
+        LEFT JOIN camera_info ci
+            ON ce.camera_id = ci.camera_id
+        WHERE 1 = 1
+    """
+
+    params: list[Any] = []
+
+    if ppe_type is not None:
+        query += " AND ce.ppe_type = ?"
+        params.append(ppe_type)
+
+    if event_status is not None:
+        query += " AND ce.event_status = ?"
+        params.append(event_status)
+
+    if zone_name is not None:
+        query += " AND ci.zone_name = ?"
+        params.append(zone_name)
+
+    if date_from is not None:
+        query += " AND date(ce.timestamp_start) >= date(?)"
+        params.append(date_from)
+
+    if date_to is not None:
+        query += " AND date(ce.timestamp_start) <= date(?)"
+        params.append(date_to)
+
+    if min_confidence is not None:
+        query += " AND ce.ai_confidence >= ?"
+        params.append(min_confidence)
+
+    query += " ORDER BY ce.timestamp_start DESC;"
+
+    with get_connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
 
 def get_candidate_event_by_id(event_id: str) -> dict[str, Any] | None:
     """

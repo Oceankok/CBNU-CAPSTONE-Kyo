@@ -13,8 +13,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.db.event_repository import (
-    get_all_candidate_events,
     get_candidate_event_by_id,
+    get_candidate_events,
     get_review_by_event_id,
     insert_event_review,
 )
@@ -53,11 +53,43 @@ def read_root() -> dict[str, str]:
 
 
 @app.get("/api/events")
-def read_events() -> dict:
+def read_events(
+    ppe_type: str | None = None,
+    event_status: str | None = None,
+    zone_name: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    min_confidence: float | None = None,
+) -> dict:
     """
-    후보 이벤트 전체 목록 조회.
+    후보 이벤트 목록 조회.
+
+    Query Parameters:
+        ppe_type:
+            PPE 유형 필터.
+        event_status:
+            이벤트 상태 필터.
+        zone_name:
+            구역 이름 필터.
+        date_from:
+            조회 시작 날짜.
+        date_to:
+            조회 종료 날짜.
+        min_confidence:
+            최소 AI 신뢰도 필터.
+
+    Returns:
+        dict:
+            조건에 맞는 후보 이벤트 목록 반환.
     """
-    events = get_all_candidate_events()
+    events = get_candidate_events(
+        ppe_type=ppe_type,
+        event_status=event_status,
+        zone_name=zone_name,
+        date_from=date_from,
+        date_to=date_to,
+        min_confidence=min_confidence,
+    )
 
     return {
         "total": len(events),
