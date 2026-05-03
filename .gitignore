@@ -26,3 +26,15 @@ backend/db/*.db
 node_modules/
 frontend/dist/
 >>>>>>> main
+
+
+# Data folders
+data/raw/
+data/processed/
+data/merged/
+
+# Large archives
+*.zip
+*.7z
+*.tar
+*.gz
