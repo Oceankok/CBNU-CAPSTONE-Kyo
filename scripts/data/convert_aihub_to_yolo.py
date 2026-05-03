@@ -3,6 +3,7 @@ import json
 import shutil
 from PIL import Image
 
+
 TARGET_CLASSES = {
     "안전모": 0,
     "helmet": 0,
