@@ -1,0 +1,115 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pendingBanner {
+  background-color: #fffbeb;
+  border: 1px solid #f6e05e;
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 13px;
+  color: #744210;
+}
+
+.tableWrapper {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  text-align: left;
+  padding: 10px 14px;
+  background: #f7fafc;
+  border-bottom: 2px solid #e2e8f0;
+  color: #718096;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid #f0f4f8;
+  color: #2d3748;
+  vertical-align: middle;
+}
+
+.row {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.row:hover {
+  background-color: #f7fafc;
+}
+
+/* highlight unreviewed rows with a subtle left border */
+.pendingRow {
+  border-left: 3px solid #d69e2e;
+}
+
+.eventId {
+  font-family: monospace;
+  font-size: 12px;
+  color: #3182ce;
+  font-weight: 600;
+}
+
+/* PPE type tags */
+.ppeTag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.helmet {
+  background: #fff5f5;
+  color: #e53e3e;
+}
+
+.vest {
+  background: #fffff0;
+  color: #d69e2e;
+}
+
+/* Confidence coloring */
+.confidence {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.high {
+  color: #38a169;
+}
+
+.mid {
+  color: #d69e2e;
+}
+
+.low {
+  color: #e53e3e;
+}
+
+.empty {
+  text-align: center;
+  color: #a0aec0;
+  padding: 24px;
+}
+
+.count {
+  font-size: 12px;
+  color: #a0aec0;
+  text-align: right;
+  margin: 0;
+}

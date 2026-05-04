@@ -1,0 +1,328 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.backBtn {
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #4a5568;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.backBtn:hover {
+  background: #f7fafc;
+}
+
+.eventLabel {
+  font-family: monospace;
+  font-weight: 700;
+  color: #1a202c;
+  font-size: 15px;
+}
+
+/* Two-column layout: left = media, right = info + form */
+.grid {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.mediaCol {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.infoCol {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Shared card style */
+.card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.cardTitle {
+  margin: 0 0 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a202c;
+  border-bottom: 1px solid #f0f4f8;
+  padding-bottom: 10px;
+}
+
+/* Thumbnail zone */
+.thumbnail {
+  background: #1a202c;
+  border-radius: 8px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumbnailPlaceholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: #718096;
+}
+
+.thumbnailIcon {
+  font-size: 40px;
+}
+
+.thumbnailPlaceholder p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.thumbnailPlaceholder small {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+/* Definition list for event details */
+.dl {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 8px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.dl dt {
+  color: #718096;
+  align-self: center;
+}
+
+.dl dd {
+  margin: 0;
+  color: #1a202c;
+  font-weight: 500;
+  align-self: center;
+}
+
+.clipPath {
+  font-family: monospace;
+  font-size: 11px;
+  word-break: break-all;
+  color: #a0aec0;
+}
+
+/* Confidence level coloring */
+.confidenceValue {
+  font-weight: 700;
+}
+
+.high {
+  color: #38a169;
+}
+
+.mid {
+  color: #d69e2e;
+}
+
+.low {
+  color: #e53e3e;
+}
+
+/* Review result toggle buttons */
+.resultButtons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.resultBtn {
+  padding: 10px;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s;
+  background: #f7fafc;
+  color: #4a5568;
+}
+
+/* Default idle colors */
+.confirmedBtn:hover {
+  border-color: #e53e3e;
+  color: #e53e3e;
+}
+
+.falsePosBtn:hover {
+  border-color: #3182ce;
+  color: #3182ce;
+}
+
+.holdBtn:hover {
+  border-color: #d69e2e;
+  color: #d69e2e;
+}
+
+/* Active / selected state */
+.activeConfirmed {
+  background: #fff5f5;
+  border-color: #e53e3e;
+  color: #e53e3e;
+}
+
+.activeFalsePos {
+  background: #ebf8ff;
+  border-color: #3182ce;
+  color: #3182ce;
+}
+
+.activeHold {
+  background: #fffff0;
+  border-color: #d69e2e;
+  color: #d69e2e;
+}
+
+/* Form fields */
+.field {
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4a5568;
+}
+
+.optional {
+  font-weight: 400;
+  color: #a0aec0;
+}
+
+.select,
+.textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #1a202c;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.select:disabled {
+  background: #f7fafc;
+  color: #a0aec0;
+}
+
+.textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #2d3748;
+  cursor: pointer;
+  margin-bottom: 16px;
+}
+
+/* Action buttons row */
+.actionRow {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.primaryBtn {
+  padding: 9px 18px;
+  background: #3182ce;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.primaryBtn:hover:not(:disabled) {
+  background: #2b6cb0;
+}
+
+.primaryBtn:disabled {
+  background: #bee3f8;
+  cursor: not-allowed;
+}
+
+.secondaryBtn {
+  padding: 9px 16px;
+  background: #fff;
+  color: #4a5568;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.secondaryBtn:hover {
+  background: #f7fafc;
+}
+
+/* Post-submit confirmation card */
+.submittedCard {
+  background: #f0fff4;
+  border: 1px solid #9ae6b4;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.submittedMsg {
+  margin: 0 0 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #276749;
+}
+
+/* 404-style not found state */
+.notFound {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px;
+  color: #718096;
+}
