@@ -148,6 +148,20 @@ POST /api/events/EVT_0001/review
 
 ---
 
+## 검토 결과 처리 기준
+
+`POST /api/events/{event_id}/review` API는 담당자 검토 결과에 따라 후보 이벤트를 다르게 처리함.
+
+| review_result | 처리 방식 |
+|---|---|
+| `confirmed` | 확정 위반으로 처리하고 `candidate_event.event_status`를 `confirmed`로 갱신함 |
+| `hold` | 판단 보류 상태로 처리하고 `candidate_event.event_status`를 `hold`로 갱신함 |
+| `false_positive` | 오탐으로 판단하여 후보 이벤트를 삭제함 |
+
+오탐으로 판단된 이벤트는 장기 보관하지 않으며, 추후 필요한 경우 비식별 집계 수준의 오탐 수만 모델 개선 지표로 활용할 수 있음.
+
+---
+
 ## review_result 값 기준
 
 | 값 | 의미 |

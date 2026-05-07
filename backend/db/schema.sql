@@ -37,5 +37,5 @@ CREATE TABLE IF NOT EXISTS event_review (
     review_comment TEXT,
     confirmed_violation INTEGER,
     second_review_needed INTEGER,
-    FOREIGN KEY (event_id) REFERENCES candidate_event(event_id)
+    FOREIGN KEY (event_id) REFERENCES candidate_event(event_id) ON DELETE CASCADE
 );

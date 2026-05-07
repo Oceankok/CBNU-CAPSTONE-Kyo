@@ -138,11 +138,21 @@ def create_event_review(event_id: str, request: ReviewRequest) -> dict:
 
     insert_event_review(review)
 
-    updated_event = get_candidate_event_by_id(event_id)
     saved_review = get_review_by_event_id(event_id)
+
+    if request.review_result == "false_positive":
+        return {
+            "status": "ok",
+            "message": "False positive event deleted",
+            "event_id": event_id,
+            "review_result": request.review_result,
+        }
+
+    updated_event = get_candidate_event_by_id(event_id)
 
     return {
         "status": "ok",
+        "message": "Review saved successfully",
         "event": updated_event,
         "review": saved_review,
     }
