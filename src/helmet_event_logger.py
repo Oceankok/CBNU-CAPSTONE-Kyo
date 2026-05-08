@@ -13,7 +13,12 @@ from backend.db.event_repository import insert_candidate_event
 
 
 MODEL_PATH = "runs/detect/helmet_yolov8n/weights/best.pt"
-SOURCE_PATH = "test_images"
+
+# 이미지 테스트용
+# SOURCE_PATH = "test_images"
+
+# 영상 테스트용
+SOURCE_PATH = "test_videos/test_video1.avi"
 
 CAMERA_ID = "CAM_001"
 MODEL_VERSION = "helmet_yolov8n"
@@ -75,6 +80,8 @@ def main():
         conf=0.25
     )
 
+    event_saved = False
+
     for result in results:
         source_name = Path(result.path).name
         names = model.names
@@ -82,6 +89,7 @@ def main():
         person_count = 0
         helmet_count = 0
         no_helmet_count = 0
+        max_no_helmet_confidence = 0.0
 
         print(f"\n파일: {source_name}")
 
@@ -98,30 +106,42 @@ def main():
 
             elif cls_name == NO_HELMET_CLASS_NAME:
                 no_helmet_count += 1
-                save_no_helmet_event(
-                    source_name=source_name,
-                    confidence=confidence,
-                    person_index=no_helmet_count
-                )
+                max_no_helmet_confidence = max(max_no_helmet_confidence, confidence)
 
         print(f"Person 탐지 수: {person_count}")
         print(f"helmet 탐지 수: {helmet_count}")
         print(f"no_helmet 탐지 수: {no_helmet_count}")
 
-        if no_helmet_count == 0:
-            print("no_helmet 직접 탐지 없음")
+        if event_saved:
+            print("이미 이벤트를 저장했으므로 추가 저장하지 않음")
+            continue
 
-        missing_helmet_count = person_count - helmet_count - no_helmet_count
+        if no_helmet_count > 0:
+            print(f"no_helmet 직접 탐지: {no_helmet_count}건")
+
+            save_no_helmet_event(
+                source_name=source_name,
+                confidence=max_no_helmet_confidence,
+                person_index=1
+            )
+
+            event_saved = True
+            continue
+
+        print("no_helmet 직접 탐지 없음")
+
+        missing_helmet_count = person_count - helmet_count
 
         if missing_helmet_count > 0:
             print(f"보조 규칙 적용: 안전모 미착용 후보 {missing_helmet_count}명")
 
-            for i in range(missing_helmet_count):
-                save_no_helmet_event(
-                    source_name=source_name,
-                    confidence=0.50,
-                    person_index=no_helmet_count + i + 1
-                )
+            save_no_helmet_event(
+                source_name=source_name,
+                confidence=0.50,
+                person_index=1
+            )
+
+            event_saved = True
         else:
             print("보조 규칙 기준 안전모 미착용 후보 없음")
 
