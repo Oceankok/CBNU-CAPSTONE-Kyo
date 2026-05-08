@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 MODEL_PATH = "runs/detect/helmet_yolov8n/weights/best.pt"
-SOURCE_PATH = "test_images"
+SOURCE_PATH = "test_videos/test_video1.avi"
 
 
 def main():
