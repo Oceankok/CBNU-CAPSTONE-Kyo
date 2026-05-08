@@ -29,3 +29,9 @@ data/raw/
 *.pt
 *.onnx
 *.pth
+
+# YOLO output results
+runs/
+
+# Test images
+test_images/
