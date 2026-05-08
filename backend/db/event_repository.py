@@ -249,6 +249,22 @@ def insert_candidate_event(event: dict[str, Any]) -> None:
         conn.execute(query, event)
         conn.commit()
 
+def delete_candidate_event(event_id: str) -> None:
+    """
+    event_id를 기준으로 후보 이벤트를 삭제함.
+
+    Args:
+        event_id (str):
+            삭제할 후보 이벤트 ID.
+    """
+    query = """
+        DELETE FROM candidate_event
+        WHERE event_id = ?;
+    """
+
+    with get_connection() as conn:
+        conn.execute(query, (event_id,))
+        conn.commit()
 
 def insert_event_review(review: dict[str, Any]) -> None:
     """
@@ -324,13 +340,24 @@ def insert_event_review(review: dict[str, Any]) -> None:
 
     with get_connection() as conn:
         conn.execute(review_query, review)
-        conn.execute(
-            status_query,
-            {
-                "event_status": review["review_result"],
-                "event_id": review["event_id"],
-            },
-        )
+
+        if review["review_result"] == "false_positive":
+            conn.execute(
+                """
+                DELETE FROM candidate_event
+                WHERE event_id = ?;
+                """,
+                (review["event_id"],),
+            )
+        else:
+            conn.execute(
+                status_query,
+                {
+                    "event_status": review["review_result"],
+                    "event_id": review["event_id"],
+                },
+            )
+
         conn.commit()
 
 
