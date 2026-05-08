@@ -18,14 +18,18 @@ backend/db/*.db
 node_modules/
 frontend/dist/
 
-# Datasets and large binary files (never commit raw data)
+# Data folders
 data/raw/
+data/processed/
+data/merged/
+
+# Large archives
 *.zip
 *.7z
 *.tar
 *.gz
 
-# Model weights (download separately — see README)
+# Model weights
 *.pt
 *.onnx
 *.pth
@@ -35,3 +39,6 @@ runs/
 
 # Test images
 test_images/
+
+# Event logs
+events/

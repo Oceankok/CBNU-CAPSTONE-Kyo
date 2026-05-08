@@ -2,7 +2,7 @@ from ultralytics import YOLO
 from pathlib import Path
 
 
-MODEL_PATH = "runs/detect/ppe_yolov8n/weights/best.pt"
+MODEL_PATH = "runs/detect/helmet_yolov8n/weights/best.pt"
 SOURCE_PATH = "test_images"
 
 

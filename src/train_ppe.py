@@ -2,7 +2,7 @@ from ultralytics import YOLO
 from pathlib import Path
 
 
-DATA_YAML = "datasets/ppe/data.yaml"
+DATA_YAML = "data/raw/public_datasets/construction_ppe/data.yaml"
 BASE_MODEL = "yolov8n.pt"
 
 
@@ -11,21 +11,20 @@ def main():
 
     if not data_path.exists():
         raise FileNotFoundError(
-            f"데이터셋 설정 파일을 찾을 수 없습니다: {DATA_YAML}\n"
-            "datasets/ppe/data.yaml 파일이 필요합니다."
+            f"데이터셋 설정 파일을 찾을 수 없습니다: {DATA_YAML}"
         )
 
     model = YOLO(BASE_MODEL)
 
     model.train(
         data=DATA_YAML,
-        epochs=50,
-        imgsz=640,
-        batch=8,
-        name="ppe_yolov8n"
+        epochs=3,
+        imgsz=416,
+        batch=4,
+        name="helmet_yolov8n"
     )
 
-    print("PPE model training completed")
+    print("Helmet model training completed")
 
 
 if __name__ == "__main__":
