@@ -1,0 +1,42 @@
+{
+  "model": "D:\\Desktop\\capstone\\runs\\ppe\\final_ppe_baseline-2\\weights\\best.pt",
+  "data_yaml": "D:\\Desktop\\capstone\\configs\\merged_ppe.yaml",
+  "dataset_root": "D:\\Desktop\\capstone\\data\\merged\\ppe_split",
+  "splits": [
+    "val",
+    "test"
+  ],
+  "label3_id": 3,
+  "num_images": 1669,
+  "match_counts": {
+    "TN_no_pred_no_helmet_and_no_label3": 1349,
+    "FP_pred_no_helmet_but_no_label3": 178,
+    "TP_pred_no_helmet_and_label3": 82,
+    "FN_label3_but_not_pred_no_helmet": 60
+  },
+  "confusion_matrix_image_level": {
+    "TP_pred_no_helmet_and_label3": 82,
+    "FP_pred_no_helmet_but_no_label3": 178,
+    "FN_label3_but_not_pred_no_helmet": 60,
+    "TN_no_pred_no_helmet_and_no_label3": 1349
+  },
+  "metrics_image_level": {
+    "precision": 0.3153846153846154,
+    "recall": 0.5774647887323944,
+    "f1": 0.40796019900497515,
+    "accuracy": 0.8573996405032954
+  },
+  "thresholds": {
+    "predict_conf": 0.25,
+    "person_conf_thr": 0.4,
+    "helmet_conf_thr": 0.35,
+    "helmet_iou_thr": 0.01,
+    "head_ratio": 0.38
+  },
+  "outputs": {
+    "image_csv": "D:\\Desktop\\capstone\\reports\\no_helmet_prediction_vs_label3\\image_level_no_helmet_vs_label3.csv",
+    "worker_csv": "D:\\Desktop\\capstone\\reports\\no_helmet_prediction_vs_label3\\worker_level_no_helmet_predictions.csv",
+    "summary_txt": "D:\\Desktop\\capstone\\reports\\no_helmet_prediction_vs_label3\\summary.txt",
+    "samples_dir": "D:\\Desktop\\capstone\\reports\\no_helmet_prediction_vs_label3\\samples"
+  }
+}

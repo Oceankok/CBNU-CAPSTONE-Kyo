@@ -1,0 +1,51 @@
+YOLO Dataset Quality Report
+========================================
+
+Data YAML: D:\Desktop\capstone\configs\merged_ppe.yaml
+Dataset root: D:\Desktop\capstone\data\merged\ppe_split
+Classes: ['helmet', 'vest', 'person']
+
+[Split Image Counts]
+- train: 3429
+- val: 1102
+- test: 567
+
+Total images: 5098
+Total bboxes: 18649
+
+[Class Counts]
+- helmet: 11208
+- person: 4781
+- vest: 2040
+
+[Issue Counts]
+- small_bbox_ratio: 3301
+- tiny_bbox_px: 2092
+- class_id_out_of_range: 620
+- blurry_image: 252
+- too_bright_image: 65
+- dark_image: 29
+- low_contrast_image: 15
+
+[Image Quality Summary]
+        brightness     contrast      blur_var  label_obj_count
+count  5098.000000  5098.000000   5098.000000      5098.000000
+mean    153.718586    64.224237    962.523674         3.658101
+std      39.974686    14.099385   1267.322386         5.578010
+min       8.212124    21.297490      2.923076         1.000000
+25%     128.083208    55.598945    268.382509         1.000000
+50%     154.681451    62.855746    546.136981         2.000000
+75%     178.860982    71.884580   1125.232158         3.000000
+max     249.999111   119.888252  20513.711660       152.000000
+
+[BBox Summary]
+          bbox_w_px     bbox_h_px  bbox_area_ratio  bbox_area_px  aspect_ratio
+count  18649.000000  18649.000000     18649.000000  1.864900e+04  18649.000000
+mean     128.489789    166.200225         0.073425  4.391853e+04      0.759156
+std      139.141115    188.525896         0.127299  1.323521e+05      0.428824
+min        1.000200      1.000200         0.000003  1.000400e+00      0.060317
+25%       35.999747     39.509760         0.004558  1.435051e+03      0.507413
+50%       85.999900     91.999977         0.020268  8.182149e+03      0.619561
+75%      173.159680    222.999738         0.076756  3.716400e+04      0.875932
+max     2899.999488   2576.998272         0.956883  7.473294e+06      7.706060
+

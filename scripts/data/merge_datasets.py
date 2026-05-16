@@ -29,7 +29,7 @@ def main():
         ("construction_val", Path("data/processed/construction_ppe_filtered/valid/images"), Path("data/processed/construction_ppe_filtered/valid/labels")),
         ("construction_test", Path("data/processed/construction_ppe_filtered/test/images"), Path("data/processed/construction_ppe_filtered/test/labels")),
         ("shwd", Path("data/processed/shwd_yolo/images"), Path("data/processed/shwd_yolo/labels")),
-        ("aihub", Path("data/processed/aihub_yolo/images"), Path("data/processed/aihub_yolo/labels")),
+        # ("aihub", Path("data/processed/aihub_yolo/images"), Path("data/processed/aihub_yolo/labels")),
     ]
 
     for prefix, img_dir, lbl_dir in datasets:
