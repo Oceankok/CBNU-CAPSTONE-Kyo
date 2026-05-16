@@ -16,7 +16,7 @@ project: D:\Desktop\capstone\runs\ppe
 name: final_ppe_baseline-2
 exist_ok: false
 pretrained: true
-optimizer: auto
+optimizer: auto 
 verbose: true
 seed: 0
 deterministic: true
