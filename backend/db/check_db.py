@@ -29,9 +29,97 @@ def check_database() -> None:
         cameras = cursor.fetchall()
         print_rows("camera_info", cameras)
 
-        cursor.execute("SELECT event_id, camera_id, ppe_type, duration_sec, ai_confidence, event_status FROM candidate_event;")
+        cursor.execute(
+            """
+            SELECT
+                event_id,
+                camera_id,
+                ppe_type,
+                duration_sec,
+                ai_confidence,
+                event_status
+            FROM candidate_event;
+            """
+        )
         events = cursor.fetchall()
         print_rows("candidate_event", events)
+
+        cursor.execute(
+            """
+            SELECT
+                quarter,
+                candidate_count,
+                confirmed_count,
+                false_positive_count,
+                hold_count,
+                created_at
+            FROM quarterly_summary;
+            """
+        )
+        quarterly_summary = cursor.fetchall()
+        print_rows("quarterly_summary", quarterly_summary)
+
+        cursor.execute(
+            """
+            SELECT
+                stat_id,
+                quarter,
+                ppe_type,
+                confirmed_count,
+                priority_score
+            FROM quarterly_ppe_stats
+            ORDER BY priority_score DESC;
+            """
+        )
+        quarterly_ppe_stats = cursor.fetchall()
+        print_rows("quarterly_ppe_stats", quarterly_ppe_stats)
+
+        cursor.execute(
+            """
+            SELECT
+                stat_id,
+                quarter,
+                zone_name,
+                confirmed_count,
+                priority_score
+            FROM quarterly_zone_stats
+            ORDER BY priority_score DESC;
+            """
+        )
+        quarterly_zone_stats = cursor.fetchall()
+        print_rows("quarterly_zone_stats", quarterly_zone_stats)
+
+        cursor.execute(
+            """
+            SELECT
+                trend_id,
+                target_quarter,
+                quarter,
+                helmet,
+                vest
+            FROM quarterly_trend_stats
+            ORDER BY quarter ASC;
+            """
+        )
+        quarterly_trend_stats = cursor.fetchall()
+        print_rows("quarterly_trend_stats", quarterly_trend_stats)
+
+        cursor.execute(
+            """
+            SELECT
+                recommendation_id,
+                quarter,
+                recommendation_rank,
+                ppe_type,
+                zone_name,
+                education_topic,
+                priority_score
+            FROM education_recommendation
+            ORDER BY recommendation_rank ASC;
+            """
+        )
+        recommendations = cursor.fetchall()
+        print_rows("education_recommendation", recommendations)
 
     finally:
         conn.close()

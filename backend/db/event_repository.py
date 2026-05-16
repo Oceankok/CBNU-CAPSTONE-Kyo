@@ -397,3 +397,153 @@ def get_review_by_event_id(event_id: str) -> dict[str, Any] | None:
     with get_connection() as conn:
         row = conn.execute(query, (event_id,)).fetchone()
         return row_to_dict(row)
+    
+     
+def get_quarterly_stats(quarter: str) -> dict | None:
+    """
+    분기별 통계 데이터를 조회함.
+
+    Args:
+        quarter (str):
+            조회할 분기. 예: "2026-Q2"
+
+    Returns:
+        dict | None:
+            프론트엔드 통계 화면에서 사용할 수 있는 형태의 통계 데이터.
+    """
+    with get_connection() as conn:
+        summary_row = conn.execute(
+            """
+            SELECT
+                quarter,
+                candidate_count,
+                confirmed_count,
+                false_positive_count,
+                hold_count
+            FROM quarterly_summary
+            WHERE quarter = ?;
+            """,
+            (quarter,),
+        ).fetchone()
+
+        if summary_row is None:
+            return None
+
+        ppe_rows = conn.execute(
+            """
+            SELECT
+                ppe_type,
+                confirmed_count,
+                priority_score
+            FROM quarterly_ppe_stats
+            WHERE quarter = ?
+            ORDER BY priority_score DESC;
+            """,
+            (quarter,),
+        ).fetchall()
+
+        zone_rows = conn.execute(
+            """
+            SELECT
+                zone_name,
+                confirmed_count,
+                priority_score
+            FROM quarterly_zone_stats
+            WHERE quarter = ?
+            ORDER BY priority_score DESC;
+            """,
+            (quarter,),
+        ).fetchall()
+
+        trend_rows = conn.execute(
+            """
+            SELECT
+                quarter,
+                helmet,
+                vest
+            FROM quarterly_trend_stats
+            WHERE target_quarter = ?
+            ORDER BY quarter ASC;
+            """,
+            (quarter,),
+        ).fetchall()
+
+    return {
+        "quarter": summary_row["quarter"],
+        "summary": {
+            "quarter": summary_row["quarter"],
+            "candidate_count": summary_row["candidate_count"],
+            "confirmed_count": summary_row["confirmed_count"],
+            "false_positive_count": summary_row["false_positive_count"],
+            "hold_count": summary_row["hold_count"],
+        },
+        "by_ppe_type": [dict(row) for row in ppe_rows],
+        "by_zone": [dict(row) for row in zone_rows],
+        "trend": [dict(row) for row in trend_rows],
+    }
+
+
+def get_education_recommendations(quarter: str) -> dict:
+    """
+    분기별 교육 추천 데이터를 조회함.
+
+    Args:
+        quarter (str):
+            조회할 분기. 예: "2026-Q2"
+
+    Returns:
+        dict:
+            프론트엔드 교육 추천 화면에서 사용할 수 있는 형태의 추천 데이터.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                recommendation_id,
+                recommendation_rank,
+                ppe_type,
+                zone_name,
+                education_topic,
+                priority_score,
+                confirmed_count,
+                repeat_weeks,
+                zone_concentration,
+                process_risk_weight,
+                generated_at
+            FROM education_recommendation
+            WHERE quarter = ?
+            ORDER BY recommendation_rank ASC;
+            """,
+            (quarter,),
+        ).fetchall()
+
+    items = []
+    generated_at = None
+
+    for row in rows:
+        if generated_at is None:
+            generated_at = row["generated_at"]
+
+        items.append(
+            {
+                "recommendation_id": row["recommendation_id"],
+                "recommendation_rank": row["recommendation_rank"],
+                "ppe_type": row["ppe_type"],
+                "zone_name": row["zone_name"],
+                "education_topic": row["education_topic"],
+                "priority_score": row["priority_score"],
+                "score_breakdown": {
+                    "confirmed_count": row["confirmed_count"],
+                    "repeat_weeks": row["repeat_weeks"],
+                    "zone_concentration": row["zone_concentration"],
+                    "process_risk_weight": row["process_risk_weight"],
+                },
+                "generated_at": row["generated_at"],
+            }
+        )
+
+    return {
+        "quarter": quarter,
+        "generated_at": generated_at,
+        "items": items,
+    }
