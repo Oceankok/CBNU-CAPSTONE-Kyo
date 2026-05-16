@@ -1,0 +1,199 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.quarterLabel {
+  font-size: 13px;
+  color: #718096;
+  margin: 0;
+}
+
+.cardRow {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.section {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 20px 24px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.sectionHeader h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a202c;
+}
+
+.section h3 {
+  margin: 0 0 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a202c;
+}
+
+.viewAll {
+  background: none;
+  border: none;
+  color: #3182ce;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.viewAll:hover {
+  text-decoration: underline;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 2px solid #e2e8f0;
+  color: #718096;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f4f8;
+  color: #2d3748;
+}
+
+.row {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.row:hover {
+  background-color: #f7fafc;
+}
+
+.eventId {
+  font-family: monospace;
+  font-size: 12px;
+  color: #3182ce;
+  font-weight: 600;
+}
+
+.empty {
+  color: #a0aec0;
+  font-size: 13px;
+  margin: 0;
+}
+
+/* PPE type bars */
+.ppeRow {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.ppeCard {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ppeCardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ppeName {
+  font-size: 14px;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.ppeCount {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1a202c;
+}
+
+.ppeBar {
+  height: 8px;
+  background: #edf2f7;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.ppeBarFill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.ppeScore {
+  font-size: 11px;
+  color: #a0aec0;
+}
+
+/* Zone ranking list */
+.zoneList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.zoneItem {
+  display: grid;
+  grid-template-columns: 24px 1fr 1fr 48px;
+  align-items: center;
+  gap: 12px;
+}
+
+.zoneRank {
+  font-size: 12px;
+  font-weight: 700;
+  color: #a0aec0;
+}
+
+.zoneName {
+  font-size: 13px;
+  color: #2d3748;
+}
+
+.zoneBarWrap {
+  height: 6px;
+  background: #edf2f7;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.zoneBarFill {
+  height: 100%;
+  background: #3182ce;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.zoneCount {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a202c;
+  text-align: right;
+}

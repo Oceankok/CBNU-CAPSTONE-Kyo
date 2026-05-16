@@ -2,7 +2,9 @@
 
 > 작성자: 유현우
 > 작성일: 2026.04.11
+> 최종 수정: 2026.05.04
 > 참조 문서: [20260407_PPE.md](20260407_PPE.md) — 김재환 (시스템 전체 설계)
+> 운영 원칙: [20260504_ServiceScope_Legal.md](20260504_ServiceScope_Legal.md) — 서비스 범위 및 법적 제약
 > 문서 구성: 어드민 대시보드 화면 구조, 컴포넌트 설계, API 연동 명세, UI/UX 설계 기준
 
 ---
@@ -15,11 +17,13 @@
 
 ### 전제 조건
 
-- **기술 스택**: React + TypeScript (풀 프론트엔드), 프로토타입 단계에서는 Streamlit 병행 검토
-- **상태 관리**: React Context API 또는 Zustand (경량 전역 상태)
-- **차트 라이브러리**: Recharts (React 기반, 경량)
-- **백엔드 연동**: FastAPI 또는 Flask REST API (김재환 담당)
-- **인증**: 담당자(reviewer) 로그인 기반 접근 제어
+- **기술 스택**: React + TypeScript (Vite) ← 확정. Streamlit은 프로토타입 검토 후 제외됨.
+- **상태 관리**: React Context API (`useOutletContext` 기반)
+- **차트 라이브러리**: Recharts (설치 완료)
+- **백엔드 연동**: FastAPI REST API (김재환 담당) — 현재 Mock 데이터로 선행 개발 중
+- **인증**: 캡스톤 범위에서는 Mock 사용자(`admin01`) 처리. 실제 도입 시 JWT 기반 인증 필요.
+- **배포**: 로컬 실행 또는 Docker Compose (발표 데모 수준)
+- **API 기본 URL**: `VITE_API_BASE_URL` 환경 변수로 관리 (`http://localhost:8000`)
 
 ---
 
