@@ -32,7 +32,8 @@ frontend/dist/
 data/raw/
 data/processed/
 data/merged/
-
+*.txt
+*.jpg
 # Large archives
 *.zip
 *.7z
