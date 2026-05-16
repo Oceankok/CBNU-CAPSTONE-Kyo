@@ -121,6 +121,22 @@ def check_database() -> None:
         recommendations = cursor.fetchall()
         print_rows("education_recommendation", recommendations)
 
+        cursor.execute(
+            """
+            SELECT
+                aggregate_id,
+                quarter,
+                zone_name,
+                ppe_type,
+                false_positive_count,
+                updated_at
+            FROM false_positive_aggregate
+            ORDER BY quarter, zone_name, ppe_type;
+            """
+        )
+        false_positive_aggregate = cursor.fetchall()
+        print_rows("false_positive_aggregate", false_positive_aggregate)
+
     finally:
         conn.close()
 

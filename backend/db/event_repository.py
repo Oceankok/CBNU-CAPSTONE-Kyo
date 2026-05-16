@@ -267,6 +267,72 @@ def delete_candidate_event(event_id: str) -> None:
         conn.execute(query, (event_id,))
         conn.commit()
 
+
+def _upsert_false_positive_aggregate(
+    conn: sqlite3.Connection,
+    event: sqlite3.Row,
+) -> None:
+    """
+    오탐 이벤트를 비식별 집계 테이블에 반영함.
+
+    Args:
+        conn (sqlite3.Connection):
+            기존 DB connection.
+        event (sqlite3.Row):
+            오탐으로 판단된 후보 이벤트 정보.
+    """
+    quarter = _get_quarter_from_timestamp(event["timestamp_start"])
+    aggregate_id = (
+        f"FP_{quarter.replace('-', '')}_"
+        f"{event['zone_name'].replace(' ', '_')}_"
+        f"{event['ppe_type']}"
+    )
+    updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    existing = conn.execute(
+        """
+        SELECT false_positive_count
+        FROM false_positive_aggregate
+        WHERE aggregate_id = ?;
+        """,
+        (aggregate_id,),
+    ).fetchone()
+
+    if existing is None:
+        conn.execute(
+            """
+            INSERT INTO false_positive_aggregate (
+                aggregate_id,
+                quarter,
+                zone_name,
+                ppe_type,
+                false_positive_count,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?);
+            """,
+            (
+                aggregate_id,
+                quarter,
+                event["zone_name"],
+                event["ppe_type"],
+                1,
+                updated_at,
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE false_positive_aggregate
+            SET
+                false_positive_count = false_positive_count + 1,
+                updated_at = ?
+            WHERE aggregate_id = ?;
+            """,
+            (updated_at, aggregate_id),
+        )
+
+
 def insert_event_review(review: dict[str, Any]) -> None:
     """
     후보 이벤트에 대한 담당자 검토 결과를 저장한다.
@@ -292,7 +358,8 @@ def insert_event_review(review: dict[str, Any]) -> None:
         - "hold": 판단 보류
 
     Notes:
-        - review 저장 후 candidate_event.event_status도 review_result 값으로 함께 갱신한다.
+        - confirmed, hold는 candidate_event.event_status를 review_result 값으로 갱신한다.
+        - false_positive는 비식별 오탐 집계에 반영한 뒤 candidate_event에서 삭제한다.
         - event_id는 candidate_event 테이블에 이미 존재해야 한다.
         - confirmed_violation, second_review_needed는 1 또는 0으로 저장한다.
 
@@ -343,6 +410,24 @@ def insert_event_review(review: dict[str, Any]) -> None:
         conn.execute(review_query, review)
 
         if review["review_result"] == "false_positive":
+            event = conn.execute(
+                """
+                SELECT
+                    ce.event_id,
+                    ci.zone_name,
+                    ce.ppe_type,
+                    ce.timestamp_start
+                FROM candidate_event ce
+                LEFT JOIN camera_info ci
+                    ON ce.camera_id = ci.camera_id
+                WHERE ce.event_id = ?;
+                """,
+                (review["event_id"],),
+            ).fetchone()
+
+            if event is not None:
+                _upsert_false_positive_aggregate(conn, event)
+
             conn.execute(
                 """
                 DELETE FROM candidate_event
@@ -587,6 +672,25 @@ def _get_quarter_date_range(quarter: str) -> tuple[str, str]:
     return start_date, end_date
 
 
+def _get_quarter_from_timestamp(timestamp: str) -> str:
+    """
+    timestamp 문자열을 분기 문자열로 변환함.
+
+    Args:
+        timestamp (str):
+            예: "2026-04-28 10:15:00"
+
+    Returns:
+        str:
+            예: "2026-Q2"
+    """
+    year = int(timestamp[:4])
+    month = int(timestamp[5:7])
+    quarter_number = ((month - 1) // 3) + 1
+
+    return f"{year}-Q{quarter_number}"
+
+
 def generate_quarterly_stats(quarter: str) -> dict:
     """
     후보 이벤트와 담당자 검토 결과를 기반으로 분기별 통계를 생성함.
@@ -635,8 +739,14 @@ def generate_quarterly_stats(quarter: str) -> dict:
             (start_date, end_date),
         ).fetchone()["count"]
 
-        # 현재 false_positive 이벤트는 삭제 처리되므로 상세 이벤트 기준 자동 집계는 0으로 둠.
-        false_positive_count = 0
+        false_positive_count = conn.execute(
+            """
+            SELECT COALESCE(SUM(false_positive_count), 0) AS count
+            FROM false_positive_aggregate
+            WHERE quarter = ?;
+            """,
+            (quarter,),
+        ).fetchone()["count"]
 
         conn.execute(
             "DELETE FROM education_recommendation WHERE quarter = ?;",

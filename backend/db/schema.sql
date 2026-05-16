@@ -98,3 +98,13 @@ CREATE TABLE IF NOT EXISTS education_recommendation (
     generated_at TEXT NOT NULL,
     FOREIGN KEY (quarter) REFERENCES quarterly_summary(quarter) ON DELETE CASCADE
 );
+
+-- 오탐 이벤트 비식별 집계
+CREATE TABLE IF NOT EXISTS false_positive_aggregate (
+    aggregate_id TEXT PRIMARY KEY,
+    quarter TEXT NOT NULL,
+    zone_name TEXT NOT NULL,
+    ppe_type TEXT NOT NULL,
+    false_positive_count INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);

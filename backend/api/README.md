@@ -320,6 +320,8 @@ GET /api/recommendations?quarter=2026-Q2
 
 현재 `/api/stats`와 `/api/recommendations`는 프론트엔드 Mock 데이터 구조와 유사한 형태로 응답하도록 구성함.
 
+`false_positive_count`는 오탐 이벤트 상세 기록을 장기 보관하지 않고, `false_positive_aggregate`에 저장된 비식별 집계값을 기준으로 계산함.
+
 이번 단계에서는 분기별 통계 및 교육 추천 더미 데이터를 DB에 저장하고 조회하는 구조를 우선 구현함. 실제 후보 이벤트와 담당자 검토 결과를 기반으로 통계를 자동 계산하고 교육 추천을 생성하는 로직은 이후 단계에서 확장 예정임.
 
 ---

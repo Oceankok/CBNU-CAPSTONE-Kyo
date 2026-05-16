@@ -180,6 +180,7 @@ SQLite에서는 Boolean 값을 별도 타입으로 엄격하게 저장하지 않
 | `quarterly_zone_stats` | 구역별 확정 위반 수 및 우선순위 점수 |
 | `quarterly_trend_stats` | 분기별 helmet/vest 확정 위반 추이 |
 | `education_recommendation` | 분기별 안전교육 추천 결과 및 점수 산정 근거 |
+| `false_positive_aggregate` | 오탐으로 판단된 이벤트의 상세 기록은 삭제하고, 분기·구역·PPE 유형 기준의 비식별 오탐 집계만 저장 |
 
 현재 단계에서는 프론트엔드 Mock 데이터 구조와 유사한 더미 데이터를 삽입하여 API 연동 기반을 검증함.
 
