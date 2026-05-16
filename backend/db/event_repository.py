@@ -23,6 +23,7 @@ SQLite DB에서 조회/삽입하기 위한 함수들을 모아둔 파일이다.
 import sqlite3
 from pathlib import Path
 from typing import Any
+from datetime import datetime
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -397,8 +398,8 @@ def get_review_by_event_id(event_id: str) -> dict[str, Any] | None:
     with get_connection() as conn:
         row = conn.execute(query, (event_id,)).fetchone()
         return row_to_dict(row)
-    
-     
+
+
 def get_quarterly_stats(quarter: str) -> dict | None:
     """
     분기별 통계 데이터를 조회함.
@@ -547,3 +548,417 @@ def get_education_recommendations(quarter: str) -> dict:
         "generated_at": generated_at,
         "items": items,
     }
+
+
+def _get_quarter_date_range(quarter: str) -> tuple[str, str]:
+    """
+    분기 문자열을 시작일과 종료일로 변환함.
+
+    Args:
+        quarter (str):
+            예: "2026-Q2"
+
+    Returns:
+        tuple[str, str]:
+            시작일, 종료일. 종료일은 다음 분기 시작일 기준.
+    """
+    try:
+        year_text, quarter_text = quarter.split("-Q")
+        year = int(year_text)
+        quarter_number = int(quarter_text)
+    except ValueError as exc:
+        raise ValueError("quarter must be formatted like 2026-Q2") from exc
+
+    if quarter_number not in {1, 2, 3, 4}:
+        raise ValueError("quarter number must be one of 1, 2, 3, 4")
+
+    start_month = (quarter_number - 1) * 3 + 1
+
+    if quarter_number == 4:
+        end_year = year + 1
+        end_month = 1
+    else:
+        end_year = year
+        end_month = start_month + 3
+
+    start_date = f"{year:04d}-{start_month:02d}-01 00:00:00"
+    end_date = f"{end_year:04d}-{end_month:02d}-01 00:00:00"
+
+    return start_date, end_date
+
+
+def generate_quarterly_stats(quarter: str) -> dict:
+    """
+    후보 이벤트와 담당자 검토 결과를 기반으로 분기별 통계를 생성함.
+
+    Args:
+        quarter (str):
+            생성할 분기. 예: "2026-Q2"
+
+    Returns:
+        dict:
+            생성된 분기별 통계 데이터.
+    """
+    start_date, end_date = _get_quarter_date_range(quarter)
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    with get_connection() as conn:
+        candidate_count = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM candidate_event
+            WHERE timestamp_start >= ?
+              AND timestamp_start < ?;
+            """,
+            (start_date, end_date),
+        ).fetchone()["count"]
+
+        confirmed_count = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM candidate_event
+            WHERE timestamp_start >= ?
+              AND timestamp_start < ?
+              AND event_status = 'confirmed';
+            """,
+            (start_date, end_date),
+        ).fetchone()["count"]
+
+        hold_count = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM candidate_event
+            WHERE timestamp_start >= ?
+              AND timestamp_start < ?
+              AND event_status = 'hold';
+            """,
+            (start_date, end_date),
+        ).fetchone()["count"]
+
+        # 현재 false_positive 이벤트는 삭제 처리되므로 상세 이벤트 기준 자동 집계는 0으로 둠.
+        false_positive_count = 0
+
+        conn.execute(
+            "DELETE FROM education_recommendation WHERE quarter = ?;",
+            (quarter,),
+        )
+        conn.execute(
+            "DELETE FROM quarterly_ppe_stats WHERE quarter = ?;",
+            (quarter,),
+        )
+        conn.execute(
+            "DELETE FROM quarterly_zone_stats WHERE quarter = ?;",
+            (quarter,),
+        )
+        conn.execute(
+            "DELETE FROM quarterly_trend_stats WHERE target_quarter = ?;",
+            (quarter,),
+        )
+        conn.execute(
+            "DELETE FROM quarterly_summary WHERE quarter = ?;",
+            (quarter,),
+        )
+
+        conn.execute(
+            """
+            INSERT INTO quarterly_summary (
+                quarter,
+                candidate_count,
+                confirmed_count,
+                false_positive_count,
+                hold_count,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?);
+            """,
+            (
+                quarter,
+                candidate_count,
+                confirmed_count,
+                false_positive_count,
+                hold_count,
+                created_at,
+            ),
+        )
+
+        ppe_rows = conn.execute(
+            """
+            SELECT
+                ppe_type,
+                COUNT(*) AS confirmed_count,
+                COUNT(DISTINCT strftime('%W', timestamp_start)) AS repeat_weeks
+            FROM candidate_event
+            WHERE timestamp_start >= ?
+              AND timestamp_start < ?
+              AND event_status = 'confirmed'
+            GROUP BY ppe_type
+            ORDER BY confirmed_count DESC;
+            """,
+            (start_date, end_date),
+        ).fetchall()
+
+        for index, row in enumerate(ppe_rows, start=1):
+            zone_concentration = (
+                row["confirmed_count"] / confirmed_count
+                if confirmed_count > 0
+                else 0
+            )
+            priority_score = (
+                row["confirmed_count"] * 0.5
+                + row["repeat_weeks"] * 0.2
+                + zone_concentration * 0.2
+                + 1.0 * 0.1
+            )
+
+            conn.execute(
+                """
+                INSERT INTO quarterly_ppe_stats (
+                    stat_id,
+                    quarter,
+                    ppe_type,
+                    confirmed_count,
+                    priority_score
+                )
+                VALUES (?, ?, ?, ?, ?);
+                """,
+                (
+                    f"STAT_PPE_{quarter.replace('-', '')}_{index:02d}",
+                    quarter,
+                    row["ppe_type"],
+                    row["confirmed_count"],
+                    round(priority_score, 2),
+                ),
+            )
+
+        zone_rows = conn.execute(
+            """
+            SELECT
+                zone_name,
+                COUNT(*) AS confirmed_count,
+                COUNT(DISTINCT strftime('%W', timestamp_start)) AS repeat_weeks
+            FROM candidate_event
+            WHERE timestamp_start >= ?
+              AND timestamp_start < ?
+              AND event_status = 'confirmed'
+            GROUP BY zone_name
+            ORDER BY confirmed_count DESC;
+            """,
+            (start_date, end_date),
+        ).fetchall()
+
+        for index, row in enumerate(zone_rows, start=1):
+            zone_concentration = (
+                row["confirmed_count"] / confirmed_count
+                if confirmed_count > 0
+                else 0
+            )
+            priority_score = (
+                row["confirmed_count"] * 0.5
+                + row["repeat_weeks"] * 0.2
+                + zone_concentration * 0.2
+                + 1.0 * 0.1
+            )
+
+            conn.execute(
+                """
+                INSERT INTO quarterly_zone_stats (
+                    stat_id,
+                    quarter,
+                    zone_name,
+                    confirmed_count,
+                    priority_score
+                )
+                VALUES (?, ?, ?, ?, ?);
+                """,
+                (
+                    f"STAT_ZONE_{quarter.replace('-', '')}_{index:02d}",
+                    quarter,
+                    row["zone_name"],
+                    row["confirmed_count"],
+                    round(priority_score, 2),
+                ),
+            )
+
+        trend_rows = conn.execute(
+            """
+            SELECT
+                substr(timestamp_start, 1, 4) ||
+                '-Q' ||
+                ((CAST(substr(timestamp_start, 6, 2) AS INTEGER) - 1) / 3 + 1)
+                AS quarter,
+                SUM(CASE WHEN ppe_type = 'helmet' THEN 1 ELSE 0 END) AS helmet,
+                SUM(CASE WHEN ppe_type = 'vest' THEN 1 ELSE 0 END) AS vest
+            FROM candidate_event
+            WHERE event_status = 'confirmed'
+            GROUP BY quarter
+            ORDER BY quarter ASC;
+            """
+        ).fetchall()
+
+        for index, row in enumerate(trend_rows, start=1):
+            conn.execute(
+                """
+                INSERT INTO quarterly_trend_stats (
+                    trend_id,
+                    target_quarter,
+                    quarter,
+                    helmet,
+                    vest
+                )
+                VALUES (?, ?, ?, ?, ?);
+                """,
+                (
+                    f"TREND_{quarter.replace('-', '')}_{index:02d}",
+                    quarter,
+                    row["quarter"],
+                    row["helmet"] or 0,
+                    row["vest"] or 0,
+                ),
+            )
+
+        conn.commit()
+
+    stats = get_quarterly_stats(quarter)
+
+    if stats is None:
+        raise RuntimeError("Failed to generate quarterly stats")
+
+    return stats
+
+def _get_education_topic(ppe_type: str, zone_name: str) -> str:
+    """
+    PPE 유형과 구역을 기반으로 교육 주제를 생성함.
+    """
+    if ppe_type == "helmet":
+        return f"{zone_name} 안전모 착용 기준 및 착용 전 점검 절차 교육"
+
+    if ppe_type == "vest":
+        return f"{zone_name} 안전조끼 착용 필요성과 작업 구역 내 시인성 확보 교육"
+
+    return f"{zone_name} PPE 착용 기준 및 작업 전 점검 교육"
+
+
+def generate_education_recommendations(quarter: str) -> dict:
+    """
+    확정 위반 데이터를 기반으로 교육 추천 결과를 생성함.
+
+    Args:
+        quarter (str):
+            생성할 분기. 예: "2026-Q2"
+
+    Returns:
+        dict:
+            생성된 교육 추천 데이터.
+    """
+    start_date, end_date = _get_quarter_date_range(quarter)
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    with get_connection() as conn:
+        total_confirmed = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM candidate_event
+            WHERE timestamp_start >= ?
+              AND timestamp_start < ?
+              AND event_status = 'confirmed';
+            """,
+            (start_date, end_date),
+        ).fetchone()["count"]
+
+        rows = conn.execute(
+            """
+            SELECT
+                ppe_type,
+                zone_name,
+                COUNT(*) AS confirmed_count,
+                COUNT(DISTINCT strftime('%W', timestamp_start)) AS repeat_weeks
+            FROM candidate_event
+            WHERE timestamp_start >= ?
+              AND timestamp_start < ?
+              AND event_status = 'confirmed'
+            GROUP BY ppe_type, zone_name
+            ORDER BY confirmed_count DESC;
+            """,
+            (start_date, end_date),
+        ).fetchall()
+
+        conn.execute(
+            "DELETE FROM education_recommendation WHERE quarter = ?;",
+            (quarter,),
+        )
+
+        scored_items = []
+
+        for row in rows:
+            zone_concentration = (
+                row["confirmed_count"] / total_confirmed
+                if total_confirmed > 0
+                else 0
+            )
+
+            process_risk_weight = 1.0
+
+            priority_score = (
+                row["confirmed_count"] * 0.5
+                + row["repeat_weeks"] * 0.2
+                + zone_concentration * 0.2
+                + process_risk_weight * 0.1
+            )
+
+            scored_items.append(
+                {
+                    "ppe_type": row["ppe_type"],
+                    "zone_name": row["zone_name"],
+                    "confirmed_count": row["confirmed_count"],
+                    "repeat_weeks": row["repeat_weeks"],
+                    "zone_concentration": zone_concentration,
+                    "process_risk_weight": process_risk_weight,
+                    "priority_score": round(priority_score, 2),
+                }
+            )
+
+        scored_items.sort(
+            key=lambda item: item["priority_score"],
+            reverse=True,
+        )
+
+        for rank, item in enumerate(scored_items[:3], start=1):
+            recommendation_id = f"EDU_{quarter.replace('-', '')}_{rank:02d}"
+
+            conn.execute(
+                """
+                INSERT INTO education_recommendation (
+                    recommendation_id,
+                    quarter,
+                    recommendation_rank,
+                    ppe_type,
+                    zone_name,
+                    education_topic,
+                    priority_score,
+                    confirmed_count,
+                    repeat_weeks,
+                    zone_concentration,
+                    process_risk_weight,
+                    generated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    recommendation_id,
+                    quarter,
+                    rank,
+                    item["ppe_type"],
+                    item["zone_name"],
+                    _get_education_topic(item["ppe_type"], item["zone_name"]),
+                    item["priority_score"],
+                    item["confirmed_count"],
+                    item["repeat_weeks"],
+                    round(item["zone_concentration"], 2),
+                    item["process_risk_weight"],
+                    generated_at,
+                ),
+            )
+
+        conn.commit()
+
+    return get_education_recommendations(quarter)

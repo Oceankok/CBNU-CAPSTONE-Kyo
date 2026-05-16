@@ -19,6 +19,8 @@ from backend.db.event_repository import (
     insert_event_review,
     get_quarterly_stats,
     get_education_recommendations,
+    generate_quarterly_stats,
+    generate_education_recommendations,
 )
 
 
@@ -180,6 +182,25 @@ def read_quarterly_stats(quarter: str = "2026-Q2") -> dict:
     return stats
 
 
+@app.post("/api/stats/generate")
+def create_quarterly_stats(quarter: str = "2026-Q2") -> dict:
+    """
+    후보 이벤트와 검토 결과를 기반으로 분기별 통계를 생성함.
+
+    Args:
+        quarter (str):
+            생성할 분기. 예: 2026-Q2
+
+    Returns:
+        dict:
+            생성된 분기별 통계 데이터.
+    """
+    try:
+        return generate_quarterly_stats(quarter)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/recommendations")
 def read_education_recommendations(quarter: str = "2026-Q2") -> dict:
     """
@@ -199,6 +220,33 @@ def read_education_recommendations(quarter: str = "2026-Q2") -> dict:
         raise HTTPException(
             status_code=404,
             detail="Education recommendations not found",
+        )
+
+    return recommendations
+
+
+@app.post("/api/recommendations/generate")
+def create_education_recommendations(quarter: str = "2026-Q2") -> dict:
+    """
+    확정 위반 통계를 기반으로 교육 추천 데이터를 생성함.
+
+    Args:
+        quarter (str):
+            생성할 분기. 예: 2026-Q2
+
+    Returns:
+        dict:
+            생성된 교육 추천 데이터.
+    """
+    try:
+        recommendations = generate_education_recommendations(quarter)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if len(recommendations["items"]) == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="No confirmed events found for recommendation generation",
         )
 
     return recommendations
