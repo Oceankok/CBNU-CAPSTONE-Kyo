@@ -120,3 +120,23 @@ export interface FilterState {
   dateTo: string;
   minConfidence: number;
 }
+
+// --- Warning Broadcast Settings ---
+
+export type BroadcastLanguage = 'ko' | 'en';
+
+// Per-PPE-type message template with optional zone override
+export interface BroadcastTemplate {
+  ppe_type: Exclude<PpeType, 'all'>;
+  zone_name: string; // empty string means "all zones"
+  language: BroadcastLanguage;
+  message: string;
+}
+
+// Top-level broadcast control settings saved/loaded via API
+export interface BroadcastSettings {
+  enabled: boolean;
+  default_language: BroadcastLanguage;
+  cooldown_sec: number;
+  templates: BroadcastTemplate[];
+}
