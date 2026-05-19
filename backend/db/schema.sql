@@ -108,3 +108,23 @@ CREATE TABLE IF NOT EXISTS false_positive_aggregate (
     false_positive_count INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
 );
+
+-- 경고 방송 기본 설정
+CREATE TABLE IF NOT EXISTS broadcast_setting (
+    setting_id TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    default_language TEXT NOT NULL DEFAULT 'ko',
+    cooldown_sec INTEGER NOT NULL DEFAULT 30,
+    updated_at TEXT NOT NULL
+);
+
+-- PPE 유형/구역/언어별 경고 방송 메시지 템플릿
+CREATE TABLE IF NOT EXISTS broadcast_message_template (
+    template_id TEXT PRIMARY KEY,
+    setting_id TEXT NOT NULL,
+    ppe_type TEXT NOT NULL,
+    zone_name TEXT NOT NULL DEFAULT '',
+    language TEXT NOT NULL,
+    message TEXT NOT NULL,
+    FOREIGN KEY (setting_id) REFERENCES broadcast_setting(setting_id) ON DELETE CASCADE
+);

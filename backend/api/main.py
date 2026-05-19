@@ -22,6 +22,8 @@ from backend.db.event_repository import (
     get_education_recommendations,
     generate_quarterly_stats,
     generate_education_recommendations,
+    get_broadcast_settings,
+    save_broadcast_settings,
 )
 
 
@@ -55,6 +57,31 @@ class ReviewRequest(BaseModel):
     review_reason_code: str = Field(..., example="confirmed_no_helmet")
     review_comment: str = Field(default="", example="실제 안전모 미착용")
     second_review_needed: bool = Field(default=False, example=False)
+
+
+class BroadcastTemplate(BaseModel):
+    """
+    경고 방송 메시지 템플릿.
+    """
+
+    ppe_type: str = Field(..., example="helmet")
+    zone_name: str = Field(default="", example="프레스 구역")
+    language: str = Field(..., example="ko")
+    message: str = Field(
+        ...,
+        example="해당 작업 구역의 작업자는 안전모 착용 상태를 확인해 주세요.",
+    )
+
+
+class BroadcastSettingsRequest(BaseModel):
+    """
+    경고 방송 설정 저장 요청 모델.
+    """
+
+    enabled: bool = Field(default=True, example=True)
+    default_language: str = Field(default="ko", example="ko")
+    cooldown_sec: int = Field(default=30, example=30)
+    templates: list[BroadcastTemplate] = Field(default_factory=list)
 
 
 @app.get("/")
@@ -259,3 +286,31 @@ def create_education_recommendations(quarter: str = "2026-Q2") -> dict:
         )
 
     return recommendations
+
+
+@app.get("/api/broadcast/settings")
+def read_broadcast_settings() -> dict:
+    """
+    경고 방송 설정 조회.
+
+    Returns:
+        dict:
+            경고 방송 사용 여부, 기본 언어, cooldown, 메시지 템플릿 목록.
+    """
+    return get_broadcast_settings()
+
+
+@app.put("/api/broadcast/settings")
+def update_broadcast_settings(request: BroadcastSettingsRequest) -> dict:
+    """
+    경고 방송 설정 저장.
+
+    Args:
+        request (BroadcastSettingsRequest):
+            경고 방송 설정 요청 데이터.
+
+    Returns:
+        dict:
+            저장된 경고 방송 설정.
+    """
+    return save_broadcast_settings(request.model_dump())

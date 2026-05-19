@@ -206,3 +206,60 @@ INSERT OR IGNORE INTO education_recommendation (
     0.8,
     '2026-06-30 18:00:00'
 );
+
+-- 경고 방송 기본 설정
+INSERT OR IGNORE INTO broadcast_setting (
+    setting_id,
+    enabled,
+    default_language,
+    cooldown_sec,
+    updated_at
+) VALUES (
+    'DEFAULT',
+    1,
+    'ko',
+    30,
+    '2026-05-19 00:00:00'
+);
+
+-- 경고 방송 메시지 기본 템플릿
+INSERT OR IGNORE INTO broadcast_message_template (
+    template_id,
+    setting_id,
+    ppe_type,
+    zone_name,
+    language,
+    message
+) VALUES
+(
+    'BCAST_TEMPLATE_001',
+    'DEFAULT',
+    'helmet',
+    '',
+    'ko',
+    '해당 작업 구역의 작업자는 안전모 착용 상태를 확인해 주세요.'
+),
+(
+    'BCAST_TEMPLATE_002',
+    'DEFAULT',
+    'helmet',
+    '',
+    'en',
+    'Workers in this area, please check your helmet.'
+),
+(
+    'BCAST_TEMPLATE_003',
+    'DEFAULT',
+    'vest',
+    '',
+    'ko',
+    '해당 작업 구역의 작업자는 안전조끼 착용 상태를 확인해 주세요.'
+),
+(
+    'BCAST_TEMPLATE_004',
+    'DEFAULT',
+    'vest',
+    '',
+    'en',
+    'Workers in this area, please check your safety vest.'
+);

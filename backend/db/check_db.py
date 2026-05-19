@@ -137,6 +137,36 @@ def check_database() -> None:
         false_positive_aggregate = cursor.fetchall()
         print_rows("false_positive_aggregate", false_positive_aggregate)
 
+        cursor.execute(
+            """
+            SELECT
+                setting_id,
+                enabled,
+                default_language,
+                cooldown_sec,
+                updated_at
+            FROM broadcast_setting;
+            """
+        )
+        broadcast_setting = cursor.fetchall()
+        print_rows("broadcast_setting", broadcast_setting)
+
+        cursor.execute(
+            """
+            SELECT
+                template_id,
+                setting_id,
+                ppe_type,
+                zone_name,
+                language,
+                message
+            FROM broadcast_message_template
+            ORDER BY template_id;
+            """
+        )
+        broadcast_templates = cursor.fetchall()
+        print_rows("broadcast_message_template", broadcast_templates)
+
     finally:
         conn.close()
 
