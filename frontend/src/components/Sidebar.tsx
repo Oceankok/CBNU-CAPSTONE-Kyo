@@ -6,6 +6,7 @@ const NAV_ITEMS = [
   { to: '/review', label: '검토' },
   { to: '/stats', label: '통계' },
   { to: '/recommend', label: '교육 추천' },
+  { to: '/broadcast', label: '경고 방송' },
 ];
 
 export default function Sidebar() {
