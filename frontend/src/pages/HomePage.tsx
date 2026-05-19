@@ -1,27 +1,52 @@
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useOutletContext } from 'react-router-dom';
 import SummaryCard from '../components/SummaryCard';
 import StatusBadge from '../components/StatusBadge';
-import { MOCK_QUARTERLY_STATS, MOCK_EVENTS } from '../mock';
+import { fetchEvents } from '../api/events';
+import { fetchStats } from '../api/stats';
+import type { CandidateEvent, QuarterlyStats } from '../types';
 import styles from './HomePage.module.css';
 
 export default function HomePage() {
   const { quarter } = useOutletContext<{ quarter: string }>();
   const navigate = useNavigate();
-  const stats = MOCK_QUARTERLY_STATS;
-  // Show only pending events on the home page as priority items
-  const pendingEvents = MOCK_EVENTS.filter((e) => e.event_status === 'pending');
+
+  const [stats, setStats] = useState<QuarterlyStats | null>(null);
+  const [pendingEvents, setPendingEvents] = useState<CandidateEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    // Fetch events unconditionally; stats may not exist yet so treat 404 as null
+    fetchEvents()
+      .then((evData) =>
+        setPendingEvents(evData.items.filter((e) => e.event_status === 'pending')),
+      )
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+    fetchStats(quarter)
+      .then(setStats)
+      .catch(() => setStats(null)); // stats 미생성 시 카드 숨김
+  }, [quarter]);
 
   return (
     <div className={styles.page}>
       <p className={styles.quarterLabel}>{quarter} 기준</p>
 
-      <div className={styles.cardRow}>
-        <SummaryCard label="후보 이벤트" value={stats.summary.candidate_count} sub="AI 추출 총합" />
-        <SummaryCard label="확정 위반" value={stats.summary.confirmed_count} sub="검토 완료" trend={12} />
-        <SummaryCard label="오탐" value={stats.summary.false_positive_count} sub="AI 오탐지" trend={-5} />
-        <SummaryCard label="보류" value={stats.summary.hold_count} sub="추가 검토 필요" />
-      </div>
+      {error && <p style={{ color: '#e53e3e' }}>⚠ API 오류: {error}</p>}
+      {loading && <p style={{ color: '#718096' }}>데이터를 불러오는 중...</p>}
+
+      {stats && (
+        <div className={styles.cardRow}>
+          <SummaryCard label="후보 이벤트" value={stats.summary.candidate_count} sub="AI 추출 총합" />
+          <SummaryCard label="확정 위반" value={stats.summary.confirmed_count} sub="검토 완료" trend={12} />
+          <SummaryCard label="오탐" value={stats.summary.false_positive_count} sub="AI 오탐지" trend={-5} />
+          <SummaryCard label="보류" value={stats.summary.hold_count} sub="추가 검토 필요" />
+        </div>
+      )}
 
       <section className={styles.section}>
         <div className={styles.sectionHeader}>
@@ -76,7 +101,7 @@ export default function HomePage() {
       <section className={styles.section}>
         <h3>PPE 유형별 위반 현황</h3>
         <div className={styles.ppeRow}>
-          {stats.by_ppe_type.map((p) => (
+          {stats?.by_ppe_type.map((p) => (
             <div key={p.ppe_type} className={styles.ppeCard}>
               <div className={styles.ppeCardHeader}>
                 <span className={styles.ppeName}>
@@ -89,7 +114,7 @@ export default function HomePage() {
                 <div
                   className={styles.ppeBarFill}
                   style={{
-                    width: `${(p.confirmed_count / stats.summary.confirmed_count) * 100}%`,
+                    width: `${(p.confirmed_count / (stats.summary.confirmed_count || 1)) * 100}%`,
                     backgroundColor: p.ppe_type === 'helmet' ? '#e53e3e' : '#d69e2e',
                   }}
                 />
@@ -103,7 +128,7 @@ export default function HomePage() {
       <section className={styles.section}>
         <h3>구역별 위반 현황</h3>
         <div className={styles.zoneList}>
-          {stats.by_zone.map((z, idx) => (
+          {stats?.by_zone.map((z, idx) => (
             <div key={z.zone_name} className={styles.zoneItem}>
               <span className={styles.zoneRank}>#{idx + 1}</span>
               <span className={styles.zoneName}>{z.zone_name}</span>
@@ -111,7 +136,7 @@ export default function HomePage() {
                 <div
                   className={styles.zoneBarFill}
                   style={{
-                    width: `${(z.confirmed_count / stats.by_zone[0].confirmed_count) * 100}%`,
+                    width: `${(z.confirmed_count / (stats.by_zone[0]?.confirmed_count || 1)) * 100}%`,
                   }}
                 />
               </div>

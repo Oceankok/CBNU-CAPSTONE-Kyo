@@ -17,6 +17,12 @@
   color: #1a202c;
 }
 
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .quarterSelect {
   font-size: 13px;
   padding: 6px 10px;
@@ -30,6 +36,28 @@
 .quarterSelect:focus {
   outline: none;
   border-color: #3182ce;
+}
+
+.refreshBtn {
+  font-size: 13px;
+  padding: 6px 14px;
+  border: 1px solid #3182ce;
+  border-radius: 6px;
+  background: #fff;
+  color: #3182ce;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.refreshBtn:hover:not(:disabled) {
+  background: #3182ce;
+  color: #fff;
+}
+
+.refreshBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .cardRow {

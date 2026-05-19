@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   BarChart,
   Bar,
@@ -12,7 +12,9 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import SummaryCard from '../components/SummaryCard';
-import { MOCK_QUARTERLY_STATS, AVAILABLE_QUARTERS } from '../mock';
+import { AVAILABLE_QUARTERS } from '../mock';
+import { fetchStats, generateStats } from '../api/stats';
+import type { QuarterlyStats } from '../types';
 import styles from './StatsPage.module.css';
 
 const PPE_LABEL: Record<string, string> = {
@@ -21,17 +23,44 @@ const PPE_LABEL: Record<string, string> = {
 };
 
 export default function StatsPage() {
-  const [quarter, setQuarter] = useState(MOCK_QUARTERLY_STATS.quarter);
-  // In production, fetch stats for the selected quarter from the API.
-  // For now, all quarters resolve to the single mock object.
-  const stats = MOCK_QUARTERLY_STATS;
+  const [quarter, setQuarter] = useState('2026-Q2');
+  const [stats, setStats] = useState<QuarterlyStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
 
-  const ppeData = stats.by_ppe_type.map((p) => ({
+  // Load stats whenever the selected quarter changes
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    fetchStats(quarter)
+      .then(setStats)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [quarter]);
+
+  // Re-aggregate backend stats then reload the chart data
+  function handleRefresh() {
+    setRefreshing(true);
+    setRefreshMsg(null);
+    generateStats(quarter)
+      .then(() => fetchStats(quarter))
+      .then((data) => {
+        setStats(data);
+        setRefreshMsg('통계가 갱신되었습니다.');
+        setTimeout(() => setRefreshMsg(null), 3000);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setRefreshing(false));
+  }
+
+  const ppeData = (stats?.by_ppe_type ?? []).map((p) => ({
     name: PPE_LABEL[p.ppe_type] ?? p.ppe_type,
     확정위반: p.confirmed_count,
   }));
 
-  const zoneData = stats.by_zone.map((z) => ({
+  const zoneData = (stats?.by_zone ?? []).map((z) => ({
     name: z.zone_name,
     확정위반: z.confirmed_count,
   }));
@@ -40,19 +69,35 @@ export default function StatsPage() {
     <div className={styles.page}>
       <div className={styles.header}>
         <h2 className={styles.title}>분기별 통계</h2>
-        <select
-          className={styles.quarterSelect}
-          value={quarter}
-          onChange={(e) => setQuarter(e.target.value)}
-        >
-          {AVAILABLE_QUARTERS.map((q) => (
-            <option key={q} value={q}>
-              {q}
-            </option>
-          ))}
-        </select>
+        <div className={styles.controls}>
+          <select
+            className={styles.quarterSelect}
+            value={quarter}
+            onChange={(e) => setQuarter(e.target.value)}
+          >
+            {AVAILABLE_QUARTERS.map((q) => (
+              <option key={q} value={q}>
+                {q}
+              </option>
+            ))}
+          </select>
+          <button
+            className={styles.refreshBtn}
+            onClick={handleRefresh}
+            disabled={refreshing || loading}
+            title="통계 새로고침"
+          >
+            {refreshing ? '갱신 중…' : '↻ 통계 새로고침'}
+          </button>
+        </div>
       </div>
 
+      {error && <p style={{ color: '#e53e3e', marginBottom: '1rem' }}>⚠ {error}</p>}
+      {refreshMsg && <p style={{ color: '#276749', marginBottom: '1rem' }}>✓ {refreshMsg}</p>}
+      {loading && <p style={{ color: '#718096', marginBottom: '1rem' }}>데이터를 불러오는 중...</p>}
+
+      {stats && (
+        <>
       <div className={styles.cardRow}>
         <SummaryCard label="후보 이벤트" value={stats.summary.candidate_count} sub="AI 추출 총합" />
         <SummaryCard
@@ -126,6 +171,8 @@ export default function StatsPage() {
           </LineChart>
         </ResponsiveContainer>
       </section>
+        </>
+      )}
     </div>
   );
 }
