@@ -22,7 +22,7 @@ SQLite DB에서 조회/삽입하기 위한 함수들을 모아둔 파일이다.
 
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from datetime import datetime
 
 
@@ -49,7 +49,7 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+def row_to_dict(row: Optional[sqlite3.Row]) -> Optional[dict[str, Any]]:
     """
     sqlite3.Row 객체를 Python dict로 변환한다.
 
@@ -112,7 +112,7 @@ def get_all_candidate_events() -> list[dict[str, Any]]:
         return [dict(row) for row in rows]
 
 
-def get_candidate_event_by_id(event_id: str) -> dict[str, Any] | None:
+def get_candidate_event_by_id(event_id: str) -> Optional[dict[str, Any]]:
     """
     event_id를 기준으로 후보 이벤트 1건을 조회한다.
 
@@ -407,9 +407,10 @@ def insert_event_review(review: dict[str, Any]) -> None:
     """
 
     with get_connection() as conn:
-        conn.execute(review_query, review)
-
         if review["review_result"] == "false_positive":
+            # For false positives: record in aggregate and delete the event.
+            # We do NOT insert event_review because ON DELETE CASCADE would
+            # immediately remove it when candidate_event is deleted.
             event = conn.execute(
                 """
                 SELECT
@@ -436,6 +437,8 @@ def insert_event_review(review: dict[str, Any]) -> None:
                 (review["event_id"],),
             )
         else:
+            # For confirmed/hold: save the review record and update event status
+            conn.execute(review_query, review)
             conn.execute(
                 status_query,
                 {
@@ -447,7 +450,7 @@ def insert_event_review(review: dict[str, Any]) -> None:
         conn.commit()
 
 
-def get_review_by_event_id(event_id: str) -> dict[str, Any] | None:
+def get_review_by_event_id(event_id: str) -> Optional[dict[str, Any]]:
     """
     event_id를 기준으로 담당자 검토 결과를 조회한다.
 
@@ -485,7 +488,7 @@ def get_review_by_event_id(event_id: str) -> dict[str, Any] | None:
         return row_to_dict(row)
 
 
-def get_quarterly_stats(quarter: str) -> dict | None:
+def get_quarterly_stats(quarter: str) -> Optional[dict]:
     """
     분기별 통계 데이터를 조회함.
 
@@ -843,14 +846,15 @@ def generate_quarterly_stats(quarter: str) -> dict:
         zone_rows = conn.execute(
             """
             SELECT
-                zone_name,
+                ci.zone_name,
                 COUNT(*) AS confirmed_count,
-                COUNT(DISTINCT strftime('%W', timestamp_start)) AS repeat_weeks
-            FROM candidate_event
-            WHERE timestamp_start >= ?
-              AND timestamp_start < ?
-              AND event_status = 'confirmed'
-            GROUP BY zone_name
+                COUNT(DISTINCT strftime('%W', ce.timestamp_start)) AS repeat_weeks
+            FROM candidate_event ce
+            LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+            WHERE ce.timestamp_start >= ?
+              AND ce.timestamp_start < ?
+              AND ce.event_status = 'confirmed'
+            GROUP BY ci.zone_name
             ORDER BY confirmed_count DESC;
             """,
             (start_date, end_date),
@@ -978,15 +982,16 @@ def generate_education_recommendations(quarter: str) -> dict:
         rows = conn.execute(
             """
             SELECT
-                ppe_type,
-                zone_name,
+                ce.ppe_type,
+                ci.zone_name,
                 COUNT(*) AS confirmed_count,
-                COUNT(DISTINCT strftime('%W', timestamp_start)) AS repeat_weeks
-            FROM candidate_event
-            WHERE timestamp_start >= ?
-              AND timestamp_start < ?
-              AND event_status = 'confirmed'
-            GROUP BY ppe_type, zone_name
+                COUNT(DISTINCT strftime('%W', ce.timestamp_start)) AS repeat_weeks
+            FROM candidate_event ce
+            LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+            WHERE ce.timestamp_start >= ?
+              AND ce.timestamp_start < ?
+              AND ce.event_status = 'confirmed'
+            GROUP BY ce.ppe_type, ci.zone_name
             ORDER BY confirmed_count DESC;
             """,
             (start_date, end_date),
