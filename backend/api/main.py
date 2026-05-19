@@ -10,6 +10,7 @@ PPE 분석 시스템 초기 FastAPI 서버 파일.
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.db.event_repository import (
@@ -28,6 +29,14 @@ app = FastAPI(
     title="PPE Analysis API",
     description="PPE 후보 이벤트 조회 및 담당자 검토 결과 저장 API",
     version="0.1.0",
+)
+
+# Allow the Vite dev server to call the API without CORS errors
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

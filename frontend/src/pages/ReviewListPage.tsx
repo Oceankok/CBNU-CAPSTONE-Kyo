@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import FilterBar from '../components/FilterBar';
 import StatusBadge from '../components/StatusBadge';
-import { MOCK_EVENTS } from '../mock';
+import { fetchEvents } from '../api/events';
 import type { FilterState, CandidateEvent } from '../types';
 import styles from './ReviewListPage.module.css';
 
@@ -31,7 +31,7 @@ function applyFilters(events: CandidateEvent[], f: FilterState): CandidateEvent[
     if (f.zone.length > 0 && !f.zone.includes(e.zone_name)) return false;
     if (f.dateFrom && e.timestamp_start < f.dateFrom) return false;
     if (f.dateTo && e.timestamp_start > f.dateTo + 'T23:59:59') return false;
-    if (e.ai_confidence * 100 < f.minConfidence) return false;
+    if (e.ai_confidence < f.minConfidence) return false;
     return true;
   });
 }
@@ -39,13 +39,25 @@ function applyFilters(events: CandidateEvent[], f: FilterState): CandidateEvent[
 export default function ReviewListPage() {
   const navigate = useNavigate();
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+  const [events, setEvents] = useState<CandidateEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const visibleEvents = useMemo(() => sortEvents(applyFilters(MOCK_EVENTS, filters)), [filters]);
-  const pendingCount = MOCK_EVENTS.filter((e) => e.event_status === 'pending').length;
+  useEffect(() => {
+    fetchEvents()
+      .then((data) => setEvents(data.items))
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const visibleEvents = useMemo(() => sortEvents(applyFilters(events, filters)), [events, filters]);
+  const pendingCount = events.filter((e) => e.event_status === 'pending').length;
 
   return (
     <div className={styles.page}>
-      {pendingCount > 0 && (
+      {error && <div className={styles.pendingBanner}>⚠ API 오류: {error}</div>}
+      {loading && <div className={styles.pendingBanner}>이벤트 목록을 불러오는 중...</div>}
+      {!loading && pendingCount > 0 && (
         <div className={styles.pendingBanner}>
           미검토 이벤트가 <strong>{pendingCount}건</strong> 있습니다. 확인 후 검토해 주세요.
         </div>
@@ -112,7 +124,7 @@ export default function ReviewListPage() {
         </table>
       </div>
       <p className={styles.count}>
-        {visibleEvents.length}건 표시 중 (전체 {MOCK_EVENTS.length}건)
+        {visibleEvents.length}건 표시 중 (전체 {events.length}건)
       </p>
     </div>
   );
