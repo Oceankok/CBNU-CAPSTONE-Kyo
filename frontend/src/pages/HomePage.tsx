@@ -20,14 +20,16 @@ export default function HomePage() {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    Promise.all([fetchStats(quarter), fetchEvents()])
-      .then(([s, evData]) => {
-        setStats(s);
-        // Show only pending events as priority items
-        setPendingEvents(evData.items.filter((e) => e.event_status === 'pending'));
-      })
+    // Fetch events unconditionally; stats may not exist yet so treat 404 as null
+    fetchEvents()
+      .then((evData) =>
+        setPendingEvents(evData.items.filter((e) => e.event_status === 'pending')),
+      )
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
+    fetchStats(quarter)
+      .then(setStats)
+      .catch(() => setStats(null)); // stats 미생성 시 카드 숨김
   }, [quarter]);
 
   return (

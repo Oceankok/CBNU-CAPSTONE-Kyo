@@ -170,6 +170,31 @@ export default function ReviewDetailPage() {
               <p className={styles.submittedMsg}>
                 {existingReview ? '⚠ 이미 검토된 이벤트입니다.' : '✅ 검토가 제출되었습니다.'}
               </p>
+              {/* Show a summary of the review decision */}
+              {(existingReview || reviewResult) && (
+                <dl className={styles.reviewSummary}>
+                  <dt>판단 결과</dt>
+                  <dd>
+                    {existingReview
+                      ? existingReview.review_result === 'confirmed' ? '확정 위반'
+                        : existingReview.review_result === 'false_positive' ? '오탐'
+                        : '보류'
+                      : reviewResult === 'confirmed' ? '확정 위반'
+                        : reviewResult === 'false_positive' ? '오탐'
+                        : '보류'}
+                  </dd>
+                  <dt>사유 코드</dt>
+                  <dd>{existingReview ? existingReview.review_reason_code : reasonCode}</dd>
+                  {(existingReview?.review_comment || comment) && (
+                    <>
+                      <dt>코멘트</dt>
+                      <dd>{existingReview ? existingReview.review_comment : comment}</dd>
+                    </>
+                  )}
+                  <dt>검토 시각</dt>
+                  <dd>{existingReview ? existingReview.review_time : new Date().toLocaleString('ko-KR')}</dd>
+                </dl>
+              )}
               <div className={styles.actionRow}>
                 <button className={styles.secondaryBtn} onClick={() => navigate('/review')}>
                   ← 목록으로

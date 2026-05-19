@@ -31,7 +31,7 @@ function applyFilters(events: CandidateEvent[], f: FilterState): CandidateEvent[
     if (f.zone.length > 0 && !f.zone.includes(e.zone_name)) return false;
     if (f.dateFrom && e.timestamp_start < f.dateFrom) return false;
     if (f.dateTo && e.timestamp_start > f.dateTo + 'T23:59:59') return false;
-    if (e.ai_confidence * 100 < f.minConfidence) return false;
+    if (e.ai_confidence < f.minConfidence) return false;
     return true;
   });
 }
