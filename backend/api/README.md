@@ -205,6 +205,127 @@ GET /api/events/{event_id}
 
 ---
 
+## 분기별 통계 조회 API
+
+### `GET /api/stats`
+
+분기별 통계 데이터를 조회함.
+
+예시:
+
+```http
+GET /api/stats?quarter=2026-Q2
+```
+
+응답에는 다음 데이터가 포함됨.
+
+- 분기 요약 통계
+- PPE 유형별 확정 위반 수 및 우선순위 점수
+- 구역별 확정 위반 수 및 우선순위 점수
+- 최근 분기별 helmet/vest 위반 추이
+
+응답 예시:
+
+```json
+{
+  "quarter": "2026-Q2",
+  "summary": {
+    "quarter": "2026-Q2",
+    "candidate_count": 145,
+    "confirmed_count": 98,
+    "false_positive_count": 32,
+    "hold_count": 15
+  },
+  "by_ppe_type": [
+    {
+      "ppe_type": "helmet",
+      "confirmed_count": 60,
+      "priority_score": 8.6
+    },
+    {
+      "ppe_type": "vest",
+      "confirmed_count": 38,
+      "priority_score": 5.2
+    }
+  ],
+  "by_zone": [
+    {
+      "zone_name": "프레스 구역",
+      "confirmed_count": 45,
+      "priority_score": 8.6
+    }
+  ],
+  "trend": [
+    {
+      "quarter": "2025-Q3",
+      "helmet": 40,
+      "vest": 25
+    }
+  ]
+}
+```
+
+---
+
+## 교육 추천 조회 API
+
+### `GET /api/recommendations`
+
+분기별 교육 추천 데이터를 조회함.
+
+예시:
+
+```http
+GET /api/recommendations?quarter=2026-Q2
+```
+
+응답에는 다음 데이터가 포함됨.
+
+- 추천 순위
+- PPE 유형
+- 발생 구역
+- 교육 주제
+- 우선순위 점수
+- 점수 산정 근거
+
+응답 예시:
+
+```json
+{
+  "quarter": "2026-Q2",
+  "generated_at": "2026-06-30 18:00:00",
+  "items": [
+    {
+      "recommendation_id": "EDU_2026Q2_01",
+      "recommendation_rank": 1,
+      "ppe_type": "helmet",
+      "zone_name": "프레스 구역",
+      "education_topic": "안전모 착용 기준 및 착용 전 점검 절차 교육",
+      "priority_score": 8.6,
+      "score_breakdown": {
+        "confirmed_count": 60,
+        "repeat_weeks": 5,
+        "zone_concentration": 0.61,
+        "process_risk_weight": 1.0
+      },
+      "generated_at": "2026-06-30 18:00:00"
+    }
+  ]
+}
+```
+
+---
+
+## 참고 사항
+
+현재 `/api/stats`와 `/api/recommendations`는 프론트엔드 Mock 데이터 구조와 유사한 형태로 응답하도록 구성함.
+
+`false_positive_count`는 오탐 이벤트 상세 기록을 장기 보관하지 않고, `false_positive_aggregate`에 저장된 비식별 집계값을 기준으로 계산함.
+
+이번 단계에서는 분기별 통계 및 교육 추천 더미 데이터를 DB에 저장하고 조회하는 구조를 우선 구현함. 실제 후보 이벤트와 담당자 검토 결과를 기반으로 통계를 자동 계산하고 교육 추천을 생성하는 로직은 이후 단계에서 확장 예정임.
+
+---
+
 ## 주의 사항
 
 - 같은 이벤트에 대해 검토 결과를 두 번 저장하면 `409 Review already exists` 응답 반환.
