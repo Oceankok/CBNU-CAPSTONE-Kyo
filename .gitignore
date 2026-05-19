@@ -29,3 +29,9 @@ data/raw/
 *.pt
 *.onnx
 *.pth
+
+storage/candidate_events/thumbnails/*
+!storage/candidate_events/thumbnails/.gitkeep
+
+storage/candidate_events/clips/*
+!storage/candidate_events/clips/.gitkeep
