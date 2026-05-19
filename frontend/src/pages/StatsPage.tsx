@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   BarChart,
   Bar,
@@ -12,7 +12,9 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import SummaryCard from '../components/SummaryCard';
-import { MOCK_QUARTERLY_STATS, AVAILABLE_QUARTERS } from '../mock';
+import { AVAILABLE_QUARTERS } from '../mock';
+import { fetchStats } from '../api/stats';
+import type { QuarterlyStats } from '../types';
 import styles from './StatsPage.module.css';
 
 const PPE_LABEL: Record<string, string> = {
@@ -21,17 +23,26 @@ const PPE_LABEL: Record<string, string> = {
 };
 
 export default function StatsPage() {
-  const [quarter, setQuarter] = useState(MOCK_QUARTERLY_STATS.quarter);
-  // In production, fetch stats for the selected quarter from the API.
-  // For now, all quarters resolve to the single mock object.
-  const stats = MOCK_QUARTERLY_STATS;
+  const [quarter, setQuarter] = useState(AVAILABLE_QUARTERS[0]);
+  const [stats, setStats] = useState<QuarterlyStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const ppeData = stats.by_ppe_type.map((p) => ({
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    fetchStats(quarter)
+      .then(setStats)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [quarter]);
+
+  const ppeData = (stats?.by_ppe_type ?? []).map((p) => ({
     name: PPE_LABEL[p.ppe_type] ?? p.ppe_type,
     확정위반: p.confirmed_count,
   }));
 
-  const zoneData = stats.by_zone.map((z) => ({
+  const zoneData = (stats?.by_zone ?? []).map((z) => ({
     name: z.zone_name,
     확정위반: z.confirmed_count,
   }));
@@ -53,6 +64,11 @@ export default function StatsPage() {
         </select>
       </div>
 
+      {error && <p style={{ color: '#e53e3e', marginBottom: '1rem' }}>⚠ {error}</p>}
+      {loading && <p style={{ color: '#718096', marginBottom: '1rem' }}>데이터를 불러오는 중...</p>}
+
+      {stats && (
+        <>
       <div className={styles.cardRow}>
         <SummaryCard label="후보 이벤트" value={stats.summary.candidate_count} sub="AI 추출 총합" />
         <SummaryCard
@@ -126,6 +142,8 @@ export default function StatsPage() {
           </LineChart>
         </ResponsiveContainer>
       </section>
+        </>
+      )}
     </div>
   );
 }

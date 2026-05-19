@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
-import { MOCK_EVENTS } from '../mock';
-import type { ReviewResult, ReviewReasonCode } from '../types';
+import { fetchEvent, submitReview } from '../api/events';
+import type { CandidateEvent, EventReview, ReviewResult, ReviewReasonCode, ReviewRequest } from '../types';
 import styles from './ReviewDetailPage.module.css';
 
 // Reason code options grouped by the review result selection
@@ -25,8 +25,11 @@ export default function ReviewDetailPage() {
   const { event_id } = useParams<{ event_id: string }>();
   const navigate = useNavigate();
 
-  const eventIndex = MOCK_EVENTS.findIndex((e) => e.event_id === event_id);
-  const event = MOCK_EVENTS[eventIndex];
+  const [event, setEvent] = useState<CandidateEvent | null>(null);
+  const [existingReview, setExistingReview] = useState<EventReview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [reviewResult, setReviewResult] = useState<ReviewResult | null>(null);
   const [reasonCode, setReasonCode] = useState<ReviewReasonCode | ''>('');
@@ -34,39 +37,59 @@ export default function ReviewDetailPage() {
   const [secondReview, setSecondReview] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
-  if (!event) {
+  useEffect(() => {
+    if (!event_id) return;
+    setLoading(true);
+    fetchEvent(event_id)
+      .then(({ event: ev, review }) => {
+        setEvent(ev);
+        if (review) {
+          // Event already reviewed — show existing result and lock the form
+          setExistingReview(review);
+          setSubmitted(true);
+        }
+      })
+      .catch((e) => setLoadError(e.message))
+      .finally(() => setLoading(false));
+  }, [event_id]);
+
+  if (loading) {
+    return <div className={styles.notFound}><p>이벤트를 불러오는 중...</p></div>;
+  }
+
+  if (loadError || !event) {
     return (
       <div className={styles.notFound}>
-        <p>이벤트를 찾을 수 없습니다. (ID: {event_id})</p>
+        <p>이벤트를 찾을 수 없습니다. (ID: {event_id}){loadError ? ` — ${loadError}` : ''}</p>
         <button onClick={() => navigate('/review')}>목록으로 돌아가기</button>
       </div>
     );
   }
-
-  // Next event in the list for sequential review workflow
-  const nextEvent = eventIndex < MOCK_EVENTS.length - 1 ? MOCK_EVENTS[eventIndex + 1] : null;
 
   const handleResultClick = (result: ReviewResult) => {
     setReviewResult(result);
     setReasonCode(''); // reset reason when the main result changes
   };
 
-  const handleSubmit = () => {
-    if (!reviewResult || !reasonCode) return;
-    // In production: POST /api/reviews/{event_id} with ReviewRequest body
-    console.log({ event_id, reviewResult, reasonCode, comment, secondReview });
-    setSubmitted(true);
+  const handleSubmit = async () => {
+    if (!reviewResult || !reasonCode || !event_id) return;
+    setSubmitError(null);
+    const body: ReviewRequest = {
+      reviewer_id: 'admin01',
+      review_result: reviewResult,
+      review_reason_code: reasonCode as ReviewReasonCode,
+      review_comment: comment,
+      second_review_needed: secondReview,
+    };
+    try {
+      await submitReview(event_id, body);
+      setSubmitted(true);
+    } catch (e: unknown) {
+      setSubmitError(e instanceof Error ? e.message : '제출 중 오류가 발생했습니다.');
+    }
   };
 
-  const goToNext = () => {
-    if (!nextEvent) return;
-    setReviewResult(null);
-    setReasonCode('');
-    setComment('');
-    setSecondReview(false);
-    setSubmitted(false);
-    navigate(`/review/${nextEvent.event_id}`);
-  };
+  const goToList = () => navigate('/review');
 
   return (
     <div className={styles.page}>
@@ -144,16 +167,13 @@ export default function ReviewDetailPage() {
 
           {submitted ? (
             <div className={styles.submittedCard}>
-              <p className={styles.submittedMsg}>✅ 검토가 제출되었습니다.</p>
+              <p className={styles.submittedMsg}>
+                {existingReview ? '⚠ 이미 검토된 이벤트입니다.' : '✅ 검토가 제출되었습니다.'}
+              </p>
               <div className={styles.actionRow}>
                 <button className={styles.secondaryBtn} onClick={() => navigate('/review')}>
                   ← 목록으로
                 </button>
-                {nextEvent && (
-                  <button className={styles.primaryBtn} onClick={goToNext}>
-                    다음 이벤트 →
-                  </button>
-                )}
               </div>
             </div>
           ) : (
@@ -223,15 +243,13 @@ export default function ReviewDetailPage() {
                 2차 검토 요청
               </label>
 
+              {submitError && (
+                <p style={{ color: '#e53e3e', marginTop: '0.5rem' }}>⚠ {submitError}</p>
+              )}
               <div className={styles.actionRow}>
                 <button className={styles.secondaryBtn} onClick={() => navigate('/review')}>
                   취소
                 </button>
-                {nextEvent && (
-                  <button className={styles.secondaryBtn} onClick={goToNext}>
-                    다음 이벤트 →
-                  </button>
-                )}
                 <button
                   className={styles.primaryBtn}
                   disabled={!reviewResult || !reasonCode}
