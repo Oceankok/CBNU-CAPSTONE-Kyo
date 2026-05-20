@@ -326,6 +326,78 @@ GET /api/recommendations?quarter=2026-Q2
 
 ---
 
+## 경고 방송 설정 API
+
+### `GET /api/broadcast/settings`
+
+경고 방송 설정을 조회함.
+
+예시:
+
+```http
+GET /api/broadcast/settings
+```
+
+응답 예시:
+
+```json
+{
+  "enabled": true,
+  "default_language": "ko",
+  "cooldown_sec": 30,
+  "templates": [
+    {
+      "ppe_type": "helmet",
+      "zone_name": "",
+      "language": "ko",
+      "message": "해당 작업 구역의 작업자는 안전모 착용 상태를 확인해 주세요."
+    }
+  ]
+}
+```
+
+---
+
+### `PUT /api/broadcast/settings`
+
+경고 방송 설정을 저장함.
+
+예시:
+
+```http
+PUT /api/broadcast/settings
+```
+
+요청 Body 예시:
+
+```json
+{
+  "enabled": true,
+  "default_language": "ko",
+  "cooldown_sec": 30,
+  "templates": [
+    {
+      "ppe_type": "helmet",
+      "zone_name": "",
+      "language": "ko",
+      "message": "해당 작업 구역의 작업자는 안전모 착용 상태를 확인해 주세요."
+    }
+  ]
+}
+```
+
+응답은 저장된 설정을 다시 반환함.
+
+---
+
+## 참고 사항
+
+이 API는 경고 방송 설정을 저장하고 조회하기 위한 API임.
+
+실제 경고 방송 실행, 터미널 출력, TTS 음성 출력은 별도 기능에서 구현함.
+
+---
+
 ## 주의 사항
 
 - 같은 이벤트에 대해 검토 결과를 두 번 저장하면 `409 Review already exists` 응답 반환.

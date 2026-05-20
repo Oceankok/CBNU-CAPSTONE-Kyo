@@ -1077,3 +1077,127 @@ def generate_education_recommendations(quarter: str) -> dict:
         conn.commit()
 
     return get_education_recommendations(quarter)
+
+def get_broadcast_settings() -> dict[str, Any]:
+    """
+    경고 방송 설정을 조회함.
+
+    Returns:
+        dict[str, Any]:
+            경고 방송 사용 여부, 기본 언어, cooldown, 메시지 템플릿 목록.
+    """
+    with get_connection() as conn:
+        setting = conn.execute(
+            """
+            SELECT
+                setting_id,
+                enabled,
+                default_language,
+                cooldown_sec
+            FROM broadcast_setting
+            WHERE setting_id = 'DEFAULT';
+            """
+        ).fetchone()
+
+        if setting is None:
+            return {
+                "enabled": True,
+                "default_language": "ko",
+                "cooldown_sec": 30,
+                "templates": [],
+            }
+
+        templates = conn.execute(
+            """
+            SELECT
+                ppe_type,
+                zone_name,
+                language,
+                message
+            FROM broadcast_message_template
+            WHERE setting_id = ?
+            ORDER BY ppe_type ASC, zone_name ASC, template_id ASC;
+            """,
+            (setting["setting_id"],),
+        ).fetchall()
+
+    return {
+        "enabled": bool(setting["enabled"]),
+        "default_language": setting["default_language"],
+        "cooldown_sec": setting["cooldown_sec"],
+        "templates": [dict(row) for row in templates],
+    }
+
+
+def save_broadcast_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    """
+    경고 방송 설정을 저장함.
+
+    Args:
+        settings (dict[str, Any]):
+            프론트엔드에서 전달한 경고 방송 설정.
+
+    Returns:
+        dict[str, Any]:
+            저장 후 다시 조회한 경고 방송 설정.
+    """
+    updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    templates = settings.get("templates", [])
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO broadcast_setting (
+                setting_id,
+                enabled,
+                default_language,
+                cooldown_sec,
+                updated_at
+            )
+            VALUES ('DEFAULT', ?, ?, ?, ?)
+            ON CONFLICT(setting_id) DO UPDATE SET
+                enabled = excluded.enabled,
+                default_language = excluded.default_language,
+                cooldown_sec = excluded.cooldown_sec,
+                updated_at = excluded.updated_at;
+            """,
+            (
+                1 if settings.get("enabled", True) else 0,
+                settings.get("default_language", "ko"),
+                settings.get("cooldown_sec", 30),
+                updated_at,
+            ),
+        )
+
+        conn.execute(
+            """
+            DELETE FROM broadcast_message_template
+            WHERE setting_id = 'DEFAULT';
+            """
+        )
+
+        for index, template in enumerate(templates, start=1):
+            conn.execute(
+                """
+                INSERT INTO broadcast_message_template (
+                    template_id,
+                    setting_id,
+                    ppe_type,
+                    zone_name,
+                    language,
+                    message
+                )
+                VALUES (?, 'DEFAULT', ?, ?, ?, ?);
+                """,
+                (
+                    f"BCAST_TEMPLATE_{index:03d}",
+                    template["ppe_type"],
+                    template.get("zone_name", ""),
+                    template["language"],
+                    template["message"],
+                ),
+            )
+
+        conn.commit()
+
+    return get_broadcast_settings()
