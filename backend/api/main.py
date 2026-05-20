@@ -8,9 +8,11 @@ PPE 분석 시스템 초기 FastAPI 서버 파일.
 """
 
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.db.event_repository import (
@@ -40,6 +42,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve AI-generated thumbnails and video clips saved by candidate_event_service
+_STORAGE_DIR = Path(__file__).resolve().parents[2] / "storage"
+if _STORAGE_DIR.exists():
+    app.mount("/storage", StaticFiles(directory=str(_STORAGE_DIR)), name="storage")
 
 
 class ReviewRequest(BaseModel):
