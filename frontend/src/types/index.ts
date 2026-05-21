@@ -18,6 +18,7 @@ export interface CandidateEvent {
   camera_id: string;
   zone_name: string;
   process_type: string;
+  tracking_id: string;
   ppe_type: Exclude<PpeType, 'all'>;
   timestamp_start: string;
   timestamp_end: string;
