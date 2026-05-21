@@ -390,6 +390,26 @@ PUT /api/broadcast/settings
 
 ---
 
+## 정적 미디어 파일 제공
+
+후보 이벤트 검토용 썸네일과 영상 클립은 `storage` 디렉터리 아래에 저장되며, FastAPI에서 `/storage` 경로로 정적 파일을 제공함.
+
+예시 파일 경로:
+
+```text
+storage/candidate_events/thumbnails/EVT_xxxx.jpg
+```
+
+브라우저 접근 URL:
+
+```text
+http://127.0.0.1:8000/storage/candidate_events/thumbnails/EVT_xxxx.jpg
+```
+
+없는 파일에 접근하면 404를 반환하고, 실제 파일이 존재하면 200으로 파일을 반환함.
+
+이 경로는 프론트엔드 ReviewDetailPage에서 후보 이벤트의 `thumbnail_path`, `video_clip_path`를 표시할 때 사용함.
+
 ## 참고 사항
 
 이 API는 경고 방송 설정을 저장하고 조회하기 위한 API임.
