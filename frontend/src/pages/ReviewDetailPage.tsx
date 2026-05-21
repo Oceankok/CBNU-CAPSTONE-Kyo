@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
 import { fetchEvent, submitReview } from '../api/events';
+import { mediaUrl } from '../api/client';
 import type { CandidateEvent, EventReview, ReviewResult, ReviewReasonCode, ReviewRequest } from '../types';
 import styles from './ReviewDetailPage.module.css';
 
@@ -89,8 +90,6 @@ export default function ReviewDetailPage() {
     }
   };
 
-  const goToList = () => navigate('/review');
-
   return (
     <div className={styles.page}>
       <div className={styles.breadcrumb}>
@@ -106,7 +105,7 @@ export default function ReviewDetailPage() {
         <div className={styles.mediaCol}>
           <div className={styles.thumbnail}>
             {event.thumbnail_path ? (
-              <img src={event.thumbnail_path} alt="이벤트 썸네일" />
+              <img src={mediaUrl(event.thumbnail_path)} alt="이벤트 썸네일" />
             ) : (
               <div className={styles.thumbnailPlaceholder}>
                 <span className={styles.thumbnailIcon}>📷</span>
@@ -125,8 +124,14 @@ export default function ReviewDetailPage() {
               <dd>{event.frame_sample_count}프레임</dd>
               <dt>모델 버전</dt>
               <dd>{event.model_version}</dd>
-              <dt>클립 경로</dt>
-              <dd className={styles.clipPath}>{event.video_clip_path || '—'}</dd>
+              <dt>영상 클립</dt>
+              <dd className={styles.clipPath}>
+                {event.video_clip_path ? (
+                  <a href={mediaUrl(event.video_clip_path)} target="_blank" rel="noreferrer">
+                    클립 열기
+                  </a>
+                ) : '—'}
+              </dd>
             </dl>
           </div>
         </div>
