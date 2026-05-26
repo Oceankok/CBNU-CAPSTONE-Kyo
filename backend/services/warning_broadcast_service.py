@@ -20,6 +20,7 @@ from time import monotonic
 from typing import Any, Optional, Tuple
 
 from backend.db.event_repository import get_broadcast_settings
+from backend.services.tts_service import speak_message
 
 
 _last_broadcast_at: dict[Tuple[str, str, str], float] = {}
@@ -118,6 +119,7 @@ def execute_warning_broadcast(
     zone_name: str = "",
     event_id: Optional[str] = None,
     language: Optional[str] = None,
+    enable_tts: bool = False,
 ) -> dict[str, Any]:
     """
     경고 방송 설정에 따라 터미널 기반 경고 방송을 실행함.
@@ -131,6 +133,8 @@ def execute_warning_broadcast(
             연결된 후보 이벤트 ID.
         language (Optional[str]):
             강제로 사용할 언어. 지정하지 않으면 기본 방송 언어 사용.
+                    enable_tts (bool):
+            True이면 터미널 출력 후 실제 음성 출력을 수행함.
 
     Returns:
         dict[str, Any]:
@@ -200,7 +204,21 @@ def execute_warning_broadcast(
         "message": message,
         "executed": True,
         "reason": "broadcast_printed",
+        "tts_enabled": enable_tts,
     }
 
     _print_broadcast_result(result)
+
+    if enable_tts:
+        tts_result = speak_message(
+            message=message,
+            language=selected_language,
+        )
+        result["tts"] = tts_result
+
+        print(f"tts_result={tts_result['reason']}")
+
+        if tts_result.get("voice_name"):
+            print(f"tts_voice={tts_result['voice_name']}")
+
     return result

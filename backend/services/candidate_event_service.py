@@ -154,6 +154,7 @@ def create_no_helmet_candidate_event(
     duration_sec: int = 0,
     frame_sample_count: int = 1,
     tracking_id: Optional[str] = None,
+    enable_tts: bool = True,
 ) -> dict[str, Any]:
     """
     안전모 미착용 후보 이벤트를 생성하고 DB에 저장한 뒤 경고 방송을 실행함.
@@ -179,6 +180,9 @@ def create_no_helmet_candidate_event(
             이벤트 판단에 사용한 프레임 수.
         tracking_id (Optional[str]):
             외부 추적 ID. 없으면 event_id 기반으로 생성.
+        enable_tts (bool):
+            True이면 경고 방송 메시지를 실제 음성으로 출력함.
+            False이면 터미널 로그만 출력함.
 
     Returns:
         dict[str, Any]:
@@ -223,6 +227,7 @@ def create_no_helmet_candidate_event(
         event_id=event_id,
         ppe_type=event["ppe_type"],
         zone_name=zone_name,
+        enable_tts=True,
     )
 
     return {

@@ -70,6 +70,7 @@ def run_test() -> None:
             source_path="test_videos/test_video1.avi",
             frame_image=None,
             model_version="helmet_yolov8n",
+            enable_tts=False,
         )
 
         created_event_id = saved_event["event_id"]
