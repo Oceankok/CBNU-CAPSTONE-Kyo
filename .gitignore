@@ -42,3 +42,20 @@ test_images/
 
 # Event logs
 events/
+
+# Test videos
+test_videos/
+test_vedios/
+
+# Event thumbnails
+backend/media/
+
+# Local detection logs
+detect_log.txt
+
+# Event thumbnails
+backend/media/
+
+# Test videos
+test_videos/
+test_vedios/
