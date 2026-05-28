@@ -18,44 +18,22 @@ backend/db/*.db
 node_modules/
 frontend/dist/
 
-# Data folders
+# Datasets and large binary files (never commit raw data)
 data/raw/
-data/processed/
-data/merged/
-
-# Large archives
 *.zip
 *.7z
 *.tar
 *.gz
 
-# Model weights
+# Model weights (download separately — see README)
 *.pt
 *.onnx
 *.pth
 
-# YOLO output results
-runs/
+storage/candidate_events/thumbnails/*
+!storage/candidate_events/thumbnails/.gitkeep
 
-# Test images
-test_images/
+storage/candidate_events/clips/*
+!storage/candidate_events/clips/.gitkeep
 
-# Event logs
-events/
-
-# Test videos
-test_videos/
-test_vedios/
-
-# Event thumbnails
-backend/media/
-
-# Local detection logs
-detect_log.txt
-
-# Event thumbnails
-backend/media/
-
-# Test videos
-test_videos/
-test_vedios/
+.env
