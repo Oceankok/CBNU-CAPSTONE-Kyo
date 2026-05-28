@@ -11,14 +11,17 @@ const REASON_OPTIONS: Record<ReviewResult, { value: ReviewReasonCode; label: str
   confirmed: [
     { value: 'confirmed_no_helmet', label: '안전모 미착용 확인' },
     { value: 'confirmed_no_vest', label: '안전조끼 미착용 확인' },
+    { value: 'confirmed_other', label: '기타 (확정)' },
   ],
   false_positive: [
     { value: 'false_positive_occlusion', label: '가림 현상 (오탐)' },
     { value: 'false_positive_angle', label: '촬영 각도 오류 (오탐)' },
+    { value: 'false_positive_other', label: '기타 (오탐)' },
   ],
   hold: [
     { value: 'hold_unclear', label: '영상 불명확' },
     { value: 'hold_low_resolution', label: '해상도 부족' },
+    { value: 'hold_other', label: '기타 (보류)' },
   ],
 };
 
