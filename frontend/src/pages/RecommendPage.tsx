@@ -1,5 +1,7 @@
-import { MOCK_RECOMMENDATIONS } from '../mock';
-import type { EducationRecommendation } from '../types';
+import { useState, useEffect } from 'react';
+import { useOutletContext } from 'react-router-dom';
+import { fetchRecommendations } from '../api/recommendations';
+import type { EducationRecommendation, EducationRecommendationList } from '../types';
 import styles from './RecommendPage.module.css';
 
 const PPE_LABEL: Record<string, string> = {
@@ -54,7 +56,19 @@ function RecommendCard({ item }: { item: EducationRecommendation }) {
 }
 
 export default function RecommendPage() {
-  const { quarter, items } = MOCK_RECOMMENDATIONS;
+  const { quarter } = useOutletContext<{ quarter: string }>();
+  const [data, setData] = useState<EducationRecommendationList | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    fetchRecommendations(quarter)
+      .then(setData)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [quarter]);
 
   return (
     <div className={styles.page}>
@@ -67,11 +81,16 @@ export default function RecommendPage() {
         분기별 확정 위반 통계를 바탕으로 우선 교육이 필요한 항목을 추천합니다.
       </p>
 
-      <div className={styles.cardList}>
-        {items.map((item) => (
-          <RecommendCard key={item.recommendation_id} item={item} />
-        ))}
-      </div>
+      {error && <p style={{ color: '#e53e3e', marginBottom: '1rem' }}>⚠ {error}</p>}
+      {loading && <p style={{ color: '#718096', marginBottom: '1rem' }}>데이터를 불러오는 중...</p>}
+
+      {data && (
+        <div className={styles.cardList}>
+          {data.items.map((item) => (
+            <RecommendCard key={item.recommendation_id} item={item} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

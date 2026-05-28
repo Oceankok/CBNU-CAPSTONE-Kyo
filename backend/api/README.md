@@ -205,6 +205,219 @@ GET /api/events/{event_id}
 
 ---
 
+## 분기별 통계 조회 API
+
+### `GET /api/stats`
+
+분기별 통계 데이터를 조회함.
+
+예시:
+
+```http
+GET /api/stats?quarter=2026-Q2
+```
+
+응답에는 다음 데이터가 포함됨.
+
+- 분기 요약 통계
+- PPE 유형별 확정 위반 수 및 우선순위 점수
+- 구역별 확정 위반 수 및 우선순위 점수
+- 최근 분기별 helmet/vest 위반 추이
+
+응답 예시:
+
+```json
+{
+  "quarter": "2026-Q2",
+  "summary": {
+    "quarter": "2026-Q2",
+    "candidate_count": 145,
+    "confirmed_count": 98,
+    "false_positive_count": 32,
+    "hold_count": 15
+  },
+  "by_ppe_type": [
+    {
+      "ppe_type": "helmet",
+      "confirmed_count": 60,
+      "priority_score": 8.6
+    },
+    {
+      "ppe_type": "vest",
+      "confirmed_count": 38,
+      "priority_score": 5.2
+    }
+  ],
+  "by_zone": [
+    {
+      "zone_name": "프레스 구역",
+      "confirmed_count": 45,
+      "priority_score": 8.6
+    }
+  ],
+  "trend": [
+    {
+      "quarter": "2025-Q3",
+      "helmet": 40,
+      "vest": 25
+    }
+  ]
+}
+```
+
+---
+
+## 교육 추천 조회 API
+
+### `GET /api/recommendations`
+
+분기별 교육 추천 데이터를 조회함.
+
+예시:
+
+```http
+GET /api/recommendations?quarter=2026-Q2
+```
+
+응답에는 다음 데이터가 포함됨.
+
+- 추천 순위
+- PPE 유형
+- 발생 구역
+- 교육 주제
+- 우선순위 점수
+- 점수 산정 근거
+
+응답 예시:
+
+```json
+{
+  "quarter": "2026-Q2",
+  "generated_at": "2026-06-30 18:00:00",
+  "items": [
+    {
+      "recommendation_id": "EDU_2026Q2_01",
+      "recommendation_rank": 1,
+      "ppe_type": "helmet",
+      "zone_name": "프레스 구역",
+      "education_topic": "안전모 착용 기준 및 착용 전 점검 절차 교육",
+      "priority_score": 8.6,
+      "score_breakdown": {
+        "confirmed_count": 60,
+        "repeat_weeks": 5,
+        "zone_concentration": 0.61,
+        "process_risk_weight": 1.0
+      },
+      "generated_at": "2026-06-30 18:00:00"
+    }
+  ]
+}
+```
+
+---
+
+## 참고 사항
+
+현재 `/api/stats`와 `/api/recommendations`는 프론트엔드 Mock 데이터 구조와 유사한 형태로 응답하도록 구성함.
+
+`false_positive_count`는 오탐 이벤트 상세 기록을 장기 보관하지 않고, `false_positive_aggregate`에 저장된 비식별 집계값을 기준으로 계산함.
+
+이번 단계에서는 분기별 통계 및 교육 추천 더미 데이터를 DB에 저장하고 조회하는 구조를 우선 구현함. 실제 후보 이벤트와 담당자 검토 결과를 기반으로 통계를 자동 계산하고 교육 추천을 생성하는 로직은 이후 단계에서 확장 예정임.
+
+---
+
+## 경고 방송 설정 API
+
+### `GET /api/broadcast/settings`
+
+경고 방송 설정을 조회함.
+
+예시:
+
+```http
+GET /api/broadcast/settings
+```
+
+응답 예시:
+
+```json
+{
+  "enabled": true,
+  "default_language": "ko",
+  "cooldown_sec": 30,
+  "templates": [
+    {
+      "ppe_type": "helmet",
+      "zone_name": "",
+      "language": "ko",
+      "message": "해당 작업 구역의 작업자는 안전모 착용 상태를 확인해 주세요."
+    }
+  ]
+}
+```
+
+---
+
+### `PUT /api/broadcast/settings`
+
+경고 방송 설정을 저장함.
+
+예시:
+
+```http
+PUT /api/broadcast/settings
+```
+
+요청 Body 예시:
+
+```json
+{
+  "enabled": true,
+  "default_language": "ko",
+  "cooldown_sec": 30,
+  "templates": [
+    {
+      "ppe_type": "helmet",
+      "zone_name": "",
+      "language": "ko",
+      "message": "해당 작업 구역의 작업자는 안전모 착용 상태를 확인해 주세요."
+    }
+  ]
+}
+```
+
+응답은 저장된 설정을 다시 반환함.
+
+---
+
+## 정적 미디어 파일 제공
+
+후보 이벤트 검토용 썸네일과 영상 클립은 `storage` 디렉터리 아래에 저장되며, FastAPI에서 `/storage` 경로로 정적 파일을 제공함.
+
+예시 파일 경로:
+
+```text
+storage/candidate_events/thumbnails/EVT_xxxx.jpg
+```
+
+브라우저 접근 URL:
+
+```text
+http://127.0.0.1:8000/storage/candidate_events/thumbnails/EVT_xxxx.jpg
+```
+
+없는 파일에 접근하면 404를 반환하고, 실제 파일이 존재하면 200으로 파일을 반환함.
+
+이 경로는 프론트엔드 ReviewDetailPage에서 후보 이벤트의 `thumbnail_path`, `video_clip_path`를 표시할 때 사용함.
+
+## 참고 사항
+
+이 API는 경고 방송 설정을 저장하고 조회하기 위한 API임.
+
+실제 경고 방송 실행, 터미널 출력, TTS 음성 출력은 별도 기능에서 구현함.
+
+---
+
 ## 주의 사항
 
 - 같은 이벤트에 대해 검토 결과를 두 번 저장하면 `409 Review already exists` 응답 반환.

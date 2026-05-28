@@ -317,6 +317,28 @@
   color: #276749;
 }
 
+/* Summary table shown after review submission */
+.reviewSummary {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: #2d3748;
+}
+
+.reviewSummary dt {
+  font-weight: 600;
+  color: #4a5568;
+  white-space: nowrap;
+}
+
+.reviewSummary dd {
+  margin: 0;
+  color: #2d3748;
+  word-break: break-all;
+}
+
 /* 404-style not found state */
 .notFound {
   display: flex;

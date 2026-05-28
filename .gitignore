@@ -20,6 +20,7 @@ node_modules/
 frontend/dist/
 
 # Data folders
+# 원천 데이터, 전처리 데이터, 병합 데이터는 GitHub에 업로드하지 않음
 data/raw/
 data/processed/
 data/merged/

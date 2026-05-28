@@ -1,3 +1,4 @@
+-- 카메라 정보 테이블
 CREATE TABLE IF NOT EXISTS camera_info (
     camera_id TEXT PRIMARY KEY,
     camera_location TEXT,
@@ -8,6 +9,7 @@ CREATE TABLE IF NOT EXISTS camera_info (
     status TEXT
 );
 
+-- 후보 이벤트 테이블
 CREATE TABLE IF NOT EXISTS candidate_event (
     event_id TEXT PRIMARY KEY,
     camera_id TEXT NOT NULL,
@@ -27,6 +29,7 @@ CREATE TABLE IF NOT EXISTS candidate_event (
     FOREIGN KEY (camera_id) REFERENCES camera_info(camera_id)
 );
 
+-- 이벤트 리뷰 테이블
 CREATE TABLE IF NOT EXISTS event_review (
     review_id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
@@ -38,4 +41,90 @@ CREATE TABLE IF NOT EXISTS event_review (
     confirmed_violation INTEGER,
     second_review_needed INTEGER,
     FOREIGN KEY (event_id) REFERENCES candidate_event(event_id) ON DELETE CASCADE
+);
+
+-- 분기별 요약 통계
+CREATE TABLE IF NOT EXISTS quarterly_summary (
+    quarter TEXT PRIMARY KEY,
+    candidate_count INTEGER NOT NULL DEFAULT 0,
+    confirmed_count INTEGER NOT NULL DEFAULT 0,
+    false_positive_count INTEGER NOT NULL DEFAULT 0,
+    hold_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+-- PPE 유형별 분기 통계
+CREATE TABLE IF NOT EXISTS quarterly_ppe_stats (
+    stat_id TEXT PRIMARY KEY,
+    quarter TEXT NOT NULL,
+    ppe_type TEXT NOT NULL,
+    confirmed_count INTEGER NOT NULL DEFAULT 0,
+    priority_score REAL NOT NULL DEFAULT 0,
+    FOREIGN KEY (quarter) REFERENCES quarterly_summary(quarter) ON DELETE CASCADE
+);
+
+-- 구역별 분기 통계
+CREATE TABLE IF NOT EXISTS quarterly_zone_stats (
+    stat_id TEXT PRIMARY KEY,
+    quarter TEXT NOT NULL,
+    zone_name TEXT NOT NULL,
+    confirmed_count INTEGER NOT NULL DEFAULT 0,
+    priority_score REAL NOT NULL DEFAULT 0,
+    FOREIGN KEY (quarter) REFERENCES quarterly_summary(quarter) ON DELETE CASCADE
+);
+
+-- 분기별 PPE 유형 추이
+CREATE TABLE IF NOT EXISTS quarterly_trend_stats (
+    trend_id TEXT PRIMARY KEY,
+    target_quarter TEXT NOT NULL,
+    quarter TEXT NOT NULL,
+    helmet INTEGER NOT NULL DEFAULT 0,
+    vest INTEGER NOT NULL DEFAULT 0
+);
+
+-- 교육 추천 결과
+CREATE TABLE IF NOT EXISTS education_recommendation (
+    recommendation_id TEXT PRIMARY KEY,
+    quarter TEXT NOT NULL,
+    recommendation_rank INTEGER NOT NULL,
+    ppe_type TEXT NOT NULL,
+    zone_name TEXT NOT NULL,
+    education_topic TEXT NOT NULL,
+    priority_score REAL NOT NULL DEFAULT 0,
+    confirmed_count INTEGER NOT NULL DEFAULT 0,
+    repeat_weeks INTEGER NOT NULL DEFAULT 0,
+    zone_concentration REAL NOT NULL DEFAULT 0,
+    process_risk_weight REAL NOT NULL DEFAULT 1.0,
+    generated_at TEXT NOT NULL,
+    FOREIGN KEY (quarter) REFERENCES quarterly_summary(quarter) ON DELETE CASCADE
+);
+
+-- 오탐 이벤트 비식별 집계
+CREATE TABLE IF NOT EXISTS false_positive_aggregate (
+    aggregate_id TEXT PRIMARY KEY,
+    quarter TEXT NOT NULL,
+    zone_name TEXT NOT NULL,
+    ppe_type TEXT NOT NULL,
+    false_positive_count INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
+
+-- 경고 방송 기본 설정
+CREATE TABLE IF NOT EXISTS broadcast_setting (
+    setting_id TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    default_language TEXT NOT NULL DEFAULT 'ko',
+    cooldown_sec INTEGER NOT NULL DEFAULT 30,
+    updated_at TEXT NOT NULL
+);
+
+-- PPE 유형/구역/언어별 경고 방송 메시지 템플릿
+CREATE TABLE IF NOT EXISTS broadcast_message_template (
+    template_id TEXT PRIMARY KEY,
+    setting_id TEXT NOT NULL,
+    ppe_type TEXT NOT NULL,
+    zone_name TEXT NOT NULL DEFAULT '',
+    language TEXT NOT NULL,
+    message TEXT NOT NULL,
+    FOREIGN KEY (setting_id) REFERENCES broadcast_setting(setting_id) ON DELETE CASCADE
 );
