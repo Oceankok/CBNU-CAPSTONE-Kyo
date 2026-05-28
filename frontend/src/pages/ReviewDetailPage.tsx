@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
-import { fetchEvent, submitReview } from '../api/events';
+import { fetchEvent, submitReview, updateReview } from '../api/events';
 import { mediaUrl } from '../api/client';
 import type { CandidateEvent, EventReview, ReviewResult, ReviewReasonCode, ReviewRequest } from '../types';
 import styles from './ReviewDetailPage.module.css';
@@ -40,6 +40,8 @@ export default function ReviewDetailPage() {
   const [comment, setComment] = useState('');
   const [secondReview, setSecondReview] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // True when the user clicked '재검토 시작' to overwrite an existing hold/second-review
+  const [isReReview, setIsReReview] = useState(false);
 
   useEffect(() => {
     if (!event_id) return;
@@ -86,11 +88,29 @@ export default function ReviewDetailPage() {
       second_review_needed: secondReview,
     };
     try {
-      await submitReview(event_id, body);
+      // Use PUT when overwriting an existing review (re-review flow)
+      if (isReReview) {
+        await updateReview(event_id, body);
+      } else {
+        await submitReview(event_id, body);
+      }
       setSubmitted(true);
+      setIsReReview(false);
     } catch (e: unknown) {
       setSubmitError(e instanceof Error ? e.message : '제출 중 오류가 발생했습니다.');
     }
+  };
+
+  // Unlock the form to allow re-reviewing a hold or second-review-needed event
+  const handleStartReReview = () => {
+    if (!existingReview) return;
+    setReviewResult(existingReview.review_result);
+    setReasonCode(existingReview.review_reason_code);
+    setComment(existingReview.review_comment);
+    setSecondReview(existingReview.second_review_needed);
+    setIsReReview(true);
+    setSubmitted(false);
+    setSubmitError(null);
   };
 
   return (
@@ -207,11 +227,17 @@ export default function ReviewDetailPage() {
                 <button className={styles.secondaryBtn} onClick={() => navigate('/review')}>
                   ← 목록으로
                 </button>
+                {/* Allow re-review only for hold or second-review-needed events */}
+                {existingReview && (event?.event_status === 'hold' || existingReview.second_review_needed) && (
+                  <button className={styles.primaryBtn} onClick={handleStartReReview}>
+                    🔄 재검토 시작
+                  </button>
+                )}
               </div>
             </div>
           ) : (
             <div className={styles.card}>
-              <h4 className={styles.cardTitle}>검토 입력</h4>
+              <h4 className={styles.cardTitle}>{isReReview ? '🔄 재검토 입력' : '검토 입력'}</h4>
 
               {/* Three-button toggle for review result */}
               <div className={styles.resultButtons}>
