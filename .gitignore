@@ -6,6 +6,7 @@ venv/
 
 # IDE settings
 .idea/
+.vscode/
 
 # Python cache
 *.pyc
@@ -19,6 +20,7 @@ node_modules/
 frontend/dist/
 
 # Data folders
+# 원천 데이터, 전처리 데이터, 병합 데이터는 GitHub에 업로드하지 않음
 data/raw/
 data/processed/
 data/merged/
@@ -37,25 +39,12 @@ data/merged/
 # YOLO output results
 runs/
 
-# Test images
+# Test files
 test_images/
-
-# Event logs
-events/
-
-# Test videos
 test_videos/
 test_vedios/
-
-# Event thumbnails
-backend/media/
-
-# Local detection logs
 detect_log.txt
 
-# Event thumbnails
+# Event logs / thumbnails
+events/
 backend/media/
-
-# Test videos
-test_videos/
-test_vedios/
