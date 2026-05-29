@@ -629,6 +629,29 @@ http://127.0.0.1:8000/storage/candidate_events/thumbnails/EVT_20260519160059_b95
 
 # 테스트 방법
 
+## 재검토 API 회귀 테스트
+
+`PUT /api/events/{event_id}/review`의 성공·거부·오탐 처리 흐름은 아래 테스트 스크립트로 확인할 수 있음.
+
+```bash
+python backend/db/init_db.py
+python -m backend.api.test_event_rereview_api
+```
+
+### 확인 항목
+
+* `hold` 상태 이벤트를 `confirmed`로 재검토할 수 있는지 확인
+* `second_review_needed = true`인 이벤트를 재검토할 수 있는지 확인
+* 기존 검토 결과가 없는 이벤트의 재검토 요청이 거부되는지 확인
+* 재검토 대상이 아닌 이벤트의 요청이 `409`로 거부되는지 확인
+* `false_positive` 재검토 시 후보 이벤트가 삭제되고 오탐 집계가 반영되는지 확인
+
+정상 실행 시 마지막에 아래 메시지를 확인할 수 있음.
+
+```text
+[OK] event re-review regression tests passed.
+```
+
 ## API 기본 흐름 확인
 
 1. DB 초기화
