@@ -2,16 +2,16 @@
 warning_broadcast_service.py
 
 경고 방송 설정을 조회하고, PPE 미착용 후보 이벤트에 대한
-터미널 기반 경고 방송을 실행하는 서비스 파일.
+경고 메시지 출력 및 선택적 TTS 음성 방송을 실행하는 서비스 파일.
 
-현재 단계의 역할:
+역할:
 - 경고 방송 사용 여부 확인
 - PPE 유형/구역/언어에 맞는 메시지 선택
 - cooldown 기반 중복 방송 방지
-- 터미널 기반 방송 시뮬레이션
+- 터미널 기반 경고 로그 출력
+- 선택적 TTS 음성 출력
+- TTS 실패 시 터미널 로그 fallback 유지
 - 방송 실행 결과 dict 반환
-
-실제 TTS 음성 출력은 후속 단계에서 확장한다.
 """
 
 import math
@@ -133,8 +133,9 @@ def execute_warning_broadcast(
             연결된 후보 이벤트 ID.
         language (Optional[str]):
             강제로 사용할 언어. 지정하지 않으면 기본 방송 언어 사용.
-                    enable_tts (bool):
+        enable_tts (bool):
             True이면 터미널 출력 후 실제 음성 출력을 수행함.
+            False이면 터미널 로그만 출력함.
 
     Returns:
         dict[str, Any]:
@@ -210,10 +211,20 @@ def execute_warning_broadcast(
     _print_broadcast_result(result)
 
     if enable_tts:
-        tts_result = speak_message(
-            message=message,
-            language=selected_language,
-        )
+        try:
+            tts_result = speak_message(
+                message=message,
+                language=selected_language,
+            )
+        except Exception as exc:
+            tts_result = {
+                "spoken": False,
+                "reason": "tts_error",
+                "language": selected_language,
+                "message": message,
+                "error": str(exc),
+            }
+
         result["tts"] = tts_result
 
         print(f"tts_result={tts_result['reason']}")

@@ -20,6 +20,7 @@ from backend.db.event_repository import (
     get_candidate_event_by_id,
     get_review_by_event_id,
     insert_event_review,
+    update_event_review,
     get_quarterly_stats,
     get_education_recommendations,
     generate_quarterly_stats,
@@ -206,6 +207,84 @@ def create_event_review(event_id: str, request: ReviewRequest) -> dict:
         "message": "Review saved successfully",
         "event": updated_event,
         "review": saved_review,
+    }
+
+@app.put("/api/events/{event_id}/review")
+def update_existing_event_review(event_id: str, request: ReviewRequest) -> dict:
+    """
+    보류 또는 2차 검토 대상 이벤트의 기존 검토 결과를 갱신함.
+
+    Args:
+        event_id (str):
+            재검토 대상 후보 이벤트 ID.
+        request (ReviewRequest):
+            재검토 결과 요청 데이터.
+
+    Returns:
+        dict:
+            갱신된 검토 결과와 후보 이벤트 정보.
+            false_positive인 경우 삭제 처리 결과 반환.
+    """
+    event = get_candidate_event_by_id(event_id)
+
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    if request.review_result not in {"confirmed", "false_positive", "hold"}:
+        raise HTTPException(
+            status_code=400,
+            detail="review_result must be one of: confirmed, false_positive, hold",
+        )
+
+    existing_review = get_review_by_event_id(event_id)
+
+    if existing_review is None:
+        raise HTTPException(status_code=409, detail="Review does not exist")
+
+    is_hold_event = event["event_status"] == "hold"
+    needs_second_review = existing_review["second_review_needed"] == 1
+
+    if not is_hold_event and not needs_second_review:
+        raise HTTPException(
+            status_code=409,
+            detail="Event is not eligible for re-review",
+        )
+
+    confirmed_violation = 1 if request.review_result == "confirmed" else 0
+
+    review = {
+        "review_id": existing_review["review_id"],
+        "event_id": event_id,
+        "reviewer_id": request.reviewer_id,
+        "review_result": request.review_result,
+        "review_reason_code": request.review_reason_code,
+        "review_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "review_comment": request.review_comment,
+        "confirmed_violation": confirmed_violation,
+        "second_review_needed": 1 if request.second_review_needed else 0,
+    }
+
+    try:
+        update_event_review(review)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if request.review_result == "false_positive":
+        return {
+            "status": "ok",
+            "message": "False positive event deleted after re-review",
+            "event_id": event_id,
+            "review_result": request.review_result,
+        }
+
+    updated_event = get_candidate_event_by_id(event_id)
+    updated_review = get_review_by_event_id(event_id)
+
+    return {
+        "status": "ok",
+        "message": "Review updated successfully",
+        "event": updated_event,
+        "review": updated_review,
     }
 
 @app.get("/api/stats")

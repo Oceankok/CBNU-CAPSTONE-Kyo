@@ -227,7 +227,7 @@ def create_no_helmet_candidate_event(
         event_id=event_id,
         ppe_type=event["ppe_type"],
         zone_name=zone_name,
-        enable_tts=True,
+        enable_tts=enable_tts,
     )
 
     return {
