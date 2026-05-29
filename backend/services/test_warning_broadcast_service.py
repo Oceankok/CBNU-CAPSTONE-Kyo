@@ -1,6 +1,6 @@
 """경고 방송 실행 서비스 수동 테스트 스크립트."""
 
-from typing import Any, Optional
+from typing import Any
 
 import backend.services.warning_broadcast_service as broadcast_service
 from backend.db.event_repository import (
@@ -79,10 +79,17 @@ def mock_failed_tts(message: str, language: str) -> dict[str, Any]:
     }
 
 
+def mock_raised_tts(message: str, language: str) -> dict[str, Any]:
+    """
+    TTS 실행 중 예외가 발생하는 상황을 검증하기 위한 mock 함수.
+    """
+    raise RuntimeError("mock tts engine failure")
+
+
 def run_test() -> None:
     original_settings = get_broadcast_settings()
     original_speak_message = broadcast_service.speak_message
-    created_event_id: Optional[str] = None
+    created_event_ids: list[str] = []
 
     try:
         print("\n[test 1] candidate event 저장 후 구역별 한국어 경고 방송 출력")
@@ -99,6 +106,7 @@ def run_test() -> None:
         )
 
         created_event_id = saved_event["event_id"]
+        created_event_ids.append(created_event_id)
         first_broadcast = saved_event["broadcast"]
 
         assert first_broadcast["executed"] is True
@@ -164,7 +172,7 @@ def run_test() -> None:
         save_broadcast_settings(TEST_SETTINGS_KO)
         reset_broadcast_cooldown()
 
-        broadcast_service.speak_message = mock_failed_tts
+        broadcast_service.speak_message = mock_raised_tts
 
         failed_tts_broadcast = execute_warning_broadcast(
             event_id="TEST_TTS_FAILURE_EVENT",
@@ -182,13 +190,37 @@ def run_test() -> None:
         assert failed_tts_broadcast["tts"]["spoken"] is False
         assert failed_tts_broadcast["tts"]["reason"] == "tts_error"
 
+        print("\n[test 6] candidate event 생성 시 enable_tts=False 적용")
+        save_broadcast_settings(TEST_SETTINGS_KO)
+        reset_broadcast_cooldown()
+
+        silent_event = create_no_helmet_candidate_event(
+            camera_id="CAM_001",
+            confidence=0.88,
+            source_path="test_videos/test_video1.avi",
+            frame_image=None,
+            model_version="helmet_yolov8n",
+            enable_tts=False,
+        )
+
+        silent_event_id = silent_event["event_id"]
+        created_event_ids.append(silent_event_id)
+        silent_broadcast = silent_event["broadcast"]
+
+        assert silent_broadcast["executed"] is True
+        assert silent_broadcast["reason"] == "broadcast_printed"
+        assert silent_broadcast["language"] == "ko"
+        assert "tts" not in silent_broadcast
+
+        delete_candidate_event(silent_event_id)
+
         print("\n[OK] warning broadcast service test passed.")
 
     finally:
         broadcast_service.speak_message = original_speak_message
 
-        if created_event_id is not None:
-            delete_candidate_event(created_event_id)
+        for event_id in created_event_ids:
+            delete_candidate_event(event_id)
 
         save_broadcast_settings(original_settings)
         reset_broadcast_cooldown()

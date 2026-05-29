@@ -128,11 +128,15 @@ def speak_message(message: str, language: str) -> dict[str, Any]:
     Returns:
         dict[str, Any]:
             음성 출력 성공 여부와 사용 음성 정보.
+            TTS 모듈 로드 또는 엔진 실행에 실패한 경우에도
+            예외를 전달하지 않고 실패 결과를 반환함.
     """
-    pyttsx3 = _load_pyttsx3()
-    engine = pyttsx3.init()
+    engine = None
 
     try:
+        pyttsx3 = _load_pyttsx3()
+        engine = pyttsx3.init()
+
         voices = engine.getProperty("voices")
         selected_voice = _select_voice(voices, language)
 
@@ -169,4 +173,5 @@ def speak_message(message: str, language: str) -> dict[str, Any]:
         }
 
     finally:
-        engine.stop()
+        if engine is not None:
+            engine.stop()

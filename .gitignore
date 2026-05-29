@@ -48,3 +48,10 @@ detect_log.txt
 # Event logs / thumbnails
 events/
 backend/media/
+
+# Generated candidate event media files
+storage/candidate_events/thumbnails/*
+!storage/candidate_events/thumbnails/.gitkeep
+
+storage/candidate_events/clips/*
+!storage/candidate_events/clips/.gitkeep
