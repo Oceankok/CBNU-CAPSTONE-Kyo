@@ -68,7 +68,8 @@ http://127.0.0.1:8000/docs
 | GET | `/` | API 서버 상태 확인 |
 | GET | `/api/events` | 후보 이벤트 전체 목록 조회 |
 | GET | `/api/events/{event_id}` | 후보 이벤트 단건 조회 |
-| POST | `/api/events/{event_id}/review` | 후보 이벤트 담당자 검토 결과 저장 |
+| POST | `/api/events/{event_id}/review` | 후보 이벤트 최초 검토 결과 저장 |
+| PUT | `/api/events/{event_id}/review` | 보류 또는 2차 검토 대상 이벤트 재검토 결과 갱신 |
 
 ---
 
@@ -148,29 +149,99 @@ POST /api/events/EVT_0001/review
 
 ---
 
+### 담당자 재검토 결과 갱신
+
+```bash
+PUT /api/events/EVT_0001/review
+```
+
+`hold` 상태이거나 기존 검토 결과의 `second_review_needed`가 `true`인 이벤트에 대해 재검토 결과를 제출함.
+
+요청 Body 예시.
+
+```json
+{
+  "reviewer_id": "admin02",
+  "review_result": "confirmed",
+  "review_reason_code": "confirmed_no_helmet",
+  "review_comment": "재검토 결과 실제 위반 확인",
+  "second_review_needed": false
+}
+```
+
+재검토가 허용되는 조건은 다음과 같음.
+
+| 기존 상태 | 재검토 가능 여부 |
+|---|---|
+| `event_status = hold` | 가능 |
+| 기존 검토 결과의 `second_review_needed = true` | 가능 |
+| `event_status = confirmed`이고 `second_review_needed = false` | 불가능 |
+| 기존 검토 결과가 없는 이벤트 | 불가능 |
+
+`confirmed` 또는 `hold`로 재검토한 경우 기존 `event_review` 행을 갱신하고, `candidate_event.event_status`도 재검토 결과에 맞게 갱신함.
+
+정상 응답 예시.
+
+```json
+{
+  "status": "ok",
+  "message": "Review updated successfully",
+  "event": {
+    "event_id": "EVT_0001",
+    "event_status": "confirmed"
+  },
+  "review": {
+    "review_id": "RV_0001",
+    "event_id": "EVT_0001",
+    "reviewer_id": "admin02",
+    "review_result": "confirmed",
+    "review_reason_code": "confirmed_no_helmet",
+    "review_comment": "재검토 결과 실제 위반 확인",
+    "confirmed_violation": 1,
+    "second_review_needed": 0
+  }
+}
+```
+
+재검토 결과가 `false_positive`인 경우에는 기존 오탐 처리 정책에 따라 비식별 집계에 반영한 뒤 후보 이벤트를 삭제함.
+
+```json
+{
+  "status": "ok",
+  "message": "False positive event deleted after re-review",
+  "event_id": "EVT_0001",
+  "review_result": "false_positive"
+}
+```
+---
+
+
 ## 검토 결과 처리 기준
 
-`POST /api/events/{event_id}/review` API는 담당자 검토 결과에 따라 후보 이벤트를 다르게 처리함.
+### 최초 검토: `POST /api/events/{event_id}/review`
 
-| review_result | 처리 방식 |
+최초 검토 결과에 따라 후보 이벤트를 다음과 같이 처리함.
+
+| `review_result` | 처리 방식 |
 |---|---|
 | `confirmed` | 확정 위반으로 처리하고 `candidate_event.event_status`를 `confirmed`로 갱신함 |
 | `hold` | 판단 보류 상태로 처리하고 `candidate_event.event_status`를 `hold`로 갱신함 |
-| `false_positive` | 오탐으로 판단하여 후보 이벤트를 삭제함 |
+| `false_positive` | 비식별 오탐 집계에 반영한 뒤 후보 이벤트를 삭제함 |
 
-오탐으로 판단된 이벤트는 장기 보관하지 않으며, 추후 필요한 경우 비식별 집계 수준의 오탐 수만 모델 개선 지표로 활용할 수 있음.
+동일 이벤트에 기존 검토 결과가 이미 존재하는 경우 최초 검토를 다시 저장할 수 없으며, `409 Review already exists`를 반환함.
 
----
+### 재검토: `PUT /api/events/{event_id}/review`
 
-## review_result 값 기준
+재검토는 기존 이벤트가 `hold` 상태이거나, 기존 검토 결과에 `second_review_needed = true`가 저장된 경우에만 허용함.
 
-| 값 | 의미 |
+| `review_result` | 처리 방식 |
 |---|---|
-| `confirmed` | 확정 위반 |
-| `false_positive` | 오탐 |
-| `hold` | 판단 보류 |
+| `confirmed` | 기존 `event_review`를 갱신하고 `candidate_event.event_status`를 `confirmed`로 갱신함 |
+| `hold` | 기존 `event_review`를 갱신하고 `candidate_event.event_status`를 `hold`로 갱신함 |
+| `false_positive` | 비식별 오탐 집계에 반영한 뒤 후보 이벤트를 삭제함 |
 
----
+재검토 대상이 아닌 이벤트에 PUT 요청을 보내면 `409 Event is not eligible for re-review`를 반환함.  
+기존 검토 결과가 없는 이벤트에 PUT 요청을 보내면 `409 Review does not exist`를 반환함.
 
 ## 테스트 방법
 
@@ -202,6 +273,59 @@ GET /api/events/{event_id}
 ```
 
 마지막 `GET /api/events/{event_id}`에서 `review` 값이 추가되고, `event_status`가 변경되면 정상 동작임.
+
+### 재검토 API 테스트
+
+1. 최초 검토 결과를 `hold`로 저장함.
+
+```http
+POST /api/events/EVT_0001/review
+```
+
+```json
+{
+  "reviewer_id": "admin01",
+  "review_result": "hold",
+  "review_reason_code": "needs_additional_check",
+  "review_comment": "영상 확인 필요",
+  "second_review_needed": false
+}
+```
+
+2. 동일 이벤트를 `confirmed`로 재검토함.
+
+```http
+PUT /api/events/EVT_0001/review
+```
+
+```json
+{
+  "reviewer_id": "admin02",
+  "review_result": "confirmed",
+  "review_reason_code": "confirmed_no_helmet",
+  "review_comment": "재검토 결과 실제 위반 확인",
+  "second_review_needed": false
+}
+```
+
+3. 단건 조회 API로 갱신 결과를 확인함.
+
+```http
+GET /api/events/EVT_0001
+```
+
+정상 동작 시 아래 항목을 확인할 수 있음.
+
+- `event.event_status`가 `confirmed`로 변경됨
+- `review.reviewer_id`가 재검토 담당자 값으로 변경됨
+- `review.review_result`가 `confirmed`로 변경됨
+- `review.confirmed_violation`이 `1`로 변경됨
+
+추가 확인 항목:
+
+- `confirmed`이면서 `second_review_needed = false`인 이벤트의 재검토 요청은 `409`를 반환함
+- 기존 검토 결과가 없는 이벤트의 재검토 요청은 `409`를 반환함
+- `hold` 이벤트를 `false_positive`로 재검토하면 이벤트가 삭제됨
 
 ---
 
@@ -420,7 +544,10 @@ http://127.0.0.1:8000/storage/candidate_events/thumbnails/EVT_xxxx.jpg
 
 ## 주의 사항
 
-- 같은 이벤트에 대해 검토 결과를 두 번 저장하면 `409 Review already exists` 응답 반환.
-- 존재하지 않는 이벤트 ID를 조회하거나 검토 결과를 저장하면 `404 Event not found` 응답 반환.
+- 같은 이벤트에 대해 `POST /api/events/{event_id}/review`를 두 번 호출하면 `409 Review already exists` 응답을 반환함.
+- 기존 검토 결과가 있는 이벤트라도 `hold` 상태이거나 `second_review_needed = true`인 경우에는 `PUT /api/events/{event_id}/review`로 재검토 가능함.
+- 재검토 대상이 아닌 이벤트에 PUT 요청을 보내면 `409 Event is not eligible for re-review` 응답을 반환함.
+- 존재하지 않는 이벤트 ID를 조회하거나 검토 결과를 저장하면 `404 Event not found` 응답을 반환함.
 - `review_result`는 `confirmed`, `false_positive`, `hold` 중 하나만 허용함.
+- `false_positive`로 처리된 이벤트는 비식별 오탐 집계에 반영된 후 상세 후보 이벤트에서 삭제됨.
 - 로컬 DB 파일 `ppe_system.db`는 GitHub에 업로드하지 않음.
