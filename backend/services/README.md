@@ -533,17 +533,44 @@ YOLO 안전모 미착용 탐지
 
 ---
 
-# 전체 수동 테스트 순서
+# 전체 백엔드 통합 검증
 
-서비스 기능 전체를 확인할 때는 프로젝트 루트에서 아래 순서로 실행함.
+DB, 재검토 API, 후보 이벤트 서비스 기능을 한 번에 확인하려면 아래 runner를 실행함.
+
+## 기본 검증
+
+실제 음성 출력 없이 반복 실행 가능한 검증 흐름을 수행함.
 
 ```bash
-python backend/db/init_db.py
-python -m backend.services.test_candidate_event_service
-python -m backend.services.test_tts_service
-python -m backend.services.test_warning_broadcast_service
-python backend/db/check_db.py
+python -m backend.run_verification
 ```
+
+### 기본 검증 범위
+
+* DB 초기화
+* 후보 이벤트 및 검토 repository 동작 확인
+* 재검토 API 성공·거부·오탐 처리 흐름 확인
+* 후보 이벤트 저장 및 썸네일 생성 확인
+
+## 음성 출력 포함 검증
+
+TTS 및 경고 방송까지 포함하여 확인하려면 `--include-audio` 옵션을 사용함.
+
+```bash
+python -m backend.run_verification --include-audio
+```
+
+### 추가 검증 범위
+
+* 한국어·영어 TTS 음성 출력
+* 후보 이벤트 저장 후 경고 방송 출력
+* cooldown 기반 중복 방송 차단
+* 방송 OFF 설정 적용
+* TTS 실패 fallback 처리
+* `enable_tts=False` 적용 시 실제 음성 출력 생략
+
+음성 출력 포함 검증은 실행 환경에 설치된 시스템 음성을 사용하므로, 시연 전 실제 사용 환경에서 최종 확인하는 용도로 사용함.
+
 
 ## 확인 항목
 
