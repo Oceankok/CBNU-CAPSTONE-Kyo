@@ -5,8 +5,19 @@ import SummaryCard from '../components/SummaryCard';
 import StatusBadge from '../components/StatusBadge';
 import { fetchEvents } from '../api/events';
 import { fetchStats } from '../api/stats';
-import type { CandidateEvent, QuarterlyStats } from '../types';
+import type { CandidateEvent, QuarterlyStats, TrendPoint } from '../types';
 import styles from './HomePage.module.css';
+
+// Compare last two quarters in the trend array and return % change in total confirmed violations.
+// Returns undefined when there is only one (or zero) data point, so the SummaryCard hides the indicator.
+function calcTrend(trend: TrendPoint[]): number | undefined {
+  if (trend.length < 2) return undefined;
+  const prev = trend[trend.length - 2];
+  const curr = trend[trend.length - 1];
+  const prevTotal = prev.helmet + prev.vest;
+  if (prevTotal === 0) return undefined;
+  return Math.round(((curr.helmet + curr.vest - prevTotal) / prevTotal) * 100);
+}
 
 export default function HomePage() {
   const { quarter } = useOutletContext<{ quarter: string }>();
@@ -42,8 +53,8 @@ export default function HomePage() {
       {stats && (
         <div className={styles.cardRow}>
           <SummaryCard label="후보 이벤트" value={stats.summary.candidate_count} sub="AI 추출 총합" />
-          <SummaryCard label="확정 위반" value={stats.summary.confirmed_count} sub="검토 완료" trend={12} />
-          <SummaryCard label="오탐" value={stats.summary.false_positive_count} sub="AI 오탐지" trend={-5} />
+          <SummaryCard label="확정 위반" value={stats.summary.confirmed_count} sub="검토 완료" trend={calcTrend(stats.trend)} />
+          <SummaryCard label="오탐" value={stats.summary.false_positive_count} sub="AI 오탐지" />
           <SummaryCard label="보류" value={stats.summary.hold_count} sub="추가 검토 필요" />
         </div>
       )}
