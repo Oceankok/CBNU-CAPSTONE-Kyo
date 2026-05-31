@@ -6,6 +6,9 @@ import { mediaUrl } from '../api/client';
 import type { CandidateEvent, EventReview, ReviewResult, ReviewReasonCode, ReviewRequest } from '../types';
 import styles from './ReviewDetailPage.module.css';
 
+// Flatten all reason options into a lookup map for display (code → Korean label)
+const REASON_LABEL: Record<string, string> = {};
+
 // Reason code options grouped by the review result selection
 const REASON_OPTIONS: Record<ReviewResult, { value: ReviewReasonCode; label: string }[]> = {
   confirmed: [
@@ -24,6 +27,16 @@ const REASON_OPTIONS: Record<ReviewResult, { value: ReviewReasonCode; label: str
     { value: 'hold_other', label: '기타 (보류)' },
   ],
 };
+
+// Populate the lookup map after REASON_OPTIONS is defined
+for (const opts of Object.values(REASON_OPTIONS)) {
+  for (const o of opts) REASON_LABEL[o.value] = o.label;
+}
+
+// Return human-readable Korean label for a stored reason code
+function getReasonLabel(code: string): string {
+  return REASON_LABEL[code] ?? code;
+}
 
 export default function ReviewDetailPage() {
   const { event_id } = useParams<{ event_id: string }>();
@@ -211,8 +224,8 @@ export default function ReviewDetailPage() {
                         : reviewResult === 'false_positive' ? '오탐'
                         : '보류'}
                   </dd>
-                  <dt>사유 코드</dt>
-                  <dd>{existingReview ? existingReview.review_reason_code : reasonCode}</dd>
+                  <dt>판단 사유</dt>
+                  <dd>{existingReview ? getReasonLabel(existingReview.review_reason_code) : getReasonLabel(reasonCode)}</dd>
                   {(existingReview?.review_comment || comment) && (
                     <>
                       <dt>코멘트</dt>
@@ -227,8 +240,9 @@ export default function ReviewDetailPage() {
                 <button className={styles.secondaryBtn} onClick={() => navigate('/review')}>
                   ← 목록으로
                 </button>
-                {/* Allow re-review only for hold or second-review-needed events */}
-                {existingReview && (event?.event_status === 'hold' || existingReview.second_review_needed) && (
+                {/* Allow re-review only for hold or second-review-needed events.
+                    !! converts to boolean to prevent React rendering numeric 0 as text */}
+                {existingReview && !!(event?.event_status === 'hold' || existingReview.second_review_needed) && (
                   <button className={styles.primaryBtn} onClick={handleStartReReview}>
                     🔄 재검토 시작
                   </button>
