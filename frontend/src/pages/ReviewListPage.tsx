@@ -52,6 +52,11 @@ export default function ReviewListPage() {
 
   const visibleEvents = useMemo(() => sortEvents(applyFilters(events, filters)), [events, filters]);
   const pendingCount = events.filter((e) => e.event_status === 'pending').length;
+  // Extract unique zone names from fetched events for dynamic filter options
+  const availableZones = useMemo(
+    () => [...new Set(events.map((e) => e.zone_name))].sort(),
+    [events]
+  );
 
   return (
     <div className={styles.page}>
@@ -63,7 +68,7 @@ export default function ReviewListPage() {
         </div>
       )}
 
-      <FilterBar filters={filters} onChange={setFilters} />
+      <FilterBar filters={filters} onChange={setFilters} zones={availableZones} />
 
       <div className={styles.tableWrapper}>
         <table className={styles.table}>
