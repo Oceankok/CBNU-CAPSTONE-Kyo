@@ -13,8 +13,8 @@ export default function Sidebar() {
   return (
     <aside className={styles.sidebar}>
       <div className={styles.logo}>
-        <span className={styles.logoIcon}>🦺</span>
-        <span className={styles.logoText}>PPE 분석 시스템</span>
+        <span className={styles.logoIcon}>🛡️</span>
+        <span className={styles.logoText}>SENTINEL AI</span>
       </div>
       <nav className={styles.nav}>
         {NAV_ITEMS.map((item) => (
