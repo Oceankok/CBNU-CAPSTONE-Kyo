@@ -55,6 +55,16 @@ export default function ReviewDetailPage() {
   const [submitted, setSubmitted] = useState(false);
   // True when the user clicked '재검토 시작' to overwrite an existing hold/second-review
   const [isReReview, setIsReReview] = useState(false);
+  // Controls the full-screen video modal
+  const [videoOpen, setVideoOpen] = useState(false);
+
+  // Close modal on Escape key
+  useEffect(() => {
+    if (!videoOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setVideoOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [videoOpen]);
 
   useEffect(() => {
     if (!event_id) return;
@@ -161,18 +171,36 @@ export default function ReviewDetailPage() {
               <dt>모델 버전</dt>
               <dd>{event.model_version}</dd>
               <dt>영상 클립</dt>
-              <dd className={styles.clipPath}>
+              <dd>
                 {event.video_clip_path ? (
-                  <video
-                    src={mediaUrl(event.video_clip_path)}
-                    controls
-                    style={{ width: '100%', borderRadius: '6px' }}
-                  />
+                  <button className={styles.clipBtn} onClick={() => setVideoOpen(true)}>
+                    ▶ 클립 열기
+                  </button>
                 ) : '—'}
               </dd>
             </dl>
           </div>
         </div>
+
+        {/* Video modal — blurred backdrop, closes on overlay click or Escape */}
+        {videoOpen && event.video_clip_path && (
+          <div
+            className={styles.videoOverlay}
+            onClick={() => setVideoOpen(false)}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className={styles.videoModal} onClick={(e) => e.stopPropagation()}>
+              <button className={styles.videoCloseBtn} onClick={() => setVideoOpen(false)}>✕</button>
+              <video
+                src={mediaUrl(event.video_clip_path)}
+                controls
+                autoPlay
+                className={styles.videoPlayer}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Right: event details + review form */}
         <div className={styles.infoCol}>
