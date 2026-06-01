@@ -1,3 +1,4 @@
+from collections import deque
 from pathlib import Path
 import sys
 import time
@@ -32,6 +33,13 @@ EVENT_COOLDOWN_SEC = 10
 
 # 안전모 미착용 후보가 이 시간 이상 지속될 때만 이벤트 생성
 EVENT_DURATION_THRESHOLD_SEC = 2
+
+# 이벤트 발생 전후 클립 저장 설정
+CLIP_DIR = "storage/candidate_events/clips"
+CLIP_FPS = 20
+CLIP_SECONDS = 5
+CLIP_WIDTH = 640
+CLIP_HEIGHT = 480
 
 
 def validate_model_path():
@@ -121,11 +129,51 @@ def get_candidate_confidence(no_helmet_count, max_no_helmet_confidence):
     return 0.50
 
 
-def save_candidate_event(frame_image, confidence):
+def make_clip_path(event_id):
+    clip_dir = Path(CLIP_DIR)
+    clip_dir.mkdir(parents=True, exist_ok=True)
+
+    return clip_dir / f"{event_id}.mp4"
+
+
+def save_clip_from_buffer(frame_buffer, event_id):
+    if len(frame_buffer) == 0:
+        return "realtime_usb_camera"
+
+    clip_path = make_clip_path(event_id)
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(
+        str(clip_path),
+        fourcc,
+        CLIP_FPS,
+        (CLIP_WIDTH, CLIP_HEIGHT),
+    )
+
+    if not writer.isOpened():
+        print("클립 저장 실패: VideoWriter를 열 수 없습니다.")
+        return "realtime_usb_camera"
+
+    for frame in frame_buffer:
+        resized_frame = cv2.resize(frame, (CLIP_WIDTH, CLIP_HEIGHT))
+        writer.write(resized_frame)
+
+    writer.release()
+
+    print(f"이벤트 클립 저장 완료: {clip_path}")
+    return str(clip_path)
+
+
+def save_candidate_event(frame_image, confidence, frame_buffer):
+    # backend service 내부에서 event_id를 생성하므로,
+    # clip 파일명 생성을 위해 임시 timestamp 기반 id를 사용함.
+    temp_event_id = f"REALTIME_{int(time.time())}"
+    clip_path = save_clip_from_buffer(frame_buffer, temp_event_id)
+
     saved_event = create_no_helmet_candidate_event(
         camera_id=CAMERA_ID,
         confidence=confidence,
-        source_path="realtime_usb_camera",
+        source_path=clip_path,
         frame_image=frame_image,
         model_version=MODEL_VERSION,
         enable_tts=True,
@@ -134,6 +182,7 @@ def save_candidate_event(frame_image, confidence):
     print("\n[실시간 후보 이벤트 저장 완료]")
     print(f"event_id={saved_event.get('event_id')}")
     print(f"thumbnail_path={saved_event.get('thumbnail_path')}")
+    print(f"video_clip_path={saved_event.get('video_clip_path')}")
     print(f"event_status={saved_event.get('event_status')}")
     print(f"broadcast={saved_event.get('broadcast')}")
 
@@ -158,6 +207,9 @@ def main():
     last_event_time = 0
     candidate_start_time = None
 
+    # 최근 5초 정도의 프레임을 계속 보관
+    frame_buffer = deque(maxlen=CLIP_FPS * CLIP_SECONDS)
+
     try:
         while True:
             ret, frame = cap.read()
@@ -168,6 +220,10 @@ def main():
 
             frame_index += 1
             display_frame = frame.copy()
+
+            # 클립 저장용 원본 프레임 버퍼
+            clip_frame = cv2.resize(frame, (CLIP_WIDTH, CLIP_HEIGHT))
+            frame_buffer.append(clip_frame.copy())
 
             if frame_index % FRAME_INTERVAL == 0:
                 results = model.predict(
@@ -217,7 +273,8 @@ def main():
 
                             save_candidate_event(
                                 frame_image=display_frame,
-                                confidence=confidence
+                                confidence=confidence,
+                                frame_buffer=list(frame_buffer),
                             )
 
                             last_event_time = now
