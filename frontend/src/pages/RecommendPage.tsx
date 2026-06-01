@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { fetchRecommendations } from '../api/recommendations';
+import { fetchRecommendations, generateRecommendations } from '../api/recommendations';
 import type { EducationRecommendation, EducationRecommendationList } from '../types';
 import styles from './RecommendPage.module.css';
 
@@ -66,7 +66,12 @@ export default function RecommendPage() {
     setError(null);
     fetchRecommendations(quarter)
       .then(setData)
-      .catch((e) => setError(e.message))
+      .catch(() =>
+        // If no recommendations exist yet, auto-generate for the current quarter
+        generateRecommendations(quarter)
+          .then(setData)
+          .catch((e) => setError(e.message))
+      )
       .finally(() => setLoading(false));
   }, [quarter]);
 

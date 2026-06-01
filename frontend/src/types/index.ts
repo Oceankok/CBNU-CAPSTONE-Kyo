@@ -8,10 +8,13 @@ export type ReviewResult = 'confirmed' | 'false_positive' | 'hold';
 export type ReviewReasonCode =
   | 'confirmed_no_helmet'
   | 'confirmed_no_vest'
+  | 'confirmed_other'
   | 'false_positive_occlusion'
   | 'false_positive_angle'
+  | 'false_positive_other'
   | 'hold_unclear'
-  | 'hold_low_resolution';
+  | 'hold_low_resolution'
+  | 'hold_other';
 
 export interface CandidateEvent {
   event_id: string;

@@ -9,7 +9,6 @@ PPE 분석 시스템 초기 FastAPI 서버 파일.
 
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +20,7 @@ from backend.db.event_repository import (
     get_candidate_event_by_id,
     get_review_by_event_id,
     insert_event_review,
+    update_event_review,
     get_quarterly_stats,
     get_education_recommendations,
     generate_quarterly_stats,
@@ -97,59 +97,6 @@ class BroadcastSettingsRequest(BaseModel):
     templates: list[BroadcastTemplate] = Field(default_factory=list)
 
 
-def is_same_or_after(event_time: str, date_from: str) -> bool:
-    event_date = event_time[:10]
-    return event_date >= date_from
-
-
-def is_same_or_before(event_time: str, date_to: str) -> bool:
-    event_date = event_time[:10]
-    return event_date <= date_to
-
-
-def filter_candidate_events(
-    events: list[dict],
-    ppe_type: Optional[str] = None,
-    event_status: Optional[str] = None,
-    zone_name: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    min_confidence: Optional[float] = None,
-) -> list[dict]:
-    filtered_events = []
-
-    for event in events:
-        if ppe_type and event.get("ppe_type") != ppe_type:
-            continue
-
-        if event_status and event.get("event_status") != event_status:
-            continue
-
-        if zone_name and event.get("zone_name") != zone_name:
-            continue
-
-        timestamp_start = event.get("timestamp_start", "")
-
-        if date_from and not is_same_or_after(timestamp_start, date_from):
-            continue
-
-        if date_to and not is_same_or_before(timestamp_start, date_to):
-            continue
-
-        if min_confidence is not None:
-            ai_confidence = event.get("ai_confidence")
-
-            if ai_confidence is None:
-                continue
-
-            if float(ai_confidence) < min_confidence:
-                continue
-
-        filtered_events.append(event)
-
-    return filtered_events
-
-
 @app.get("/")
 def read_root() -> dict[str, str]:
     """
@@ -159,46 +106,15 @@ def read_root() -> dict[str, str]:
 
 
 @app.get("/api/events")
-def read_events(
-    ppe_type: Optional[str] = None,
-    event_status: Optional[str] = None,
-    zone_name: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    min_confidence: Optional[float] = None,
-) -> dict:
+def read_events() -> dict:
     """
-    후보 이벤트 목록 조회.
-
-    Query Parameters:
-        ppe_type:
-            PPE 유형 필터. 예: helmet, vest
-        event_status:
-            이벤트 상태 필터. 예: pending, confirmed, false_positive, hold
-        zone_name:
-            구역명 필터. 예: 프레스 구역
-        date_from:
-            조회 시작일. 예: 2026-05-01
-        date_to:
-            조회 종료일. 예: 2026-05-31
-        min_confidence:
-            최소 AI 신뢰도. 예: 0.8
+    후보 이벤트 전체 목록 조회.
     """
     events = get_all_candidate_events()
 
-    filtered_events = filter_candidate_events(
-        events=events,
-        ppe_type=ppe_type,
-        event_status=event_status,
-        zone_name=zone_name,
-        date_from=date_from,
-        date_to=date_to,
-        min_confidence=min_confidence,
-    )
-
     return {
-        "total": len(filtered_events),
-        "items": filtered_events,
+        "total": len(events),
+        "items": events,
     }
 
 
@@ -292,6 +208,85 @@ def create_event_review(event_id: str, request: ReviewRequest) -> dict:
         "message": "Review saved successfully",
         "event": updated_event,
         "review": saved_review,
+    }
+
+
+@app.put("/api/events/{event_id}/review")
+def update_existing_event_review(event_id: str, request: ReviewRequest) -> dict:
+    """
+    보류 또는 2차 검토 대상 이벤트의 기존 검토 결과를 갱신함.
+
+    Args:
+        event_id (str):
+            재검토 대상 후보 이벤트 ID.
+        request (ReviewRequest):
+            재검토 결과 요청 데이터.
+
+    Returns:
+        dict:
+            갱신된 검토 결과와 후보 이벤트 정보.
+            false_positive인 경우 삭제 처리 결과 반환.
+    """
+    event = get_candidate_event_by_id(event_id)
+
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    if request.review_result not in {"confirmed", "false_positive", "hold"}:
+        raise HTTPException(
+            status_code=400,
+            detail="review_result must be one of: confirmed, false_positive, hold",
+        )
+
+    existing_review = get_review_by_event_id(event_id)
+
+    if existing_review is None:
+        raise HTTPException(status_code=409, detail="Review does not exist")
+
+    is_hold_event = event["event_status"] == "hold"
+    needs_second_review = existing_review["second_review_needed"] == 1
+
+    if not is_hold_event and not needs_second_review:
+        raise HTTPException(
+            status_code=409,
+            detail="Event is not eligible for re-review",
+        )
+
+    confirmed_violation = 1 if request.review_result == "confirmed" else 0
+
+    review = {
+        "review_id": existing_review["review_id"],
+        "event_id": event_id,
+        "reviewer_id": request.reviewer_id,
+        "review_result": request.review_result,
+        "review_reason_code": request.review_reason_code,
+        "review_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "review_comment": request.review_comment,
+        "confirmed_violation": confirmed_violation,
+        "second_review_needed": 1 if request.second_review_needed else 0,
+    }
+
+    try:
+        update_event_review(review)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if request.review_result == "false_positive":
+        return {
+            "status": "ok",
+            "message": "False positive event deleted after re-review",
+            "event_id": event_id,
+            "review_result": request.review_result,
+        }
+
+    updated_event = get_candidate_event_by_id(event_id)
+    updated_review = get_review_by_event_id(event_id)
+
+    return {
+        "status": "ok",
+        "message": "Review updated successfully",
+        "event": updated_event,
+        "review": updated_review,
     }
 
 

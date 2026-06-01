@@ -6,3 +6,10 @@ export function fetchRecommendations(quarter: string): Promise<EducationRecommen
     `/api/recommendations?quarter=${encodeURIComponent(quarter)}`,
   );
 }
+
+export function generateRecommendations(quarter: string): Promise<EducationRecommendationList> {
+  return apiFetch<EducationRecommendationList>(
+    `/api/recommendations/generate?quarter=${encodeURIComponent(quarter)}`,
+    { method: 'POST' },
+  );
+}

@@ -25,3 +25,11 @@ export function submitReview(eventId: string, body: ReviewRequest): Promise<unkn
     body: JSON.stringify(body),
   });
 }
+
+// PUT endpoint — used to overwrite an existing review for hold / second_review_needed events
+export function updateReview(eventId: string, body: ReviewRequest): Promise<unknown> {
+  return apiFetch(`/api/events/${eventId}/review`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+}

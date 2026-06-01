@@ -448,6 +448,110 @@ def insert_event_review(review: dict[str, Any]) -> None:
             )
 
         conn.commit()
+        
+
+def update_event_review(review: dict[str, Any]) -> None:
+    """
+    기존 담당자 검토 결과를 재검토 결과로 갱신함.
+
+    Args:
+        review (dict[str, Any]):
+            갱신할 검토 결과 정보.
+
+    Required keys:
+        - review_id
+        - event_id
+        - reviewer_id
+        - review_result
+        - review_reason_code
+        - review_time
+        - review_comment
+        - confirmed_violation
+        - second_review_needed
+
+    Notes:
+        - confirmed, hold는 기존 event_review 행을 갱신하고
+          candidate_event.event_status를 함께 갱신함.
+        - false_positive는 기존 정책에 따라 비식별 오탐 집계에 반영한 뒤
+          candidate_event를 삭제함.
+        - candidate_event 삭제 시 ON DELETE CASCADE에 의해
+          기존 event_review 행도 함께 삭제됨.
+    """
+    review_query = """
+        UPDATE event_review
+        SET
+            reviewer_id = :reviewer_id,
+            review_result = :review_result,
+            review_reason_code = :review_reason_code,
+            review_time = :review_time,
+            review_comment = :review_comment,
+            confirmed_violation = :confirmed_violation,
+            second_review_needed = :second_review_needed
+        WHERE event_id = :event_id;
+    """
+
+    status_query = """
+        UPDATE candidate_event
+        SET event_status = :event_status
+        WHERE event_id = :event_id;
+    """
+
+    with get_connection() as conn:
+        existing_review = conn.execute(
+            """
+            SELECT review_id
+            FROM event_review
+            WHERE event_id = ?;
+            """,
+            (review["event_id"],),
+        ).fetchone()
+
+        if existing_review is None:
+            raise ValueError("Review does not exist")
+
+        if review["review_result"] == "false_positive":
+            event = conn.execute(
+                """
+                SELECT
+                    ce.event_id,
+                    ci.zone_name,
+                    ce.ppe_type,
+                    ce.timestamp_start
+                FROM candidate_event ce
+                LEFT JOIN camera_info ci
+                    ON ce.camera_id = ci.camera_id
+                WHERE ce.event_id = ?;
+                """,
+                (review["event_id"],),
+            ).fetchone()
+
+            if event is None:
+                raise ValueError("Event does not exist")
+
+            _upsert_false_positive_aggregate(conn, event)
+
+            conn.execute(
+                """
+                DELETE FROM candidate_event
+                WHERE event_id = ?;
+                """,
+                (review["event_id"],),
+            )
+        else:
+            cursor = conn.execute(review_query, review)
+
+            if cursor.rowcount == 0:
+                raise ValueError("Review does not exist")
+
+            conn.execute(
+                status_query,
+                {
+                    "event_status": review["review_result"],
+                    "event_id": review["event_id"],
+                },
+            )
+
+        conn.commit()
 
 
 def get_review_by_event_id(event_id: str) -> Optional[dict[str, Any]]:

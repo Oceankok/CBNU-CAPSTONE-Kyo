@@ -1,10 +1,10 @@
 import type { FilterState, EventStatus, PpeType } from '../types';
-import { AVAILABLE_ZONES } from '../mock';
 import styles from './FilterBar.module.css';
 
 interface FilterBarProps {
   filters: FilterState;
   onChange: (filters: FilterState) => void;
+  zones: string[];
 }
 
 const PPE_OPTIONS: { value: PpeType; label: string }[] = [
@@ -21,7 +21,7 @@ const STATUS_OPTIONS: { value: EventStatus | 'all'; label: string }[] = [
   { value: 'hold', label: '보류' },
 ];
 
-export default function FilterBar({ filters, onChange }: FilterBarProps) {
+export default function FilterBar({ filters, onChange, zones }: FilterBarProps) {
   const update = (patch: Partial<FilterState>) =>
     onChange({ ...filters, ...patch });
 
@@ -95,9 +95,9 @@ export default function FilterBar({ filters, onChange }: FilterBarProps) {
         />
       </div>
 
-      {/* Zone multi-select as checkboxes */}
+      {/* Zone multi-select as checkboxes — dynamically derived from actual event data */}
       <div className={styles.zoneGroup}>
-        {AVAILABLE_ZONES.map((zone) => (
+        {zones.map((zone) => (
           <label key={zone} className={styles.zoneLabel}>
             <input
               type="checkbox"
