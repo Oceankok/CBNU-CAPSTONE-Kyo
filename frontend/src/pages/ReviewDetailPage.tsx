@@ -163,9 +163,11 @@ export default function ReviewDetailPage() {
               <dt>영상 클립</dt>
               <dd className={styles.clipPath}>
                 {event.video_clip_path ? (
-                  <a href={mediaUrl(event.video_clip_path)} target="_blank" rel="noreferrer">
-                    클립 열기
-                  </a>
+                  <video
+                    src={mediaUrl(event.video_clip_path)}
+                    controls
+                    style={{ width: '100%', borderRadius: '6px' }}
+                  />
                 ) : '—'}
               </dd>
             </dl>
