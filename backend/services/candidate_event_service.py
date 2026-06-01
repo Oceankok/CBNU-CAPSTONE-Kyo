@@ -14,6 +14,8 @@ AI 탐지 결과를 candidate_event DB 구조에 맞게 변환하고 저장하�
 이 서비스는 AI 탐지 코드에서 직접 DB 구조를 다루지 않도록 하기 위한 연결 계층이다.
 """
 
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -142,6 +144,43 @@ def _normalize_media_path(
         return str(path).replace("\\", "/")
 
 
+def _save_clip(event_id: str, source_path: Optional[Union[str, Path]]) -> str:
+    """
+    Convert source video to H.264 MP4 saved under CLIP_DIR for browser compatibility.
+    Falls back to a direct file copy if ffmpeg is unavailable or conversion fails.
+    """
+    if source_path is None:
+        return ""
+
+    src = Path(source_path)
+    if not src.exists():
+        # File not found — store the normalized path reference as-is.
+        return _normalize_media_path(source_path)
+
+    _ensure_media_dirs()
+    dest = CLIP_DIR / f"{event_id}.mp4"
+
+    try:
+        # Re-encode to H.264 so all modern browsers (Chrome/Edge/Safari) can play it.
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", str(src),
+                "-vcodec", "libx264",
+                "-acodec", "aac",
+                "-movflags", "+faststart",
+                str(dest),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # ffmpeg unavailable or conversion failed — copy original without re-encoding.
+        shutil.copy2(str(src), str(dest))
+
+    return _to_relative_path(dest)
+
+
 def create_no_helmet_candidate_event(
     *,
     camera_id: str,
@@ -195,7 +234,8 @@ def create_no_helmet_candidate_event(
     end_time = timestamp_end or start_time
 
     thumbnail_path = _save_thumbnail(event_id, frame_image)
-    video_clip_path = _normalize_media_path(source_path)
+    # Convert to H.264 and save to CLIP_DIR for cross-browser playback.
+    video_clip_path = _save_clip(event_id, source_path)
 
     event = {
         "event_id": event_id,
