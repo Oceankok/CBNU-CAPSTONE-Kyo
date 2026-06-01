@@ -54,6 +54,7 @@ app.mount(
     name="storage",
 )
 
+
 class ReviewRequest(BaseModel):
     """
     담당자 검토 결과 저장 요청 모델.
@@ -209,6 +210,7 @@ def create_event_review(event_id: str, request: ReviewRequest) -> dict:
         "review": saved_review,
     }
 
+
 @app.put("/api/events/{event_id}/review")
 def update_existing_event_review(event_id: str, request: ReviewRequest) -> dict:
     """
@@ -286,6 +288,7 @@ def update_existing_event_review(event_id: str, request: ReviewRequest) -> dict:
         "event": updated_event,
         "review": updated_review,
     }
+
 
 @app.get("/api/stats")
 def read_quarterly_stats(quarter: str = "2026-Q2") -> dict:
