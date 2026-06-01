@@ -169,68 +169,6 @@
   background: #2c5282;
 }
 
-/* Full-screen video modal with blurred backdrop */
-.videoOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  animation: fadeIn 0.18s ease;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-.videoModal {
-  position: relative;
-  width: min(860px, 92vw);
-  background: #1a202c;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
-  animation: slideUp 0.2s ease;
-}
-
-@keyframes slideUp {
-  from { transform: translateY(20px); opacity: 0; }
-  to   { transform: translateY(0);    opacity: 1; }
-}
-
-.videoPlayer {
-  display: block;
-  width: 100%;
-  max-height: 70vh;
-  background: #000;
-}
-
-.videoCloseBtn {
-  position: absolute;
-  top: 10px;
-  right: 12px;
-  z-index: 10;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  border: none;
-  border-radius: 50%;
-  width: 30px;
-  height: 30px;
-  font-size: 14px;
-  cursor: pointer;
-  line-height: 1;
-  transition: background 0.15s;
-}
-
-.videoCloseBtn:hover {
-  background: rgba(0, 0, 0, 0.85);
-}
-
 /* Review result toggle buttons */
 .resultButtons {
   display: grid;
