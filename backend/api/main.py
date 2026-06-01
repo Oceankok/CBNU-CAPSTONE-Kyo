@@ -9,6 +9,7 @@ PPE 분석 시스템 초기 FastAPI 서버 파일.
 
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,6 +54,7 @@ app.mount(
     name="storage",
 )
 
+
 class ReviewRequest(BaseModel):
     """
     담당자 검토 결과 저장 요청 모델.
@@ -95,6 +97,59 @@ class BroadcastSettingsRequest(BaseModel):
     templates: list[BroadcastTemplate] = Field(default_factory=list)
 
 
+def is_same_or_after(event_time: str, date_from: str) -> bool:
+    event_date = event_time[:10]
+    return event_date >= date_from
+
+
+def is_same_or_before(event_time: str, date_to: str) -> bool:
+    event_date = event_time[:10]
+    return event_date <= date_to
+
+
+def filter_candidate_events(
+    events: list[dict],
+    ppe_type: Optional[str] = None,
+    event_status: Optional[str] = None,
+    zone_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    min_confidence: Optional[float] = None,
+) -> list[dict]:
+    filtered_events = []
+
+    for event in events:
+        if ppe_type and event.get("ppe_type") != ppe_type:
+            continue
+
+        if event_status and event.get("event_status") != event_status:
+            continue
+
+        if zone_name and event.get("zone_name") != zone_name:
+            continue
+
+        timestamp_start = event.get("timestamp_start", "")
+
+        if date_from and not is_same_or_after(timestamp_start, date_from):
+            continue
+
+        if date_to and not is_same_or_before(timestamp_start, date_to):
+            continue
+
+        if min_confidence is not None:
+            ai_confidence = event.get("ai_confidence")
+
+            if ai_confidence is None:
+                continue
+
+            if float(ai_confidence) < min_confidence:
+                continue
+
+        filtered_events.append(event)
+
+    return filtered_events
+
+
 @app.get("/")
 def read_root() -> dict[str, str]:
     """
@@ -104,15 +159,46 @@ def read_root() -> dict[str, str]:
 
 
 @app.get("/api/events")
-def read_events() -> dict:
+def read_events(
+    ppe_type: Optional[str] = None,
+    event_status: Optional[str] = None,
+    zone_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    min_confidence: Optional[float] = None,
+) -> dict:
     """
-    후보 이벤트 전체 목록 조회.
+    후보 이벤트 목록 조회.
+
+    Query Parameters:
+        ppe_type:
+            PPE 유형 필터. 예: helmet, vest
+        event_status:
+            이벤트 상태 필터. 예: pending, confirmed, false_positive, hold
+        zone_name:
+            구역명 필터. 예: 프레스 구역
+        date_from:
+            조회 시작일. 예: 2026-05-01
+        date_to:
+            조회 종료일. 예: 2026-05-31
+        min_confidence:
+            최소 AI 신뢰도. 예: 0.8
     """
     events = get_all_candidate_events()
 
+    filtered_events = filter_candidate_events(
+        events=events,
+        ppe_type=ppe_type,
+        event_status=event_status,
+        zone_name=zone_name,
+        date_from=date_from,
+        date_to=date_to,
+        min_confidence=min_confidence,
+    )
+
     return {
-        "total": len(events),
-        "items": events,
+        "total": len(filtered_events),
+        "items": filtered_events,
     }
 
 
@@ -207,6 +293,7 @@ def create_event_review(event_id: str, request: ReviewRequest) -> dict:
         "event": updated_event,
         "review": saved_review,
     }
+
 
 @app.get("/api/stats")
 def read_quarterly_stats(quarter: str = "2026-Q2") -> dict:
