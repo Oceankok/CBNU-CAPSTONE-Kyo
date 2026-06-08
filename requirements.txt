@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pydantic
+opencv-python
+ultralytics
+imageio-ffmpeg
+pyttsx3
