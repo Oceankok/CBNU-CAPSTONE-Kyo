@@ -9,7 +9,10 @@ OUT = ROOT / "data" / "processed" / "shwd_yolo"
 CLASS_MAP = {
     "helmet": 0,
     "hat": 0,
-    "head": 2,
+    # SHWD uses "head" for a bare/unprotected head, not a full person box.
+    # Mapping it to person teaches the model that tiny head boxes are people
+    # and causes duplicate/narrow person detections in crowded scenes.
+    "head": 3,
     "person": 2,
 }
 

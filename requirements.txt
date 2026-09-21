@@ -3,5 +3,7 @@ uvicorn
 pydantic
 opencv-python
 ultralytics
+lap>=0.5.12
+PyYAML
 imageio-ffmpeg
 pyttsx3

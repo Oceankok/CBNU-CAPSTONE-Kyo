@@ -7,6 +7,18 @@ TRAIN_RATIO = 0.7
 VAL_RATIO = 0.2
 TEST_RATIO = 0.1
 
+
+def fixed_split(img_path: Path):
+    """Keep the official Construction-PPE validation/test split intact."""
+    name = img_path.name.lower()
+    if name.startswith("construction_val_"):
+        return "val"
+    if name.startswith("construction_test_"):
+        return "test"
+    if name.startswith("construction_"):
+        return "train"
+    return None
+
 def main():
     random.seed(RANDOM_SEED)
 
@@ -20,16 +32,24 @@ def main():
         (dst_root / split / "labels").mkdir(parents=True, exist_ok=True)
 
     image_files = [p for p in src_images.iterdir() if p.is_file()]
-    random.shuffle(image_files)
+    fixed = {"train": [], "val": [], "test": []}
+    unsplit = []
+    for image_path in image_files:
+        split = fixed_split(image_path)
+        if split is None:
+            unsplit.append(image_path)
+        else:
+            fixed[split].append(image_path)
+    random.shuffle(unsplit)
 
-    total = len(image_files)
+    total = len(unsplit)
     train_end = int(total * TRAIN_RATIO)
     val_end = train_end + int(total * VAL_RATIO)
 
     split_map = {
-        "train": image_files[:train_end],
-        "val": image_files[train_end:val_end],
-        "test": image_files[val_end:]
+        "train": fixed["train"] + unsplit[:train_end],
+        "val": fixed["val"] + unsplit[train_end:val_end],
+        "test": fixed["test"] + unsplit[val_end:]
     }
 
     for split, files in split_map.items():
@@ -42,6 +62,8 @@ def main():
             shutil.copy2(label_path, dst_root / split / "labels" / label_path.name)
 
     print("Done:", dst_root)
+    for split, files in split_map.items():
+        print(f"{split}: {len(files)} images")
 
 if __name__ == "__main__":
     main()

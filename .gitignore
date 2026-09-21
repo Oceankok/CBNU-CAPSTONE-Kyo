@@ -46,6 +46,7 @@ data/merged/
 runs/
 
 # Test files
+work/
 test_images/
 test_videos/
 test_vedios/

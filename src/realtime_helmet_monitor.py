@@ -1,7 +1,23 @@
+"""Real-time, multi-worker helmet monitoring.
+
+The hot camera loop only captures, tracks, associates and renders.  Clip
+encoding, database writes and TTS run on a background worker so an event does
+not freeze inference.
+"""
+
+from __future__ import annotations
+
+import argparse
 from collections import deque
+from dataclasses import dataclass
+import importlib.util
 from pathlib import Path
+from queue import Full, Queue
 import sys
+from tempfile import NamedTemporaryFile
+from threading import Thread
 import time
+from typing import Any, Sequence
 
 import cv2
 from ultralytics import YOLO
@@ -11,297 +27,349 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT))
 
 from backend.services.candidate_event_service import create_no_helmet_candidate_event
+from src.ppe_tracking import (
+    Detection,
+    IoUTrackFallback,
+    PersonPPEAssociator,
+    ViolationEvent,
+    ViolationTracker,
+    WorkerObservation,
+)
 
 
-MODEL_PATH = "Exp01_yolov8n_640_clean_3class-13/weights/best.pt"
-
-# USB 웹캠 번호
-CAMERA_SOURCE = 0
-
-CAMERA_ID = "CAM_001"
-MODEL_VERSION = "Exp01_yolov8n_640_clean_3class-13"
-
-PERSON_CLASS_NAME = "person"
-HELMET_CLASS_NAME = "helmet"
-NO_HELMET_CLASS_NAME = "no_helmet"
-
-CONF_THRESHOLD = 0.35
-FRAME_INTERVAL = 10
-
-# 같은 상황에서 계속 TTS가 울리지 않게 제한
-EVENT_COOLDOWN_SEC = 10
-
-# 안전모 미착용 후보가 이 시간 이상 지속될 때만 이벤트 생성
-EVENT_DURATION_THRESHOLD_SEC = 2
-
-# 이벤트 발생 전후 클립 저장 설정
-CLIP_DIR = "storage/candidate_events/clips"
-CLIP_FPS = 20
-CLIP_SECONDS = 5
+DEFAULT_MODEL_PATH = "Exp01_yolov8n_640_clean_3class-13/weights/best.pt"
+DEFAULT_CAMERA_ID = "CAM_001"
 CLIP_WIDTH = 640
 CLIP_HEIGHT = 480
 
 
-def validate_model_path():
-    model_path = Path(MODEL_PATH)
-
-    if not model_path.exists():
-        raise FileNotFoundError(
-            f"학습된 안전모 모델을 찾을 수 없습니다: {MODEL_PATH}"
-        )
-
-
-def calculate_iou(box_a, box_b):
-    ax1, ay1, ax2, ay2 = box_a
-    bx1, by1, bx2, by2 = box_b
-
-    inter_x1 = max(ax1, bx1)
-    inter_y1 = max(ay1, by1)
-    inter_x2 = min(ax2, bx2)
-    inter_y2 = min(ay2, by2)
-
-    inter_w = max(0, inter_x2 - inter_x1)
-    inter_h = max(0, inter_y2 - inter_y1)
-    inter_area = inter_w * inter_h
-
-    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
-    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
-
-    union_area = area_a + area_b - inter_area
-
-    if union_area == 0:
-        return 0
-
-    return inter_area / union_area
+@dataclass(frozen=True)
+class EventPayload:
+    frame_image: Any
+    frame_buffer: tuple[Any, ...]
+    events: tuple[ViolationEvent, ...]
+    clip_fps: float
 
 
-def is_duplicate_box(new_box, saved_boxes, iou_threshold=0.4):
-    for saved_box in saved_boxes:
-        if calculate_iou(new_box, saved_box) >= iou_threshold:
+class EventWorker:
+    """Serialize media/DB/TTS work away from the inference loop."""
+
+    def __init__(
+        self,
+        camera_id: str,
+        model_version: str,
+        enable_tts: bool,
+        queue_size: int = 8,
+    ) -> None:
+        self.camera_id = camera_id
+        self.model_version = model_version
+        self.enable_tts = enable_tts
+        self._queue: Queue[EventPayload | None] = Queue(maxsize=queue_size)
+        self._thread = Thread(target=self._run, name="ppe-event-writer", daemon=True)
+        self._thread.start()
+
+    def submit(self, payload: EventPayload) -> bool:
+        try:
+            self._queue.put_nowait(payload)
             return True
+        except Full:
+            print("[WARN] 이벤트 저장 대기열이 가득 차 이번 이벤트를 건너뜁니다.")
+            return False
 
-    return False
+    def close(self) -> None:
+        self._queue.put(None)
+        self._thread.join()
 
+    @staticmethod
+    def _write_clip(frames: Sequence[Any], fps: float) -> Path | None:
+        if not frames:
+            return None
+        with NamedTemporaryFile(prefix="ppe_event_", suffix=".mp4", delete=False) as tmp:
+            path = Path(tmp.name)
+        writer = cv2.VideoWriter(
+            str(path),
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            max(1.0, fps),
+            (CLIP_WIDTH, CLIP_HEIGHT),
+        )
+        if not writer.isOpened():
+            path.unlink(missing_ok=True)
+            return None
+        try:
+            for frame in frames:
+                writer.write(frame)
+        finally:
+            writer.release()
+        return path
 
-def count_detections(result, names):
-    person_boxes = []
-    helmet_count = 0
-    no_helmet_count = 0
-    max_no_helmet_confidence = 0.0
-
-    for box in result.boxes:
-        cls_id = int(box.cls[0])
-        cls_name = names[cls_id]
-
-        if cls_name == PERSON_CLASS_NAME:
-            xyxy = box.xyxy[0].tolist()
-
-            if not is_duplicate_box(xyxy, person_boxes, iou_threshold=0.4):
-                person_boxes.append(xyxy)
-
-        elif cls_name == HELMET_CLASS_NAME:
-            helmet_count += 1
-
-        elif cls_name == NO_HELMET_CLASS_NAME:
-            confidence = float(box.conf[0])
-            no_helmet_count += 1
-            max_no_helmet_confidence = max(max_no_helmet_confidence, confidence)
-
-    person_count = len(person_boxes)
-
-    return person_count, helmet_count, no_helmet_count, max_no_helmet_confidence
-
-
-def has_no_helmet_candidate(person_count, helmet_count, no_helmet_count):
-    if person_count <= 0:
-        return False
-
-    if no_helmet_count > 0:
-        return True
-
-    return person_count > helmet_count
-
-
-def get_candidate_confidence(no_helmet_count, max_no_helmet_confidence):
-    if no_helmet_count > 0:
-        return max_no_helmet_confidence
-
-    return 0.50
-
-
-def make_clip_path(event_id):
-    clip_dir = Path(CLIP_DIR)
-    clip_dir.mkdir(parents=True, exist_ok=True)
-
-    return clip_dir / f"{event_id}.mp4"
-
-
-def save_clip_from_buffer(frame_buffer, event_id):
-    if len(frame_buffer) == 0:
-        return "realtime_usb_camera"
-
-    clip_path = make_clip_path(event_id)
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(
-        str(clip_path),
-        fourcc,
-        CLIP_FPS,
-        (CLIP_WIDTH, CLIP_HEIGHT),
-    )
-
-    if not writer.isOpened():
-        print("클립 저장 실패: VideoWriter를 열 수 없습니다.")
-        return "realtime_usb_camera"
-
-    for frame in frame_buffer:
-        resized_frame = cv2.resize(frame, (CLIP_WIDTH, CLIP_HEIGHT))
-        writer.write(resized_frame)
-
-    writer.release()
-
-    print(f"이벤트 클립 저장 완료: {clip_path}")
-    return str(clip_path)
+    def _run(self) -> None:
+        while True:
+            payload = self._queue.get()
+            if payload is None:
+                self._queue.task_done()
+                return
+            clip_path: Path | None = None
+            try:
+                clip_path = self._write_clip(payload.frame_buffer, payload.clip_fps)
+                for event in payload.events:
+                    try:
+                        saved = create_no_helmet_candidate_event(
+                            camera_id=self.camera_id,
+                            confidence=event.confidence,
+                            source_path=clip_path or "realtime_camera",
+                            frame_image=payload.frame_image,
+                            model_version=self.model_version,
+                            duration_sec=max(1, round(event.duration_sec)),
+                            frame_sample_count=event.sample_count,
+                            tracking_id=str(event.track_id),
+                            enable_tts=self.enable_tts,
+                        )
+                        print(
+                            "[EVENT] "
+                            f"track={event.track_id} status={event.status} "
+                            f"confidence={event.confidence:.2f} "
+                            f"event_id={saved.get('event_id')}"
+                        )
+                    except Exception as exc:
+                        print(f"[ERROR] track={event.track_id} 이벤트 저장 실패: {exc}")
+            except Exception as exc:  # Keep the worker alive after one failed event.
+                print(f"[ERROR] 이벤트 저장 실패: {exc}")
+            finally:
+                if clip_path is not None:
+                    clip_path.unlink(missing_ok=True)
+                self._queue.task_done()
 
 
-def save_candidate_event(frame_image, confidence, frame_buffer):
-    # backend service 내부에서 event_id를 생성하므로,
-    # clip 파일명 생성을 위해 임시 timestamp 기반 id를 사용함.
-    temp_event_id = f"REALTIME_{int(time.time())}"
-    clip_path = save_clip_from_buffer(frame_buffer, temp_event_id)
+class RollingPerformance:
+    def __init__(self, window_size: int = 120) -> None:
+        self.inference_ms: deque[float] = deque(maxlen=window_size)
+        self.started_at = time.perf_counter()
+        self.frames = 0
+        self.inference_frames = 0
 
-    saved_event = create_no_helmet_candidate_event(
-        camera_id=CAMERA_ID,
-        confidence=confidence,
-        source_path=clip_path,
-        frame_image=frame_image,
-        model_version=MODEL_VERSION,
-        enable_tts=True,
-    )
+    def add_frame(self) -> None:
+        self.frames += 1
 
-    print("\n[실시간 후보 이벤트 저장 완료]")
-    print(f"event_id={saved_event.get('event_id')}")
-    print(f"thumbnail_path={saved_event.get('thumbnail_path')}")
-    print(f"video_clip_path={saved_event.get('video_clip_path')}")
-    print(f"event_status={saved_event.get('event_status')}")
-    print(f"broadcast={saved_event.get('broadcast')}")
+    def add_inference(self, latency_ms: float) -> None:
+        self.inference_frames += 1
+        self.inference_ms.append(latency_ms)
 
-
-def main():
-    validate_model_path()
-
-    model = YOLO(MODEL_PATH)
-    names = model.names
-
-    cap = cv2.VideoCapture(CAMERA_SOURCE, cv2.CAP_DSHOW)
-
-    if not cap.isOpened():
-        raise RuntimeError(
-            f"카메라를 열 수 없습니다. CAMERA_SOURCE={CAMERA_SOURCE}"
+    def summary(self) -> str:
+        elapsed = max(time.perf_counter() - self.started_at, 1e-6)
+        mean_ms = (
+            sum(self.inference_ms) / len(self.inference_ms)
+            if self.inference_ms
+            else 0.0
+        )
+        return (
+            f"capture={self.frames / elapsed:.1f} FPS | "
+            f"infer={mean_ms:.1f} ms | "
+            f"processed={self.inference_frames / elapsed:.1f} FPS"
         )
 
-    print("실시간 안전모 모니터링 시작")
-    print("종료하려면 q 또는 ESC 키를 누르세요.")
 
+def parse_source(value: str) -> int | str:
+    return int(value) if value.isdigit() else value
+
+
+def extract_detections(result: Any, names: dict[int, str] | list[str]) -> list[Detection]:
+    detections: list[Detection] = []
+    boxes = result.boxes
+    track_ids = boxes.id.int().cpu().tolist() if boxes.id is not None else []
+    for index, box in enumerate(boxes):
+        class_id = int(box.cls[0])
+        label = names[class_id]
+        if label not in {"person", "helmet", "no_helmet"}:
+            continue
+        xyxy = tuple(float(value) for value in box.xyxy[0].cpu().tolist())
+        detections.append(
+            Detection(
+                label=label,
+                confidence=float(box.conf[0]),
+                box=xyxy,  # type: ignore[arg-type]
+                track_id=track_ids[index] if index < len(track_ids) else None,
+            )
+        )
+    return detections
+
+
+def annotate_workers(frame: Any, observations: Sequence[WorkerObservation]) -> Any:
+    for observation in observations:
+        x1, y1, x2, y2 = (int(value) for value in observation.person.box)
+        compliant = observation.status == "helmet"
+        color = (20, 190, 20) if compliant else (20, 20, 230)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        cv2.putText(
+            frame,
+            f"ID {observation.track_id}: {observation.status}",
+            (x1, max(18, y1 - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+    return frame
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", default=DEFAULT_MODEL_PATH)
+    parser.add_argument("--source", default="0", help="camera index or video path")
+    parser.add_argument("--camera-id", default=DEFAULT_CAMERA_ID)
+    parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--conf", type=float, default=0.25)
+    parser.add_argument("--iou", type=float, default=0.5)
+    parser.add_argument("--max-det", type=int, default=100)
+    parser.add_argument("--frame-interval", type=int, default=2)
+    parser.add_argument("--tracker", default="bytetrack.yaml")
+    parser.add_argument("--device", default=None)
+    parser.add_argument("--half", action="store_true")
+    parser.add_argument("--event-duration", type=float, default=2.0)
+    parser.add_argument("--event-cooldown", type=float, default=10.0)
+    parser.add_argument("--min-violation-ratio", type=float, default=0.6)
+    parser.add_argument("--clip-seconds", type=float, default=5.0)
+    parser.add_argument(
+        "--require-no-helmet-class",
+        action="store_true",
+        help="do not infer violation from an unmatched person",
+    )
+    parser.add_argument("--no-display", action="store_true")
+    parser.add_argument("--no-events", action="store_true")
+    parser.add_argument("--no-tts", action="store_true")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
+    if args.frame_interval < 1:
+        raise ValueError("--frame-interval must be at least 1")
+    model_path = Path(args.model)
+    if not model_path.exists():
+        raise FileNotFoundError(f"학습된 안전모 모델을 찾을 수 없습니다: {model_path}")
+
+    model = YOLO(str(model_path))
+    source = parse_source(args.source)
+    cap = cv2.VideoCapture(source)
+    if not cap.isOpened():
+        raise RuntimeError(f"입력을 열 수 없습니다: {source}")
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    source_fps = cap.get(cv2.CAP_PROP_FPS)
+    clip_fps = source_fps if 1.0 <= source_fps <= 240.0 else 20.0
+    frame_buffer: deque[Any] = deque(
+        maxlen=max(1, round(clip_fps * args.clip_seconds))
+    )
+
+    associator = PersonPPEAssociator(
+        infer_missing_helmet=not args.require_no_helmet_class
+    )
+    violation_tracker = ViolationTracker(
+        duration_sec=args.event_duration,
+        cooldown_sec=args.event_cooldown,
+        min_violation_ratio=args.min_violation_ratio,
+    )
+    fallback_tracker = IoUTrackFallback()
+    event_worker = None
+    if not args.no_events:
+        event_worker = EventWorker(
+            camera_id=args.camera_id,
+            model_version=model_path.stem,
+            enable_tts=not args.no_tts,
+        )
+    performance = RollingPerformance()
+    native_tracker_available = importlib.util.find_spec("lap") is not None
+    if not native_tracker_available:
+        print(
+            "[WARN] lap 패키지가 없어 ByteTrack 대신 내장 IoU 추적기를 사용합니다. "
+            "requirements.txt 설치 후 ByteTrack이 자동 활성화됩니다."
+        )
+    is_live_source = isinstance(source, int)
     frame_index = 0
-    last_event_time = 0
-    candidate_start_time = None
+    display_frame: Any | None = None
 
-    # 최근 5초 정도의 프레임을 계속 보관
-    frame_buffer = deque(maxlen=CLIP_FPS * CLIP_SECONDS)
-
+    print(
+        f"모니터링 시작: model={model_path} source={source} "
+        f"imgsz={args.imgsz} conf={args.conf} interval={args.frame_interval}"
+    )
     try:
         while True:
-            ret, frame = cap.read()
-
-            if not ret:
-                print("프레임을 읽지 못했습니다.")
+            ok, frame = cap.read()
+            if not ok:
                 break
-
+            performance.add_frame()
             frame_index += 1
-            display_frame = frame.copy()
+            frame_buffer.append(cv2.resize(frame, (CLIP_WIDTH, CLIP_HEIGHT)))
 
-            # 클립 저장용 원본 프레임 버퍼
-            clip_frame = cv2.resize(frame, (CLIP_WIDTH, CLIP_HEIGHT))
-            frame_buffer.append(clip_frame.copy())
-
-            if frame_index % FRAME_INTERVAL == 0:
-                results = model.predict(
-                    source=frame,
-                    conf=CONF_THRESHOLD,
-                    iou=0.45,
-                    max_det=20,
-                    verbose=False
-                )
-
-                result = results[0]
-                display_frame = result.plot()
-
-                person_count, helmet_count, no_helmet_count, max_confidence = count_detections(
-                    result=result,
-                    names=names
-                )
-
-                print(
-                    f"Person={person_count}, helmet={helmet_count}, no_helmet={no_helmet_count}"
-                )
-
-                has_candidate = has_no_helmet_candidate(
-                    person_count=person_count,
-                    helmet_count=helmet_count,
-                    no_helmet_count=no_helmet_count
-                )
-
-                now = time.time()
-
-                if has_candidate:
-                    if candidate_start_time is None:
-                        candidate_start_time = now
-                        print("안전모 미착용 후보 감지 시작")
-
-                    candidate_duration = now - candidate_start_time
-                    print(f"후보 지속 시간: {candidate_duration:.1f}초")
-
-                    if candidate_duration >= EVENT_DURATION_THRESHOLD_SEC:
-                        if now - last_event_time >= EVENT_COOLDOWN_SEC:
-                            confidence = get_candidate_confidence(
-                                no_helmet_count=no_helmet_count,
-                                max_no_helmet_confidence=max_confidence
-                            )
-
-                            print("실시간 안전모 미착용 후보 지속 기준 충족")
-
-                            save_candidate_event(
-                                frame_image=display_frame,
-                                confidence=confidence,
-                                frame_buffer=list(frame_buffer),
-                            )
-
-                            last_event_time = now
-                            candidate_start_time = None
-                        else:
-                            print("cooldown 적용 중: 이벤트 저장 및 방송 생략")
+            if display_frame is None:
+                display_frame = frame.copy()
+            if frame_index % args.frame_interval == 0:
+                started = time.perf_counter()
+                inference_options = {
+                    "source": frame,
+                    "imgsz": args.imgsz,
+                    "conf": args.conf,
+                    "iou": args.iou,
+                    "max_det": args.max_det,
+                    "device": args.device,
+                    "verbose": False,
+                }
+                if args.half:
+                    inference_options["half"] = True
+                if native_tracker_available:
+                    result = model.track(
+                        persist=True,
+                        tracker=args.tracker,
+                        **inference_options,
+                    )[0]
                 else:
-                    if candidate_start_time is not None:
-                        print("후보 상태 해제: 지속 시간 초기화")
+                    result = model.predict(**inference_options)[0]
+                performance.add_inference((time.perf_counter() - started) * 1000.0)
+                detections = extract_detections(result, model.names)
+                people = [item for item in detections if item.label == "person"]
+                fallback_ids = fallback_tracker.update([item.box for item in people])
+                observations = associator.associate(detections, fallback_ids)
 
-                    candidate_start_time = None
+                if is_live_source:
+                    now = time.monotonic()
+                else:
+                    now = max(0.0, cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0)
+                events = violation_tracker.update(observations, now)
+                display_frame = annotate_workers(result.plot(), observations)
+                cv2.putText(
+                    display_frame,
+                    performance.summary(),
+                    (12, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
 
-            cv2.imshow("Realtime Helmet Monitor", display_frame)
+                if event_worker is not None and events:
+                    event_worker.submit(
+                        EventPayload(
+                            frame_image=display_frame.copy(),
+                            frame_buffer=tuple(frame_buffer),
+                            events=tuple(events),
+                            clip_fps=clip_fps,
+                        )
+                    )
 
-            key = cv2.waitKey(1) & 0xFF
-
-            if key == ord("q") or key == 27:
-                print("종료 키 입력됨")
-                break
-
+            if not args.no_display and display_frame is not None:
+                cv2.imshow("Realtime Helmet Monitor", display_frame)
+                key = cv2.waitKey(1) & 0xFF
+                if key in {ord("q"), 27}:
+                    break
     except KeyboardInterrupt:
-        print("Ctrl+C로 종료됨")
-
+        print("Ctrl+C로 종료합니다.")
     finally:
         cap.release()
-        cv2.destroyAllWindows()
-        print("실시간 안전모 모니터링 종료")
+        if not args.no_display:
+            cv2.destroyAllWindows()
+        if event_worker is not None:
+            event_worker.close()
+        print(f"모니터링 종료: {performance.summary()}")
 
 
 if __name__ == "__main__":

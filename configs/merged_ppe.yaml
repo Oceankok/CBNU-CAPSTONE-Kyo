@@ -1,7 +1,7 @@
-path: D:/Desktop/capstone/data/merged/ppe_split
-train: train/images
-val: val/images
-test: test/images
+# Paths are relative to this YAML file, so the config works on every OS.
+train: ../data/merged/ppe_split/train/images
+val: ../data/merged/ppe_split/val/images
+test: ../data/merged/ppe_split/test/images
 
 names:
   0: helmet

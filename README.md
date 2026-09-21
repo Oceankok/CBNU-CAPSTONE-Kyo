@@ -66,6 +66,7 @@ uvicorn api.main:app --reload
 ## 문서
 
 - [docs/20260407_PPE.md](docs/20260407_PPE.md) — 시스템 전체 설계
+- [docs/20260921_AI_Inference_Performance.md](docs/20260921_AI_Inference_Performance.md) — 다중 작업자 매칭, 실시간 성능 측정 및 모델 비교
 - [docs/20260411_Dashboard.md](docs/20260411_Dashboard.md) — 대시보드 프론트엔드 설계
 - [docs/20260504_ServiceScope_Legal.md](docs/20260504_ServiceScope_Legal.md) — 서비스 범위 및 운영 원칙
 
