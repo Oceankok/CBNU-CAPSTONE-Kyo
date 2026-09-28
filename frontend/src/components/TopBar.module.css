@@ -30,3 +30,14 @@
 .quarterSelect:focus {
   border-color: #3182ce;
 }
+
+@media (max-width: 768px) {
+  .topbar {
+    height: 52px;
+    padding: 0 16px;
+  }
+
+  .title {
+    font-size: 15px;
+  }
+}

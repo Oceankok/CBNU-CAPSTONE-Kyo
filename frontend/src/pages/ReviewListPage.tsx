@@ -98,15 +98,15 @@ export default function ReviewListPage() {
                   onClick={() => navigate(`/review/${event.event_id}`)}
                 >
                   <td className={styles.eventId}>{event.event_id}</td>
-                  <td>{new Date(event.timestamp_start).toLocaleString('ko-KR')}</td>
-                  <td>{event.zone_name}</td>
-                  <td>
+                  <td data-label="발생 일시">{new Date(event.timestamp_start).toLocaleString('ko-KR')}</td>
+                  <td data-label="구역">{event.zone_name}</td>
+                  <td data-label="PPE 유형">
                     <span className={`${styles.ppeTag} ${styles[event.ppe_type]}`}>
                       {event.ppe_type === 'helmet' ? '안전모' : '안전조끼'}
                     </span>
                   </td>
-                  <td>{event.duration_sec}초</td>
-                  <td>
+                  <td data-label="지속시간">{event.duration_sec}초</td>
+                  <td data-label="신뢰도">
                     <span
                       className={`${styles.confidence} ${
                         event.ai_confidence >= 0.85
@@ -119,7 +119,7 @@ export default function ReviewListPage() {
                       {(event.ai_confidence * 100).toFixed(0)}%
                     </span>
                   </td>
-                  <td>
+                  <td data-label="상태">
                     <StatusBadge status={event.event_status} />
                   </td>
                 </tr>

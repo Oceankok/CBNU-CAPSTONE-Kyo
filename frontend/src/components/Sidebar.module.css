@@ -81,3 +81,35 @@
 .logoutBtn:hover {
   color: #e53e3e;
 }
+
+/* Mobile: fixed bottom tab bar (logo and user info hidden) */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    width: auto;
+    min-height: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .logo,
+  .userInfo {
+    display: none;
+  }
+
+  .nav {
+    flex-direction: row;
+    padding: 6px;
+  }
+
+  .navItem {
+    flex: 1;
+    padding: 12px 2px;
+    font-size: 12px;
+    text-align: center;
+    white-space: nowrap;
+  }
+}

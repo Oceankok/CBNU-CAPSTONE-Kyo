@@ -7,6 +7,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/review': '후보 이벤트 검토',
   '/stats': '분기별 통계',
   '/recommend': '교육 추천',
+  '/broadcast': '경고 방송 설정',
 };
 
 interface TopBarProps {
