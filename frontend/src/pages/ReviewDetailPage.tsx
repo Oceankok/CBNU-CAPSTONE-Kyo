@@ -147,7 +147,7 @@ export default function ReviewDetailPage() {
       </div>
 
       <div className={styles.grid}>
-        {/* Left: thumbnail placeholder + media metadata */}
+        {/* Left: thumbnail — tapping it plays the clip when one exists */}
         <div className={styles.mediaCol}>
           <div className={styles.thumbnail}>
             {event.thumbnail_path ? (
@@ -155,30 +155,14 @@ export default function ReviewDetailPage() {
             ) : (
               <div className={styles.thumbnailPlaceholder}>
                 <span className={styles.thumbnailIcon}>📷</span>
-                <p>썸네일 미리보기</p>
-                <small>{event.camera_id}</small>
+                <p>썸네일 없음</p>
               </div>
             )}
-          </div>
-
-          <div className={styles.card}>
-            <h4 className={styles.cardTitle}>영상 정보</h4>
-            <dl className={styles.dl}>
-              <dt>카메라 ID</dt>
-              <dd>{event.camera_id}</dd>
-              <dt>샘플 프레임 수</dt>
-              <dd>{event.frame_sample_count}프레임</dd>
-              <dt>모델 버전</dt>
-              <dd>{event.model_version}</dd>
-              <dt>영상 클립</dt>
-              <dd>
-                {event.video_clip_path ? (
-                  <button className={styles.clipBtn} onClick={() => setVideoOpen(true)}>
-                    ▶ 클립 열기
-                  </button>
-                ) : '—'}
-              </dd>
-            </dl>
+            {event.video_clip_path && (
+              <button className={styles.playBtn} onClick={() => setVideoOpen(true)}>
+                ▶ 클립 재생
+              </button>
+            )}
           </div>
         </div>
 
@@ -205,20 +189,14 @@ export default function ReviewDetailPage() {
         {/* Right: event details + review form */}
         <div className={styles.infoCol}>
           <div className={styles.card}>
-            <h4 className={styles.cardTitle}>이벤트 정보</h4>
+            {/* Headline: what the reviewer is judging */}
+            <p className={styles.headline}>
+              {event.ppe_type === 'helmet' ? '안전모' : '안전조끼'} 미착용 의심
+            </p>
+            <p className={styles.headlineSub}>
+              {event.zone_name} · {new Date(event.timestamp_start).toLocaleString('ko-KR')}
+            </p>
             <dl className={styles.dl}>
-              <dt>발생 일시</dt>
-              <dd>{new Date(event.timestamp_start).toLocaleString('ko-KR')}</dd>
-              <dt>종료 일시</dt>
-              <dd>{new Date(event.timestamp_end).toLocaleString('ko-KR')}</dd>
-              <dt>지속 시간</dt>
-              <dd>{event.duration_sec}초</dd>
-              <dt>구역</dt>
-              <dd>{event.zone_name}</dd>
-              <dt>공정</dt>
-              <dd>{event.process_type}</dd>
-              <dt>PPE 유형</dt>
-              <dd>{event.ppe_type === 'helmet' ? '안전모' : '안전조끼'}</dd>
               <dt>AI 신뢰도</dt>
               <dd>
                 <span
@@ -233,7 +211,25 @@ export default function ReviewDetailPage() {
                   {(event.ai_confidence * 100).toFixed(1)}%
                 </span>
               </dd>
+              <dt>지속 시간</dt>
+              <dd>{event.duration_sec}초</dd>
+              <dt>공정</dt>
+              <dd>{event.process_type}</dd>
             </dl>
+            {/* Technical metadata — rarely needed for the decision */}
+            <details className={styles.techDetails}>
+              <summary>기술 정보</summary>
+              <dl className={styles.dl}>
+                <dt>종료 일시</dt>
+                <dd>{new Date(event.timestamp_end).toLocaleString('ko-KR')}</dd>
+                <dt>카메라 ID</dt>
+                <dd>{event.camera_id}</dd>
+                <dt>샘플 프레임 수</dt>
+                <dd>{event.frame_sample_count}프레임</dd>
+                <dt>모델 버전</dt>
+                <dd>{event.model_version}</dd>
+              </dl>
+            </details>
           </div>
 
           {submitted ? (

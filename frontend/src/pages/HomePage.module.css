@@ -1,19 +1,7 @@
 .page {
   display: flex;
   flex-direction: column;
-  gap: 28px;
-}
-
-.quarterLabel {
-  font-size: 13px;
-  color: #718096;
-  margin: 0;
-}
-
-.cardRow {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
+  gap: 20px;
 }
 
 .section {
@@ -23,28 +11,108 @@
   padding: 20px 24px;
 }
 
+.section h3 {
+  margin: 0 0 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #4a5568;
+}
+
 .sectionHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
-.sectionHeader h3 {
+.empty {
+  color: #38a169;
+  font-size: 14px;
+  font-weight: 600;
   margin: 0;
-  font-size: 15px;
+}
+
+/* ─── Pending review (primary action) ─────────────── */
+.pendingSection {
+  border-color: #f6e05e;
+  border-left: 4px solid #d69e2e;
+}
+
+.pendingLabel {
+  font-size: 14px;
   font-weight: 600;
+  color: #744210;
+  margin-right: 8px;
+}
+
+.pendingCount {
+  font-size: 28px;
+  font-weight: 700;
   color: #1a202c;
 }
 
-.section h3 {
-  margin: 0 0 16px;
-  font-size: 15px;
+.primaryBtn {
+  padding: 10px 18px;
+  background: #3182ce;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
   font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.primaryBtn:hover {
+  background: #2b6cb0;
+}
+
+.pendingList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pendingItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 4px;
+  background: none;
+  border: none;
+  border-top: 1px solid #f0f4f8;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pendingItem:hover {
+  background-color: #f7fafc;
+}
+
+.pendingMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
   color: #1a202c;
+}
+
+.pendingZone {
+  font-size: 13px;
+  color: #4a5568;
+}
+
+.pendingMeta {
+  font-size: 12px;
+  color: #a0aec0;
+  white-space: nowrap;
 }
 
 .viewAll {
+  margin-top: 8px;
   background: none;
   border: none;
   color: #3182ce;
@@ -57,182 +125,65 @@
   text-decoration: underline;
 }
 
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.table th {
-  text-align: left;
-  padding: 8px 12px;
-  border-bottom: 2px solid #e2e8f0;
-  color: #718096;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.table td {
-  padding: 10px 12px;
-  border-bottom: 1px solid #f0f4f8;
-  color: #2d3748;
-}
-
-.row {
-  cursor: pointer;
-  transition: background 0.12s;
-}
-
-.row:hover {
-  background-color: #f7fafc;
-}
-
-.eventId {
-  font-family: monospace;
-  font-size: 12px;
-  color: #3182ce;
-  font-weight: 600;
-}
-
-.empty {
-  color: #a0aec0;
-  font-size: 13px;
-  margin: 0;
-}
-
-/* PPE type bars */
-.ppeRow {
+/* ─── Quarter summary ─────────────────────────────── */
+.cardRow {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 16px;
 }
 
-.ppeCard {
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  padding: 14px 16px;
+.breakdownRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.barList {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
-.ppeCardHeader {
-  display: flex;
-  justify-content: space-between;
+.barItem {
+  display: grid;
+  grid-template-columns: 90px 1fr 40px;
   align-items: center;
+  gap: 12px;
 }
 
-.ppeName {
-  font-size: 14px;
-  font-weight: 600;
+.barName {
+  font-size: 13px;
   color: #2d3748;
 }
 
-.ppeCount {
-  font-size: 20px;
-  font-weight: 700;
-  color: #1a202c;
-}
-
-.ppeBar {
+.barWrap {
   height: 8px;
   background: #edf2f7;
   border-radius: 4px;
   overflow: hidden;
 }
 
-.ppeBarFill {
+.barFill {
   height: 100%;
+  background: #3182ce;
   border-radius: 4px;
   transition: width 0.3s ease;
 }
 
-.ppeScore {
-  font-size: 11px;
-  color: #a0aec0;
-}
-
-/* Zone ranking list */
-.zoneList {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.zoneItem {
-  display: grid;
-  grid-template-columns: 24px 1fr 1fr 48px;
-  align-items: center;
-  gap: 12px;
-}
-
-.zoneRank {
-  font-size: 12px;
-  font-weight: 700;
-  color: #a0aec0;
-}
-
-.zoneName {
-  font-size: 13px;
-  color: #2d3748;
-}
-
-.zoneBarWrap {
-  height: 6px;
-  background: #edf2f7;
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-.zoneBarFill {
-  height: 100%;
-  background: #3182ce;
-  border-radius: 3px;
-  transition: width 0.3s ease;
-}
-
-.zoneCount {
+.barCount {
   font-size: 13px;
   font-weight: 600;
   color: #1a202c;
   text-align: right;
 }
 
-/* Mobile: each row becomes a 2-column card; data-label on <td> supplies the field name */
-@media (max-width: 768px) {
-  .table thead {
-    display: none;
-  }
-
-  .table tr {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px 12px;
-    padding: 14px 0;
-    border-bottom: 1px solid #f0f4f8;
-  }
-
-  .table td {
-    padding: 0;
-    border: none;
-  }
-
-  .table td:first-child {
-    grid-column: 1 / -1;
-  }
-
-  .table td[data-label]::before {
-    content: attr(data-label);
-    display: block;
-    margin-bottom: 2px;
-    font-size: 11px;
-    color: #a0aec0;
-  }
-}
-
 @media (max-width: 1024px) {
   .cardRow {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .breakdownRow {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -241,7 +192,7 @@
     padding: 16px;
   }
 
-  .ppeRow {
-    grid-template-columns: 1fr;
+  .cardRow {
+    gap: 10px;
   }
 }

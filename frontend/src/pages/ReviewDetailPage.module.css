@@ -25,11 +25,11 @@
   background: #f7fafc;
 }
 
+/* Technical ID — the headline card carries the meaning */
 .eventLabel {
   font-family: monospace;
-  font-weight: 700;
-  color: #1a202c;
-  font-size: 15px;
+  color: #a0aec0;
+  font-size: 12px;
 }
 
 /* Two-column layout: left = media, right = info + form */
@@ -71,6 +71,7 @@
 
 /* Thumbnail zone */
 .thumbnail {
+  position: relative;
   background: #1a202c;
   border-radius: 8px;
   overflow: hidden;
@@ -103,9 +104,38 @@
   font-size: 13px;
 }
 
-.thumbnailPlaceholder small {
-  font-size: 11px;
-  opacity: 0.6;
+
+/* Event headline — the thing being judged */
+.headline {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #1a202c;
+}
+
+.headlineSub {
+  margin: 4px 0 14px;
+  font-size: 13px;
+  color: #4a5568;
+}
+
+.techDetails {
+  margin-top: 14px;
+  font-size: 13px;
+}
+
+.techDetails summary {
+  color: #a0aec0;
+  cursor: pointer;
+}
+
+.techDetails[open] summary {
+  margin-bottom: 10px;
+}
+
+.techDetails .dl dd {
+  color: #718096;
+  font-weight: 400;
 }
 
 /* Definition list for event details */
@@ -129,12 +159,6 @@
   align-self: center;
 }
 
-.clipPath {
-  font-family: monospace;
-  font-size: 11px;
-  word-break: break-all;
-  color: #a0aec0;
-}
 
 /* Confidence level coloring */
 .confidenceValue {
@@ -153,20 +177,23 @@
   color: #e53e3e;
 }
 
-/* Clip open button inside the media card */
-.clipBtn {
-  background: #2b6cb0;
+/* Play button overlaid on the thumbnail */
+.playBtn {
+  position: absolute;
+  inset: auto auto 12px 12px;
+  background: rgba(26, 32, 44, 0.85);
   color: #fff;
   border: none;
   border-radius: 6px;
-  padding: 6px 14px;
-  font-size: 13px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
   transition: background 0.15s;
 }
 
-.clipBtn:hover {
-  background: #2c5282;
+.playBtn:hover {
+  background: #2b6cb0;
 }
 
 /* Full-screen video modal with blurred backdrop */

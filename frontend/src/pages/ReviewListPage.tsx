@@ -78,7 +78,7 @@ export default function ReviewListPage() {
               <th>발생 일시</th>
               <th>구역</th>
               <th>PPE 유형</th>
-              <th>지속시간</th>
+              <th className={styles.minor}>지속시간</th>
               <th>신뢰도</th>
               <th>상태</th>
             </tr>
@@ -105,7 +105,7 @@ export default function ReviewListPage() {
                       {event.ppe_type === 'helmet' ? '안전모' : '안전조끼'}
                     </span>
                   </td>
-                  <td data-label="지속시간">{event.duration_sec}초</td>
+                  <td data-label="지속시간" className={styles.minor}>{event.duration_sec}초</td>
                   <td data-label="신뢰도">
                     <span
                       className={`${styles.confidence} ${
