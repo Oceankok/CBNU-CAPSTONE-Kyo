@@ -57,11 +57,11 @@
   border-left: 3px solid #d69e2e;
 }
 
+/* Technical ID — kept for reference, visually secondary */
 .eventId {
   font-family: monospace;
-  font-size: 12px;
-  color: #3182ce;
-  font-weight: 600;
+  font-size: 11px;
+  color: #a0aec0;
 }
 
 /* PPE type tags */
@@ -114,17 +114,19 @@
   margin: 0;
 }
 
-/* Mobile: each row becomes a 2-column card; data-label on <td> supplies the field name */
+/* Mobile: each row becomes a compact card — ID on top, then badges and details flowing inline */
 @media (max-width: 768px) {
-  .table thead {
+  .table thead,
+  .minor {
     display: none;
   }
 
   .table tr {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px 12px;
-    padding: 14px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    padding: 12px 16px;
     border-bottom: 1px solid #f0f4f8;
   }
 
@@ -134,14 +136,34 @@
   }
 
   .table td:first-child {
-    grid-column: 1 / -1;
+    flex-basis: 100%;
   }
 
-  .table td[data-label]::before {
-    content: attr(data-label);
-    display: block;
-    margin-bottom: 2px;
-    font-size: 11px;
+  /* Badges first, then zone / time / confidence */
+  .table td[data-label='PPE 유형'],
+  .table td[data-label='상태'] {
+    order: 1;
+  }
+
+  .table td[data-label='구역'] {
+    order: 2;
+    font-weight: 600;
+  }
+
+  .table td[data-label='발생 일시'] {
+    order: 3;
+    color: #718096;
+    font-size: 12px;
+  }
+
+  .table td[data-label='신뢰도'] {
+    order: 4;
+  }
+
+  /* Only confidence needs a caption; the rest are self-explanatory */
+  .table td[data-label='신뢰도']::before {
+    content: '신뢰도 ';
+    font-size: 12px;
     color: #a0aec0;
   }
 }

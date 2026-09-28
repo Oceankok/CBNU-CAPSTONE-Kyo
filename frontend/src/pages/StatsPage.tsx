@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import {
   BarChart,
   Bar,
@@ -12,8 +13,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import SummaryCard from '../components/SummaryCard';
-import { AVAILABLE_QUARTERS } from '../mock';
-import { fetchStats, generateStats } from '../api/stats';
+import { fetchStats, generateStats, calcTrend } from '../api/stats';
 import type { QuarterlyStats } from '../types';
 import styles from './StatsPage.module.css';
 
@@ -23,7 +23,8 @@ const PPE_LABEL: Record<string, string> = {
 };
 
 export default function StatsPage() {
-  const [quarter, setQuarter] = useState('2026-Q2');
+  // Quarter comes from the TopBar selector (shared with Home / Recommend)
+  const { quarter } = useOutletContext<{ quarter: string }>();
   const [stats, setStats] = useState<QuarterlyStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,28 +69,14 @@ export default function StatsPage() {
   return (
     <div className={styles.page}>
       <div className={styles.header}>
-        <h2 className={styles.title}>분기별 통계</h2>
-        <div className={styles.controls}>
-          <select
-            className={styles.quarterSelect}
-            value={quarter}
-            onChange={(e) => setQuarter(e.target.value)}
-          >
-            {AVAILABLE_QUARTERS.map((q) => (
-              <option key={q} value={q}>
-                {q}
-              </option>
-            ))}
-          </select>
-          <button
-            className={styles.refreshBtn}
-            onClick={handleRefresh}
-            disabled={refreshing || loading}
-            title="통계 새로고침"
-          >
-            {refreshing ? '갱신 중…' : '↻ 통계 새로고침'}
-          </button>
-        </div>
+        <button
+          className={styles.refreshBtn}
+          onClick={handleRefresh}
+          disabled={refreshing || loading}
+          title="통계 새로고침"
+        >
+          {refreshing ? '갱신 중…' : '↻ 통계 새로고침'}
+        </button>
       </div>
 
       {error && <p style={{ color: '#e53e3e', marginBottom: '1rem' }}>⚠ {error}</p>}
@@ -99,20 +86,10 @@ export default function StatsPage() {
       {stats && (
         <>
       <div className={styles.cardRow}>
-        <SummaryCard label="후보 이벤트" value={stats.summary.candidate_count} sub="AI 추출 총합" />
-        <SummaryCard
-          label="확정 위반"
-          value={stats.summary.confirmed_count}
-          sub="검토 완료"
-          trend={12}
-        />
-        <SummaryCard
-          label="오탐"
-          value={stats.summary.false_positive_count}
-          sub="AI 오탐지"
-          trend={-5}
-        />
-        <SummaryCard label="보류" value={stats.summary.hold_count} sub="추가 검토 필요" />
+        <SummaryCard label="확정 위반" value={stats.summary.confirmed_count} trend={calcTrend(stats.trend)} accent />
+        <SummaryCard label="보류" value={stats.summary.hold_count} />
+        <SummaryCard label="오탐" value={stats.summary.false_positive_count} />
+        <SummaryCard label="전체 후보" value={stats.summary.candidate_count} />
       </div>
 
       <div className={styles.chartRow}>

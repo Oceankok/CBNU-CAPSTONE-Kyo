@@ -47,3 +47,22 @@
 .down {
   color: #38a169;
 }
+
+.accent {
+  border-color: #feb2b2;
+}
+
+.accent .value {
+  color: #e53e3e;
+}
+
+@media (max-width: 768px) {
+  .card {
+    padding: 14px 16px;
+    min-width: 0;
+  }
+
+  .value {
+    font-size: 24px;
+  }
+}

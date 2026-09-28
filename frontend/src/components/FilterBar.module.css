@@ -77,3 +77,27 @@
   color: #4a5568;
   cursor: pointer;
 }
+
+/* Collapsible secondary filters (date, confidence, zone) */
+.advanced {
+  font-size: 13px;
+}
+
+.advancedToggle {
+  color: #3182ce;
+  cursor: pointer;
+  padding: 6px 4px;
+}
+
+.advancedBody {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* Open panel takes its own row */
+.advanced[open] {
+  flex-basis: 100%;
+}

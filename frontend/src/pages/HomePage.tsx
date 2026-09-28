@@ -2,22 +2,13 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useOutletContext } from 'react-router-dom';
 import SummaryCard from '../components/SummaryCard';
-import StatusBadge from '../components/StatusBadge';
 import { fetchEvents } from '../api/events';
-import { fetchStats } from '../api/stats';
-import type { CandidateEvent, QuarterlyStats, TrendPoint } from '../types';
+import { fetchStats, calcTrend } from '../api/stats';
+import type { CandidateEvent, QuarterlyStats } from '../types';
 import styles from './HomePage.module.css';
 
-// Compare last two quarters in the trend array and return % change in total confirmed violations.
-// Returns undefined when there is only one (or zero) data point, so the SummaryCard hides the indicator.
-function calcTrend(trend: TrendPoint[]): number | undefined {
-  if (trend.length < 2) return undefined;
-  const prev = trend[trend.length - 2];
-  const curr = trend[trend.length - 1];
-  const prevTotal = prev.helmet + prev.vest;
-  if (prevTotal === 0) return undefined;
-  return Math.round(((curr.helmet + curr.vest - prevTotal) / prevTotal) * 100);
-}
+// Number of pending events previewed on the home screen; the rest are on /review
+const PENDING_PREVIEW = 5;
 
 export default function HomePage() {
   const { quarter } = useOutletContext<{ quarter: string }>();
@@ -34,7 +25,11 @@ export default function HomePage() {
     // Fetch events unconditionally; stats may not exist yet so treat 404 as null
     fetchEvents()
       .then((evData) =>
-        setPendingEvents(evData.items.filter((e) => e.event_status === 'pending')),
+        setPendingEvents(
+          evData.items
+            .filter((e) => e.event_status === 'pending')
+            .sort((a, b) => b.timestamp_start.localeCompare(a.timestamp_start)),
+        ),
       )
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -45,117 +40,114 @@ export default function HomePage() {
 
   return (
     <div className={styles.page}>
-      <p className={styles.quarterLabel}>{quarter} 기준</p>
-
       {error && <p style={{ color: '#e53e3e' }}>⚠ API 오류: {error}</p>}
       {loading && <p style={{ color: '#718096' }}>데이터를 불러오는 중...</p>}
 
+      {/* Primary action: events waiting for a human decision */}
+      {!loading && !error && (
+        <section className={`${styles.section} ${pendingEvents.length ? styles.pendingSection : ''}`}>
+          <div className={styles.sectionHeader}>
+            <div>
+              <span className={styles.pendingLabel}>검토 대기</span>
+              <span className={styles.pendingCount}>{pendingEvents.length}건</span>
+            </div>
+            {pendingEvents.length > 0 && (
+              <button className={styles.primaryBtn} onClick={() => navigate('/review')}>
+                검토하러 가기 →
+              </button>
+            )}
+          </div>
+          {pendingEvents.length === 0 ? (
+            <p className={styles.empty}>✓ 모든 이벤트의 검토가 끝났습니다.</p>
+          ) : (
+            <ul className={styles.pendingList}>
+              {pendingEvents.slice(0, PENDING_PREVIEW).map((event) => (
+                <li key={event.event_id}>
+                  <button
+                    className={styles.pendingItem}
+                    onClick={() => navigate(`/review/${event.event_id}`)}
+                  >
+                    <span className={styles.pendingMain}>
+                      <strong>{event.ppe_type === 'helmet' ? '안전모' : '안전조끼'} 미착용</strong>
+                      <span className={styles.pendingZone}>{event.zone_name}</span>
+                    </span>
+                    <span className={styles.pendingMeta}>
+                      {new Date(event.timestamp_start).toLocaleString('ko-KR', {
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                      {' · '}
+                      {(event.ai_confidence * 100).toFixed(0)}%
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {pendingEvents.length > PENDING_PREVIEW && (
+            <button className={styles.viewAll} onClick={() => navigate('/review')}>
+              외 {pendingEvents.length - PENDING_PREVIEW}건 더 보기 →
+            </button>
+          )}
+        </section>
+      )}
+
       {stats && (
         <div className={styles.cardRow}>
-          <SummaryCard label="후보 이벤트" value={stats.summary.candidate_count} sub="AI 추출 총합" />
-          <SummaryCard label="확정 위반" value={stats.summary.confirmed_count} sub="검토 완료" trend={calcTrend(stats.trend)} />
-          <SummaryCard label="오탐" value={stats.summary.false_positive_count} sub="AI 오탐지" />
-          <SummaryCard label="보류" value={stats.summary.hold_count} sub="추가 검토 필요" />
+          <SummaryCard label="확정 위반" value={stats.summary.confirmed_count} trend={calcTrend(stats.trend)} accent />
+          <SummaryCard label="보류" value={stats.summary.hold_count} />
+          <SummaryCard label="오탐" value={stats.summary.false_positive_count} />
+          <SummaryCard label="전체 후보" value={stats.summary.candidate_count} />
         </div>
       )}
 
-      <section className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <h3>미검토 이벤트 ({pendingEvents.length}건)</h3>
-          <button className={styles.viewAll} onClick={() => navigate('/review')}>
-            전체 보기 →
-          </button>
-        </div>
-        {pendingEvents.length === 0 ? (
-          <p className={styles.empty}>미검토 이벤트가 없습니다.</p>
-        ) : (
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>이벤트 ID</th>
-                <th>발생 일시</th>
-                <th>구역</th>
-                <th>PPE 유형</th>
-                <th>신뢰도</th>
-                <th>상태</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pendingEvents.map((event) => (
-                <tr
-                  key={event.event_id}
-                  className={styles.row}
-                  onClick={() => navigate(`/review/${event.event_id}`)}
-                >
-                  <td className={styles.eventId}>{event.event_id}</td>
-                  <td data-label="발생 일시">
-                    {new Date(event.timestamp_start).toLocaleString('ko-KR', {
-                      month: '2-digit',
-                      day: '2-digit',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </td>
-                  <td data-label="구역">{event.zone_name}</td>
-                  <td data-label="PPE 유형">{event.ppe_type === 'helmet' ? '안전모' : '안전조끼'}</td>
-                  <td data-label="신뢰도">{(event.ai_confidence * 100).toFixed(0)}%</td>
-                  <td data-label="상태">
-                    <StatusBadge status={event.event_status} />
-                  </td>
-                </tr>
+      {stats && (
+        <div className={styles.breakdownRow}>
+          <section className={styles.section}>
+            <h3>PPE 유형별 확정 위반</h3>
+            <div className={styles.barList}>
+              {stats.by_ppe_type.map((p) => (
+                <div key={p.ppe_type} className={styles.barItem}>
+                  <span className={styles.barName}>{p.ppe_type === 'helmet' ? '안전모' : '안전조끼'}</span>
+                  <div className={styles.barWrap}>
+                    {/* Width proportional to share of total confirmed violations */}
+                    <div
+                      className={styles.barFill}
+                      style={{
+                        width: `${(p.confirmed_count / (stats.summary.confirmed_count || 1)) * 100}%`,
+                        backgroundColor: p.ppe_type === 'helmet' ? '#e53e3e' : '#d69e2e',
+                      }}
+                    />
+                  </div>
+                  <span className={styles.barCount}>{p.confirmed_count}건</span>
+                </div>
               ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <section className={styles.section}>
-        <h3>PPE 유형별 위반 현황</h3>
-        <div className={styles.ppeRow}>
-          {stats?.by_ppe_type.map((p) => (
-            <div key={p.ppe_type} className={styles.ppeCard}>
-              <div className={styles.ppeCardHeader}>
-                <span className={styles.ppeName}>
-                  {p.ppe_type === 'helmet' ? '🪖 안전모' : '🦺 안전조끼'}
-                </span>
-                <span className={styles.ppeCount}>{p.confirmed_count}건</span>
-              </div>
-              <div className={styles.ppeBar}>
-                {/* Width proportional to share of total confirmed violations */}
-                <div
-                  className={styles.ppeBarFill}
-                  style={{
-                    width: `${(p.confirmed_count / (stats.summary.confirmed_count || 1)) * 100}%`,
-                    backgroundColor: p.ppe_type === 'helmet' ? '#e53e3e' : '#d69e2e',
-                  }}
-                />
-              </div>
-              <span className={styles.ppeScore}>우선순위 점수 {p.priority_score}</span>
             </div>
-          ))}
-        </div>
-      </section>
+          </section>
 
-      <section className={styles.section}>
-        <h3>구역별 위반 현황</h3>
-        <div className={styles.zoneList}>
-          {stats?.by_zone.map((z, idx) => (
-            <div key={z.zone_name} className={styles.zoneItem}>
-              <span className={styles.zoneRank}>#{idx + 1}</span>
-              <span className={styles.zoneName}>{z.zone_name}</span>
-              <div className={styles.zoneBarWrap}>
-                <div
-                  className={styles.zoneBarFill}
-                  style={{
-                    width: `${(z.confirmed_count / (stats.by_zone[0]?.confirmed_count || 1)) * 100}%`,
-                  }}
-                />
-              </div>
-              <span className={styles.zoneCount}>{z.confirmed_count}건</span>
+          <section className={styles.section}>
+            <h3>구역별 확정 위반</h3>
+            <div className={styles.barList}>
+              {stats.by_zone.map((z) => (
+                <div key={z.zone_name} className={styles.barItem}>
+                  <span className={styles.barName}>{z.zone_name}</span>
+                  <div className={styles.barWrap}>
+                    <div
+                      className={styles.barFill}
+                      style={{
+                        width: `${(z.confirmed_count / (stats.by_zone[0]?.confirmed_count || 1)) * 100}%`,
+                      }}
+                    />
+                  </div>
+                  <span className={styles.barCount}>{z.confirmed_count}건</span>
+                </div>
+              ))}
             </div>
-          ))}
+          </section>
         </div>
-      </section>
+      )}
     </div>
   );
 }

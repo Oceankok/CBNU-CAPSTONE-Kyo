@@ -6,37 +6,12 @@
 
 .header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
 }
 
-.title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  color: #1a202c;
-}
 
-.controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
 
-.quarterSelect {
-  font-size: 13px;
-  padding: 6px 10px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #fff;
-  color: #2d3748;
-  cursor: pointer;
-}
 
-.quarterSelect:focus {
-  outline: none;
-  border-color: #3182ce;
-}
 
 .refreshBtn {
   font-size: 13px;
@@ -97,11 +72,6 @@
 }
 
 @media (max-width: 768px) {
-  .header {
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-
   .section {
     padding: 16px;
   }

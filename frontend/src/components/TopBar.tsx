@@ -10,6 +10,9 @@ const PAGE_TITLES: Record<string, string> = {
   '/broadcast': '경고 방송 설정',
 };
 
+// Pages whose content depends on the selected quarter
+const QUARTER_PAGES = ['/', '/stats', '/recommend'];
+
 interface TopBarProps {
   quarter: string;
   onQuarterChange: (quarter: string) => void;
@@ -27,17 +30,19 @@ export default function TopBar({ quarter, onQuarterChange }: TopBarProps) {
   return (
     <header className={styles.topbar}>
       <h1 className={styles.title}>{title}</h1>
-      <select
-        className={styles.quarterSelect}
-        value={quarter}
-        onChange={(e) => onQuarterChange(e.target.value)}
-      >
-        {AVAILABLE_QUARTERS.map((q) => (
-          <option key={q} value={q}>
-            {q}
-          </option>
-        ))}
-      </select>
+      {QUARTER_PAGES.includes(pathname) && (
+        <select
+          className={styles.quarterSelect}
+          value={quarter}
+          onChange={(e) => onQuarterChange(e.target.value)}
+        >
+          {AVAILABLE_QUARTERS.map((q) => (
+            <option key={q} value={q}>
+              {q}
+            </option>
+          ))}
+        </select>
+      )}
     </header>
   );
 }

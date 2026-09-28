@@ -97,13 +97,7 @@ export default function BroadcastPage() {
   return (
     <div className={styles.page}>
       {/* Page header */}
-      <div className={styles.header}>
-        <h2 className={styles.title}>경고 방송 설정</h2>
-        <p className={styles.desc}>
-          PPE 미착용이 감지될 때 현장 작업자에게 전송할 방송을 제어합니다. 실제 음성
-          출력은 별도 기능에서 처리됩니다.
-        </p>
-      </div>
+      <p className={styles.desc}>PPE 미착용 감지 시 현장에 송출할 경고 방송을 설정합니다.</p>
 
       {error && <p className={styles.errorMsg}>⚠ {error}</p>}
       {successMsg && <p className={styles.successMsg}>✓ {successMsg}</p>}

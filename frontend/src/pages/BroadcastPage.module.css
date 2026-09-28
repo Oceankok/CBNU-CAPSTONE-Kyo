@@ -4,18 +4,7 @@
   gap: 24px;
 }
 
-.header {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
 
-.title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  color: #1a202c;
-}
 
 .desc {
   margin: 0;

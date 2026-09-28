@@ -21,7 +21,11 @@ const STATUS_OPTIONS: { value: EventStatus | 'all'; label: string }[] = [
   { value: 'hold', label: '보류' },
 ];
 
-export default function FilterBar({ filters, onChange, zones }: FilterBarProps) {
+export default function FilterBar({
+  filters,
+  onChange,
+  zones,
+}: FilterBarProps) {
   const update = (patch: Partial<FilterState>) =>
     onChange({ ...filters, ...patch });
 
@@ -32,21 +36,14 @@ export default function FilterBar({ filters, onChange, zones }: FilterBarProps) 
     update({ zone: next });
   };
 
+  const advancedActive =
+    !!filters.dateFrom ||
+    !!filters.dateTo ||
+    filters.minConfidence > 0 ||
+    filters.zone.length > 0;
+
   return (
     <div className={styles.filterBar}>
-      {/* PPE type filter */}
-      <select
-        className={styles.select}
-        value={filters.ppeType}
-        onChange={(e) => update({ ppeType: e.target.value as PpeType })}
-      >
-        {PPE_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-
       {/* Status filter */}
       <select
         className={styles.select}
@@ -62,52 +59,73 @@ export default function FilterBar({ filters, onChange, zones }: FilterBarProps) 
         ))}
       </select>
 
-      {/* Date range */}
-      <input
-        type="date"
-        className={styles.dateInput}
-        value={filters.dateFrom}
-        onChange={(e) => update({ dateFrom: e.target.value })}
-      />
-      <span className={styles.dateSep}>~</span>
-      <input
-        type="date"
-        className={styles.dateInput}
-        value={filters.dateTo}
-        onChange={(e) => update({ dateTo: e.target.value })}
-      />
-
-      {/* Confidence threshold slider */}
-      <div className={styles.sliderWrapper}>
-        <label className={styles.sliderLabel}>
-          신뢰도 ≥ {filters.minConfidence.toFixed(1)}
-        </label>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.1}
-          value={filters.minConfidence}
-          onChange={(e) =>
-            update({ minConfidence: parseFloat(e.target.value) })
-          }
-          className={styles.slider}
-        />
-      </div>
-
-      {/* Zone multi-select as checkboxes — dynamically derived from actual event data */}
-      <div className={styles.zoneGroup}>
-        {zones.map((zone) => (
-          <label key={zone} className={styles.zoneLabel}>
-            <input
-              type="checkbox"
-              checked={filters.zone.includes(zone)}
-              onChange={() => toggleZone(zone)}
-            />
-            {zone}
-          </label>
+      {/* PPE type filter */}
+      <select
+        className={styles.select}
+        value={filters.ppeType}
+        onChange={(e) => update({ ppeType: e.target.value as PpeType })}
+      >
+        {PPE_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
         ))}
-      </div>
+      </select>
+
+      {/* Less-used filters are collapsed; the summary flags when any is active */}
+      <details className={styles.advanced}>
+        <summary className={styles.advancedToggle}>
+          상세 필터{advancedActive ? ' (적용 중)' : ''}
+        </summary>
+        <div className={styles.advancedBody}>
+          {/* Date range */}
+          <input
+            type="date"
+            className={styles.dateInput}
+            value={filters.dateFrom}
+            onChange={(e) => update({ dateFrom: e.target.value })}
+          />
+          <span className={styles.dateSep}>~</span>
+          <input
+            type="date"
+            className={styles.dateInput}
+            value={filters.dateTo}
+            onChange={(e) => update({ dateTo: e.target.value })}
+          />
+
+          {/* Confidence threshold slider */}
+          <div className={styles.sliderWrapper}>
+            <label className={styles.sliderLabel}>
+              신뢰도 ≥ {filters.minConfidence.toFixed(1)}
+            </label>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.1}
+              value={filters.minConfidence}
+              onChange={(e) =>
+                update({ minConfidence: parseFloat(e.target.value) })
+              }
+              className={styles.slider}
+            />
+          </div>
+
+          {/* Zone multi-select as checkboxes — dynamically derived from actual event data */}
+          <div className={styles.zoneGroup}>
+            {zones.map((zone) => (
+              <label key={zone} className={styles.zoneLabel}>
+                <input
+                  type="checkbox"
+                  checked={filters.zone.includes(zone)}
+                  onChange={() => toggleZone(zone)}
+                />
+                {zone}
+              </label>
+            ))}
+          </div>
+        </div>
+      </details>
     </div>
   );
 }
