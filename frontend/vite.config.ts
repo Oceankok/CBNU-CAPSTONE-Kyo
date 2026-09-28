@@ -5,6 +5,8 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
+    // Backend CORS only allows :5173 — fail loudly instead of silently moving to :5174
+    strictPort: true,
     // `npm run dev:mobile`: phone hits Vite, Vite forwards to the local backend (same origin, no CORS change)
     proxy: {
       '/api': 'http://localhost:8000',
