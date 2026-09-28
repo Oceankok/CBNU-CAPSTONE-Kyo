@@ -126,3 +126,14 @@
   font-weight: 600;
   color: #1a202c;
 }
+
+@media (max-width: 768px) {
+  .card {
+    padding: 16px;
+  }
+
+  .cardHeader,
+  .tags {
+    flex-wrap: wrap;
+  }
+}

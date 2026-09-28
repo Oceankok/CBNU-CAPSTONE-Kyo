@@ -85,3 +85,24 @@
   font-weight: 600;
   color: #1a202c;
 }
+
+@media (max-width: 1024px) {
+  .cardRow {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .chartRow {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .header {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .section {
+    padding: 16px;
+  }
+}

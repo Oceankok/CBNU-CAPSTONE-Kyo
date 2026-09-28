@@ -88,7 +88,7 @@ export default function HomePage() {
                   onClick={() => navigate(`/review/${event.event_id}`)}
                 >
                   <td className={styles.eventId}>{event.event_id}</td>
-                  <td>
+                  <td data-label="발생 일시">
                     {new Date(event.timestamp_start).toLocaleString('ko-KR', {
                       month: '2-digit',
                       day: '2-digit',
@@ -96,10 +96,10 @@ export default function HomePage() {
                       minute: '2-digit',
                     })}
                   </td>
-                  <td>{event.zone_name}</td>
-                  <td>{event.ppe_type === 'helmet' ? '안전모' : '안전조끼'}</td>
-                  <td>{(event.ai_confidence * 100).toFixed(0)}%</td>
-                  <td>
+                  <td data-label="구역">{event.zone_name}</td>
+                  <td data-label="PPE 유형">{event.ppe_type === 'helmet' ? '안전모' : '안전조끼'}</td>
+                  <td data-label="신뢰도">{(event.ai_confidence * 100).toFixed(0)}%</td>
+                  <td data-label="상태">
                     <StatusBadge status={event.event_status} />
                   </td>
                 </tr>

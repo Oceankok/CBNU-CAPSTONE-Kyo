@@ -16,3 +16,10 @@
   padding: 28px;
   overflow-y: auto;
 }
+
+/* Mobile: sidebar becomes a fixed bottom tab bar, so reserve space for it */
+@media (max-width: 768px) {
+  .content {
+    padding: 16px 16px calc(72px + env(safe-area-inset-bottom));
+  }
+}

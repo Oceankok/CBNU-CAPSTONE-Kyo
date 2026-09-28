@@ -426,3 +426,30 @@
   padding: 48px;
   color: #718096;
 }
+
+/* Tablet/mobile: stack media above the form */
+@media (max-width: 1024px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .breadcrumb {
+    flex-wrap: wrap;
+  }
+
+  .card {
+    padding: 16px;
+  }
+
+  /* Bigger tap targets for the review buttons */
+  .resultBtn {
+    padding: 14px 4px;
+  }
+
+  .actionRow button {
+    flex: 1;
+    padding: 12px;
+  }
+}
