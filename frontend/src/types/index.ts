@@ -144,3 +144,15 @@ export interface BroadcastSettings {
   cooldown_sec: number;
   templates: BroadcastTemplate[];
 }
+
+// --- Auth ---
+
+export type UserRole = 'admin' | 'worker';
+
+// Logged-in user as returned by POST /api/auth/login
+export interface Session {
+  access_token: string;
+  user_id: string;
+  display_name: string;
+  role: UserRole;
+}

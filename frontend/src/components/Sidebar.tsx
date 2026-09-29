@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom';
+import { getSession, logout } from '../api/auth';
 import styles from './Sidebar.module.css';
 
 const NAV_ITEMS = [
@@ -10,6 +11,8 @@ const NAV_ITEMS = [
 ];
 
 export default function Sidebar() {
+  const session = getSession();
+
   return (
     <aside className={styles.sidebar}>
       <div className={styles.logo}>
@@ -31,8 +34,10 @@ export default function Sidebar() {
         ))}
       </nav>
       <div className={styles.userInfo}>
-        <span className={styles.userName}>admin01</span>
-        <button className={styles.logoutBtn}>로그아웃</button>
+        <span className={styles.userName}>{session?.display_name}</span>
+        <button className={styles.logoutBtn} onClick={logout}>
+          로그아웃
+        </button>
       </div>
     </aside>
   );

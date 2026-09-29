@@ -1,3 +1,5 @@
+import { getSession, logout } from './auth';
+
 // Base URL from Vite env — defaults to localhost for local dev
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -26,10 +28,19 @@ export function mediaUrl(relativePath: string | undefined | null): string {
 
 // Thin wrapper around fetch that throws ApiError on non-2xx responses
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getSession()?.access_token;
+  // Spread init first so caller-supplied headers merge with (not replace) the defaults
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
     ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init?.headers,
+    },
   });
+
+  // Expired or invalid session — drop it and send the user back to login
+  if (res.status === 401 && token) logout();
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
