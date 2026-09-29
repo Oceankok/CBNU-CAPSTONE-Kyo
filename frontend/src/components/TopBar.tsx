@@ -1,5 +1,6 @@
 import { useLocation } from 'react-router-dom';
 import { AVAILABLE_QUARTERS } from '../mock';
+import { logout } from '../api/auth';
 import styles from './TopBar.module.css';
 
 const PAGE_TITLES: Record<string, string> = {
@@ -30,19 +31,25 @@ export default function TopBar({ quarter, onQuarterChange }: TopBarProps) {
   return (
     <header className={styles.topbar}>
       <h1 className={styles.title}>{title}</h1>
-      {QUARTER_PAGES.includes(pathname) && (
-        <select
-          className={styles.quarterSelect}
-          value={quarter}
-          onChange={(e) => onQuarterChange(e.target.value)}
-        >
-          {AVAILABLE_QUARTERS.map((q) => (
-            <option key={q} value={q}>
-              {q}
-            </option>
-          ))}
-        </select>
-      )}
+      <div className={styles.actions}>
+        {QUARTER_PAGES.includes(pathname) && (
+          <select
+            className={styles.quarterSelect}
+            value={quarter}
+            onChange={(e) => onQuarterChange(e.target.value)}
+          >
+            {AVAILABLE_QUARTERS.map((q) => (
+              <option key={q} value={q}>
+                {q}
+              </option>
+            ))}
+          </select>
+        )}
+        {/* Sidebar (with its logout) is a bottom tab bar on mobile, so logout lives here there */}
+        <button className={styles.logoutBtn} onClick={logout}>
+          로그아웃
+        </button>
+      </div>
     </header>
   );
 }
