@@ -89,7 +89,7 @@ def _select_voice(voices: list[Any], language: str) -> Optional[Any]:
     return None
 
 
-def list_available_voices() -> list[dict[str, str]]:
+def list_available_voices() -> list[dict[str, Any]]:
     """
     시스템에서 사용할 수 있는 음성 목록을 반환함.
 
@@ -107,7 +107,7 @@ def list_available_voices() -> list[dict[str, str]]:
             {
                 "id": str(getattr(voice, "id", "")),
                 "name": str(getattr(voice, "name", "")),
-                "languages": str(getattr(voice, "languages", [])),
+                "languages": [str(value) for value in getattr(voice, "languages", [])],
             }
             for voice in voices
         ]
@@ -115,7 +115,7 @@ def list_available_voices() -> list[dict[str, str]]:
         engine.stop()
 
 
-def speak_message(message: str, language: str) -> dict[str, Any]:
+def speak_message(message: str, language: str, voice_id: str | None = None) -> dict[str, Any]:
     """
     경고 방송 메시지를 실제 음성으로 출력함.
 
@@ -138,7 +138,8 @@ def speak_message(message: str, language: str) -> dict[str, Any]:
         engine = pyttsx3.init()
 
         voices = engine.getProperty("voices")
-        selected_voice = _select_voice(voices, language)
+        selected_voice = (next((v for v in voices if v.id == voice_id), None)
+                          if voice_id else _select_voice(voices, language))
 
         if selected_voice is None:
             return {

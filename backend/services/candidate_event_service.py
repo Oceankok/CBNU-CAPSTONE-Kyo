@@ -27,7 +27,7 @@ from backend.db.event_repository import (
     get_candidate_event_by_id,
     insert_candidate_event,
 )
-from backend.services.warning_broadcast_service import execute_warning_broadcast
+from backend.field.service import enqueue_event_broadcast
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -263,12 +263,9 @@ def create_no_helmet_candidate_event(
     if saved_event is not None:
         zone_name = saved_event.get("zone_name") or ""
 
-    broadcast_result = execute_warning_broadcast(
-        event_id=event_id,
-        ppe_type=event["ppe_type"],
-        zone_name=zone_name,
-        enable_tts=enable_tts,
-    )
+    # The server queues a command; only the field agent is allowed to speak.
+    broadcast_result = (enqueue_event_broadcast(event_id) if enable_tts
+                        else {"queued": False, "reason": "broadcast_suppressed"})
 
     return {
         "event_id": event_id,

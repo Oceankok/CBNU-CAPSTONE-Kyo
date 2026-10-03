@@ -40,7 +40,7 @@ def main() -> None:
         result = create_no_helmet_candidate_event(
             camera_id="CAM_001",
             confidence=0.88,
-            source_path="test_videos/test_video1.avi",
+            source_path=None,
             frame_image=test_image,
             model_version="helmet_yolov8n_test",
             enable_tts=False,
@@ -51,8 +51,9 @@ def main() -> None:
 
         assert result["event_status"] == "pending"
         assert result["thumbnail_path"] != ""
-        assert result["video_clip_path"] == "test_videos/test_video1.avi"
-        assert result["broadcast"]["executed"] is True
+        assert result["video_clip_path"] == ""
+        assert result["broadcast"]["queued"] is False
+        assert result["broadcast"]["reason"] == "broadcast_suppressed"
         assert "tts" not in result["broadcast"]
         assert created_thumbnail_path.exists()
 

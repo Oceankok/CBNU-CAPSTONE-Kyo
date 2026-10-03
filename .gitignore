@@ -60,3 +60,6 @@ storage/candidate_events/thumbnails/*
 !storage/candidate_events/thumbnails/.gitkeep
 storage/candidate_events/clips/*
 !storage/candidate_events/clips/.gitkeep
+# Local field-agent delivery journal
+field_state/
+backend/db/*.db-*
