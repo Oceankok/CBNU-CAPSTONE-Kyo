@@ -27,6 +27,7 @@ export function mediaUrl(relativePath: string | undefined | null): string {
 // Thin wrapper around fetch that throws ApiError on non-2xx responses
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...init?.headers },
     ...init,
   });

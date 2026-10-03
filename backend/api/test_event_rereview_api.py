@@ -300,7 +300,7 @@ def test_confirmed_event_without_second_review_cannot_be_rereviewed() -> None:
     assert saved_event is not None
     assert saved_event["event_status"] == "confirmed"
     assert saved_review is not None
-    assert saved_review["reviewer_id"] == "admin01"
+    assert saved_review["reviewer_id"] == "admin02"  # authenticated creator, unchanged after rejected update
     assert saved_review["review_result"] == "confirmed"
 
     print("[PASS] 재검토 대상이 아닌 confirmed 이벤트 요청을 거부함")
@@ -381,7 +381,7 @@ def test_false_positive_rereview_deletes_event_and_updates_aggregate() -> None:
     print("[PASS] false_positive 재검토 시 이벤트 삭제 및 오탐 집계를 반영함")
 
 
-def main() -> None:
+def run_cases() -> None:
     cleanup_test_events()
 
     try:
@@ -404,6 +404,15 @@ def main() -> None:
 
     finally:
         cleanup_test_events()
+
+
+def main() -> None:
+    global client
+    from backend.tests.support import isolated_api, login
+    with isolated_api() as test_client:
+        client = test_client
+        client.headers.update(login(client))
+        run_cases()
 
 
 if __name__ == "__main__":
