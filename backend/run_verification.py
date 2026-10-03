@@ -9,6 +9,8 @@
 """
 
 import argparse
+import os
+from tempfile import TemporaryDirectory
 import subprocess
 import sys
 from pathlib import Path
@@ -33,7 +35,7 @@ def run_command(title: str, command: list[str]) -> None:
         raise RuntimeError(f"Verification failed: {title}")
 
 
-def main() -> None:
+def run_checks() -> None:
     parser = argparse.ArgumentParser(
         description="Run backend verification scripts."
     )
@@ -45,6 +47,8 @@ def main() -> None:
     args = parser.parse_args()
 
     python = sys.executable
+
+    run_command("Authentication and field commands", [python, "-m", "unittest", "discover", "-s", "backend/tests", "-t", ".", "-v"])
 
     run_command(
         "Initialize database",
@@ -83,6 +87,19 @@ def main() -> None:
         )
 
     print("\n[OK] Backend verification completed successfully.")
+
+
+def main() -> None:
+    previous = os.environ.get("PPE_DB_PATH")
+    with TemporaryDirectory(prefix="ppe-verification-") as directory:
+        os.environ["PPE_DB_PATH"] = str(Path(directory) / "test.db")
+        try:
+            run_checks()
+        finally:
+            if previous is None:
+                os.environ.pop("PPE_DB_PATH", None)
+            else:
+                os.environ["PPE_DB_PATH"] = previous
 
 
 if __name__ == "__main__":

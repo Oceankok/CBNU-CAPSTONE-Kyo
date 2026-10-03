@@ -1,3 +1,4 @@
+import os
 """
 event_repository.py
 
@@ -30,6 +31,15 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "ppe_system.db"
 
 
+class ClosingConnection(sqlite3.Connection):
+    """Commit/rollback and release the file handle when leaving a with block."""
+    def __exit__(self, *args):
+        try:
+            return super().__exit__(*args)
+        finally:
+            self.close()
+
+
 def get_connection() -> sqlite3.Connection:
     """
     SQLite DB 연결 객체를 생성한다.
@@ -43,7 +53,7 @@ def get_connection() -> sqlite3.Connection:
         - SQLite는 기본적으로 외래키 제약 조건이 비활성화되어 있으므로
           PRAGMA foreign_keys = ON을 실행한다.
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(os.environ.get("PPE_DB_PATH", str(DB_PATH)), factory=ClosingConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn

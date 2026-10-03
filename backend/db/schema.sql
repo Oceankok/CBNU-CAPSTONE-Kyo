@@ -128,3 +128,46 @@ CREATE TABLE IF NOT EXISTS broadcast_message_template (
     message TEXT NOT NULL,
     FOREIGN KEY (setting_id) REFERENCES broadcast_setting(setting_id) ON DELETE CASCADE
 );
+-- Dashboard users are not linked to detected people.
+CREATE TABLE IF NOT EXISTS app_user (
+    user_id TEXT PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('admin','worker')),
+    is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1)),
+    zone_name TEXT,
+    auth_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS field_node (
+    node_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    last_seen_at REAL,
+    language TEXT,
+    voice_id TEXT,
+    voices_json TEXT NOT NULL DEFAULT '[]',
+    voices_checked_at REAL
+);
+CREATE TABLE IF NOT EXISTS camera_node (
+    camera_id TEXT PRIMARY KEY REFERENCES camera_info(camera_id),
+    source_node_id TEXT NOT NULL REFERENCES field_node(node_id),
+    output_node_id TEXT NOT NULL REFERENCES field_node(node_id)
+);
+CREATE TABLE IF NOT EXISTS field_command (
+    command_id TEXT PRIMARY KEY,
+    node_id TEXT NOT NULL REFERENCES field_node(node_id),
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    event_id TEXT REFERENCES candidate_event(event_id) ON DELETE SET NULL,
+    cooldown_key TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    claimed_at REAL,
+    finished_at REAL,
+    result TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_field_command_poll ON field_command(node_id,status,created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_broadcast_event ON field_command(node_id,event_id) WHERE kind='broadcast' AND event_id IS NOT NULL;
