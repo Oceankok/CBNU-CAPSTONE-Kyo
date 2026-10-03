@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from pathlib import Path
 
@@ -20,7 +21,8 @@ def run_sql_file(cursor: sqlite3.Cursor, file_path: Path) -> None:
 
 def init_database() -> None:
     """SQLite DB 파일을 생성하고 초기 테이블 및 더미 데이터를 삽입한다."""
-    conn = sqlite3.connect(DB_PATH)
+    db_path = os.environ.get("PPE_DB_PATH", str(DB_PATH))
+    conn = sqlite3.connect(db_path)
 
     try:
         cursor = conn.cursor()
@@ -33,7 +35,7 @@ def init_database() -> None:
 
         conn.commit()
 
-        print(f"Database initialized successfully: {DB_PATH}")
+        print(f"Database initialized successfully: {db_path}")
 
     except Exception as error:
         conn.rollback()
