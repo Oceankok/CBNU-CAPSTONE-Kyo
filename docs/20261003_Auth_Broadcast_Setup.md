@@ -47,3 +47,44 @@ python -m backend.api.test_event_rereview_api
 ```
 
 두 검증은 임시 DB를 사용한다. 로그인/권한/검토자 위조/만료/비활성화/로그아웃/미디어 Range 및 기존 재검토 흐름을 확인한다.
+
+## 서버 → 현장 방송
+
+이 브랜치는 인증 브랜치 위에 쌓인다. DB 초기화를 다시 실행하면 node/command 테이블이 추가된다.
+서버의 `create_no_helmet_candidate_event(enable_tts=True)`는 이제 방송 명령을 생성한다.
+서버에서는 실제 TTS를 실행하지 않는다. `enable_tts=False`는 방송 요청을 생략한다.
+기존 `warning_broadcast_service.execute_warning_broadcast`는 로컬 진단용으로만 남겨두었다.
+
+Swagger `/docs`에서 로그인 응답의 access_token을 Authorize에 넣은 뒤:
+
+1. `POST /api/nodes`에 `{ "node_id": "field01", "name": "현장 방송 PC" }` 전송.
+2. 응답의 node token은 현장 PC에 보관한다. DB에는 SHA-256 해시만 저장한다.
+3. `PUT /api/cameras/CAM_001/node`에 `{ "source_node_id": "field01", "output_node_id": "field01" }` 전송.
+4. 별도 터미널/현장 PC에서 다음 실행:
+
+```powershell
+$env:PPE_NODE_TOKEN = '<등록 응답의 node token>'
+python -m field_agent.main --server http://localhost:8000
+```
+
+5. `GET /api/nodes`에서 online을 확인한다.
+6. 방송 설정을 켜고 해당 PPE/구역/언어 템플릿을 저장한다.
+7. 서버에서 이벤트를 생성하거나 기존 이벤트에 `POST /api/events/EVT_0001/broadcast`를 호출한다.
+8. `GET /api/nodes/field01/commands`에서 실행 결과를 확인한다.
+
+현장 PC는 HTTPX와 pyttsx3가 필요하다. 서버 주소에는 서버 PC의 LAN IP도 사용할 수 있다.
+heartbeat 10초, offline 판정 30초, 명령 polling 2초, 방송 명령 유효기간 30초이다.
+서버 프로세스와 현장 프로세스는 동일 PC에서도 독립 실행 가능하다.
+영상 송출/서버 추론 연결은 후속 작업이다. 이번 단계는 기존 서버 이벤트 생성 함수와 방송 경로를 연결한다.
+
+같은 이벤트/출력 PC의 방송 요청은 중복 생성하지 않는다. cooldown은 DB에 남아 서버 재시작 후에도 유지된다.
+명령은 원자적으로 한 번 claim한다. 실행 후 응답 유실은 현장 `field_state/` journal로 결과 전송을 재시도한다.
+claim 후 현장 프로그램이 종료된 명령은 자동 재생하지 않는다. 결과가 없으면 unknown으로 표시된다.
+이 방식은 중복 방송 방지를 우선하며, 장애 시 exactly-once 재생을 보장하지 않는다.
+오프라인일 때는 사건은 저장하고 방송은 `node_offline`으로 생략한다. 과거 방송을 늦게 재생하지 않는다.
+
+```powershell
+python -m backend.run_verification
+```
+
+기본 검증은 임시 DB를 사용하고 소리를 내지 않는다. 실제 음성 확인은 현장 프로그램에서 수행한다.
