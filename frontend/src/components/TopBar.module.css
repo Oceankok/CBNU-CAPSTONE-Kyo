@@ -41,3 +41,25 @@
     font-size: 15px;
   }
 }
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logoutBtn {
+  display: none;
+  background: none;
+  border: none;
+  color: #718096;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 8px 0;
+}
+
+@media (max-width: 768px) {
+  .logoutBtn {
+    display: block;
+  }
+}

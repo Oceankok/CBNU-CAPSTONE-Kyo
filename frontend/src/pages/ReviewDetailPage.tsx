@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
 import { fetchEvent, submitReview, updateReview } from '../api/events';
 import { mediaUrl } from '../api/client';
+import { getSession } from '../api/auth';
 import type { CandidateEvent, EventReview, ReviewResult, ReviewReasonCode, ReviewRequest } from '../types';
 import styles from './ReviewDetailPage.module.css';
 
@@ -104,7 +105,8 @@ export default function ReviewDetailPage() {
     if (!reviewResult || !reasonCode || !event_id) return;
     setSubmitError(null);
     const body: ReviewRequest = {
-      reviewer_id: 'admin01',
+      // Backend should derive the reviewer from the token; sent for compatibility until it does
+      reviewer_id: getSession()?.user_id ?? '',
       review_result: reviewResult,
       review_reason_code: reasonCode as ReviewReasonCode,
       review_comment: comment,
