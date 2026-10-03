@@ -88,3 +88,43 @@ python -m backend.run_verification
 ```
 
 기본 검증은 임시 DB를 사용하고 소리를 내지 않는다. 실제 음성 확인은 현장 프로그램에서 수행한다.
+
+## PC별 voice 및 언어팩
+
+관리자 Bearer로 아래 API를 사용한다. voice ID는 PC마다 다르므로 반드시 대상 PC의 조회 결과에서 선택한다.
+
+| API | 용도 |
+| --- | --- |
+| `POST /api/nodes/{id}/voices/refresh` | 현장 PC에 재검색 명령 |
+| `GET /api/nodes/{id}/voices` | 마지막 성공 조회의 음성 목록·조회 시각·선택 설정 |
+| `PUT /api/nodes/{id}/voice` | `{ "language": "ko", "voice_id": "조회된 ID" }` 저장 |
+| `POST /api/nodes/{id}/test-broadcast` | `{ "message": "방송 테스트입니다." }` 수동 시험 방송 |
+| `POST /api/nodes/{id}/languages/install` | `{ "language": "ko-KR" }` 설치 요청 |
+
+설치/조회 진행·실패 사유와 OS 설치 언어는 `/api/nodes/{id}/commands`의 result에서 확인한다.
+음성 목록 조회 실패 시 이전 성공 목록을 유지하므로 `checked_at`과 최신 명령 상태를 함께 확인한다.
+`language`는 방송 템플릿의 언어 값과 맞춘다(기존 템플릿: `ko`, `en`).
+
+언어팩 자동 설치는 **대상 현장 PC**에서 관리자 권한 터미널로
+`python -m field_agent.main --server <서버주소> --allow-language-install` 실행 시 허용한다.
+일반 실행에서는 설치 요청이 `installation_not_enabled`, 관리자 권한이 없으면 `administrator_required`로 실패하며 수동 안내를 반환한다.
+설치 명령은 고정된 `LanguagePackManagement/Install-Language`만 실행하고 UI 표시 언어를 변경하지 않는다.
+초기 허용 언어는 ko-KR, en-US, en-GB, ja-JP, zh-CN, de-DE, fr-FR, es-ES이다.
+설치에는 Windows 구성·다운로드·정책에 따른 제한이 있고 최대 20분 후 timeout 처리한다.
+설치 후 실제 pyttsx3/SAPI5 voice를 재검색한다. **언어팩 설치 성공이 TTS voice 사용 가능을 보장하지 않는다.**
+필요하면 Windows 설정에서 음성 기능 설치, 로그아웃/재부팅 후 재검색한다.
+언어팩 설치 동안 heartbeat는 계속되지만 음성 실행 큐는 순차 처리하므로 설치는 모니터링 시작 전에 수행한다.
+
+공식 명령 문서: https://learn.microsoft.com/en-us/powershell/module/languagepackmanagement/install-language
+
+## 별도 프로세스 실증
+
+```powershell
+python scripts/verify_field_processes.py
+python scripts/verify_field_processes.py --audio
+```
+
+임시 DB와 임시 Uvicorn 서버를 만든 뒤 별도 현장 프로세스로 HTTP 명령 수신·voice 보고를 확인한다.
+`--audio`는 한국어 시험 문장 한 번을 실제 출력하고 서버의 성공 보고까지 확인한다.
+2026-10-03 이 PC에서 한국어 Heami/영어 Zira 조회 및 한국어 출력 완료를 확인했다.
+언어팩 실제 설치는 자동 검증에 포함하지 않는다. 권한 부족·비허용 언어·설치 timeout과 설치 성공 후 voice 부재는 mock으로 검증한다.

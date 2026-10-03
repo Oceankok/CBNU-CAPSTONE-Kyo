@@ -10,11 +10,18 @@ import time
 import httpx
 
 from backend.services.tts_service import speak_message
+from field_agent.languages import scan_voices, install_language
 
 
 def execute(command, allow_language_install=False):
     if time.time() >= command["expires_at"]:
         return {"status": "skipped", "result": {"reason": "expired"}}
+    if command["kind"] == "refresh_voices":
+        result = scan_voices()
+        return {"status": "completed" if result["voice_scan_ok"] else "failed", "result": result}
+    if command["kind"] == "install_language":
+        result = install_language(command["payload"]["language"], allow_language_install)
+        return {"status": "completed" if result["installed"] else "failed", "result": result}
     if command["kind"] != "broadcast":
         return {"status": "failed", "result": {"reason": "unsupported_command"}}
     payload = command["payload"]

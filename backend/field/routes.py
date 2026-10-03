@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from backend.auth.service import bearer, require_admin
 from backend.db.event_repository import get_connection
 from backend.field.service import register_node, enqueue_event_broadcast, claim_command, queue_command
+from backend.field.constants import INSTALL_LANGUAGES
 
 admin = APIRouter(prefix="/api", dependencies=[Depends(require_admin)], tags=["field management"])
 field = APIRouter(prefix="/api/field", tags=["field node"])
@@ -110,4 +111,71 @@ def report(command_id: str, body: CommandResult, node: dict = Depends(current_no
             raise HTTPException(409, "Command is not awaiting a result")
         conn.execute("UPDATE field_command SET status=?,result=?,finished_at=? WHERE command_id=?",
                      (body.status, encoded, time.time(), command_id))
+        if row["kind"] in {"refresh_voices", "install_language"} and body.result.get("voice_scan_ok"):
+            # Only this node's completed scan updates its voice inventory.
+            voices = body.result.get("voices", [])
+            if not isinstance(voices, list) or not all(isinstance(v, dict) and isinstance(v.get("id"), str) for v in voices):
+                raise HTTPException(422, "Invalid voice inventory")
+            conn.execute("UPDATE field_node SET voices_json=?,voices_checked_at=? WHERE node_id=?",
+                         (json.dumps(voices), time.time(), node["node_id"]))
     return {"status": "ok"}
+
+
+@admin.get("/nodes/{node_id}/voices")
+def voices(node_id: str):
+    with get_connection() as conn:
+        row = conn.execute("SELECT voices_json,voices_checked_at,language,voice_id FROM field_node WHERE node_id=?", (node_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Node not found")
+    return {"items": json.loads(row["voices_json"]), "checked_at": row["voices_checked_at"],
+            "language": row["language"], "voice_id": row["voice_id"], "installable_languages": INSTALL_LANGUAGES}
+
+
+@admin.post("/nodes/{node_id}/voices/refresh", status_code=202)
+def refresh_voices(node_id: str):
+    return queue_command(node_id, "refresh_voices", {}, ttl=300)
+
+
+class VoiceSelection(BaseModel):
+    language: str = Field(pattern=r"^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$", max_length=32)
+    voice_id: str = Field(min_length=1, max_length=1000)
+
+
+@admin.put("/nodes/{node_id}/voice")
+def select_voice(node_id: str, body: VoiceSelection):
+    with get_connection() as conn:
+        row = conn.execute("SELECT voices_json FROM field_node WHERE node_id=?", (node_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Node not found")
+        if body.voice_id not in {v["id"] for v in json.loads(row["voices_json"])}:
+            raise HTTPException(400, "Voice is not present in this node's scanned inventory")
+        conn.execute("UPDATE field_node SET language=?,voice_id=? WHERE node_id=?", (body.language, body.voice_id, node_id))
+    return body.model_dump()
+
+
+class LanguageInstallation(BaseModel):
+    language: str
+
+
+@admin.post("/nodes/{node_id}/languages/install", status_code=202)
+def request_install(node_id: str, body: LanguageInstallation):
+    if body.language not in INSTALL_LANGUAGES:
+        raise HTTPException(400, "Unsupported language")
+    return queue_command(node_id, "install_language", {"language": body.language}, ttl=300)
+
+
+class TestBroadcast(BaseModel):
+    message: str = Field(default="방송 테스트입니다.", min_length=1, max_length=500)
+
+
+@admin.post("/nodes/{node_id}/test-broadcast", status_code=202)
+def test_broadcast(node_id: str, body: TestBroadcast):
+    with get_connection() as conn:
+        node = conn.execute("SELECT language,voice_id,last_seen_at FROM field_node WHERE node_id=? AND is_active=1", (node_id,)).fetchone()
+    if not node:
+        raise HTTPException(404, "Active node not found")
+    if not node["last_seen_at"] or time.time()-node["last_seen_at"]>30:
+        raise HTTPException(409, "Node offline")
+    if not node["voice_id"]:
+        raise HTTPException(409, "Select a scanned voice first")
+    return queue_command(node_id, "broadcast", {"message": body.message, "language": node["language"], "voice_id": node["voice_id"]})

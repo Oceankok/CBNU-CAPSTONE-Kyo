@@ -39,6 +39,9 @@
 
 ## 실행 방법
 
+인증·현장 방송 신규 실행 절차는 [인증 및 방송 가이드](docs/20261003_Auth_Broadcast_Setup.md)를 참고한다.
+로그인 화면은 `Feat/login-role-routing` 브랜치와 연동하며, 사용자 생성 및 JWT 키 설정이 필요하다.
+
 ### DB 초기화
 
 ```bash
