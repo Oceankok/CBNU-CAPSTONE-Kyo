@@ -11,6 +11,7 @@
 | 파일                         | 설명                                 |
 | -------------------------- | ---------------------------------- |
 | `schema.sql`               | DB 테이블 생성 SQL                      |
+| `migrations.py`            | 기존 SQLite 데이터베이스의 순차 마이그레이션 |
 | `seed.sql`                 | 기본 테스트용 초기 데이터 삽입 SQL              |
 | `init_db.py`               | SQLite DB 생성 및 초기화 스크립트            |
 | `seed_events.py`           | 추가 테스트용 후보 이벤트 삽입 스크립트             |
@@ -22,7 +23,7 @@
 
 ## 생성되는 DB 파일
 
-`init_db.py`를 실행하면 아래 위치에 SQLite DB 파일이 생성됨.
+`init_db.py`를 실행하면 SQLite DB 파일을 생성하고, 기존 파일이면 미디어 테이블 마이그레이션을 적용함. 기존 DB에서는 실행 전에 파일을 백업할 것. 기존 seed SQL은 빠진 더미 행을 계속 추가할 수 있음.
 
 ```text
 backend/db/ppe_system.db
@@ -167,7 +168,25 @@ AI가 탐지한 PPE 미착용 의심 상황을 관리자 검토 전까지 저장
 | `confirmed` | 실제 위반으로 확정       |
 | `hold`      | 추가 확인이 필요한 보류 상태 |
 
-`false_positive`는 상세 이벤트를 유지하지 않고 오탐 집계에 반영한 뒤 후보 이벤트를 삭제하므로, 처리 완료 후 `candidate_event`에 상세 행이 남지 않음.
+`false_positive`도 후보 이벤트와 검토 행을 유지하고 오탐 집계에 반영함. 미디어 파일 보관/삭제는 검토 이력과 분리해 후속 기능에서 관리함.
+
+새 `media` 응답 배열은 `event_media`에서 조회하며, 기존 `thumbnail_path`, `video_clip_path` 필드는 프론트 호환을 위해 남겨 둠. 기존 경로는 실제 파일이나 비식별 상태까지 보장하지 않음.
+
+## `event_media`
+
+하나의 이벤트에 트리거 카메라의 썸네일/클립과 참고 카메라 미디어를 여러 건 연결함. 파일 경로는 프로젝트 내부 상대 경로로 저장함.
+
+| 필드 | 설명 |
+| --- | --- |
+| `media_id` | 미디어 레코드 식별자 |
+| `event_id`, `camera_id` | 이벤트와 촬영 카메라 |
+| `kind`, `role` | image/video 및 thumbnail/clip/reference 구분 |
+| `storage_path` | 기존 저장 루트 기준 상대 경로 |
+| `status` | registered/missing/delete_pending/deleted |
+| `redaction_status` | unprocessed/complete/failed/legacy_unverified |
+| `capture_start_at`, `capture_end_at` | 촬영 시간 범위 |
+
+기존 이벤트 경로는 마이그레이션에서 `legacy_unverified`로 가져옴. 신규 이벤트 경로는 `unprocessed`로 기록함. 현재 단계에서는 기존 `/storage` 인증 동작을 유지하며, 비식별 여부를 확인해 미디어 제공을 차단하는 기능은 후속 작업임.
 
 ---
 
@@ -193,7 +212,7 @@ AI가 탐지한 PPE 미착용 의심 상황을 관리자 검토 전까지 저장
 | ---------------- | -------- | ------------------------------- |
 | `confirmed`      | 실제 위반 확인 | 검토 행 저장 및 이벤트 상태 `confirmed` 갱신 |
 | `hold`           | 판단 보류    | 검토 행 저장 및 이벤트 상태 `hold` 갱신      |
-| `false_positive` | 오탐       | 상세 검토 행을 유지하지 않고 오탐 집계 후 이벤트 삭제 |
+| `false_positive` | 오탐       | 이벤트·검토 행 보존 및 오탐 집계 반영 |
 
 ---
 
@@ -232,7 +251,7 @@ POST /api/events/{event_id}/review
 | ---------------- | ----------------------------------------------------------------- |
 | `confirmed`      | `event_review` 삽입 후 `candidate_event.event_status = confirmed` 갱신 |
 | `hold`           | `event_review` 삽입 후 `candidate_event.event_status = hold` 갱신      |
-| `false_positive` | `false_positive_aggregate` 반영 후 `candidate_event` 삭제              |
+| `false_positive` | `false_positive_aggregate` 반영 후 이벤트 및 검토 행 보존                 |
 
 동일한 이벤트에 이미 검토 결과가 존재하면 최초 검토를 다시 저장하지 않음.
 
@@ -258,9 +277,7 @@ PUT /api/events/{event_id}/review
 | ---------------- | -------------------------------------------------------------------- |
 | `confirmed`      | 기존 `event_review` 갱신 후 `candidate_event.event_status = confirmed` 갱신 |
 | `hold`           | 기존 `event_review` 갱신 후 `candidate_event.event_status = hold` 갱신      |
-| `false_positive` | `false_positive_aggregate` 반영 후 `candidate_event` 삭제                 |
-
-`candidate_event`가 삭제되는 경우 FK의 `ON DELETE CASCADE` 정책에 따라 연결된 기존 검토 결과도 함께 삭제됨.
+| `false_positive` | `false_positive_aggregate` 반영 후 이벤트 및 검토 행 보존                    |
 
 ---
 
@@ -289,7 +306,7 @@ GET /api/stats?quarter=2026-Q2
 | `candidate_count`      | 지정 분기에 저장된 후보 이벤트 수                   |
 | `confirmed_count`      | `event_status = confirmed`인 이벤트 수     |
 | `hold_count`           | `event_status = hold`인 이벤트 수          |
-| `false_positive_count` | `false_positive_aggregate`의 해당 분기 집계값 |
+| `false_positive_count` | 저장된 오탐 집계값. 신버전에서 처리한 이벤트도 기존 방식대로 한 번 반영 |
 | PPE 유형별 통계             | 확정 위반 이벤트의 PPE 유형별 집계                 |
 | 구역별 통계                 | 확정 위반 이벤트의 발생 구역별 집계                  |
 | 분기별 추이                 | 확정 위반 이벤트의 PPE 유형별 분기 집계              |
@@ -483,7 +500,7 @@ python backend/db/test_event_repository.py
 
 * 후보 이벤트 및 미디어 경로 저장 구조
 * 관리자 최초 검토 및 재검토 결과 반영
-* 오탐 이벤트의 비식별 집계 및 상세 이벤트 삭제
+* 오탐 이벤트·검토 이력 보존 및 비식별 집계
 * 확정 위반 기반 분기별 통계 생성 및 조회
 * 확정 위반 기반 교육 추천 생성 및 조회
 * 경고 방송 설정 및 메시지 템플릿 저장

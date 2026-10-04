@@ -2,6 +2,11 @@ import os
 import sqlite3
 from pathlib import Path
 
+if __package__:
+    from .migrations import apply_migrations
+else:  # Supports the documented `python backend/db/init_db.py` command.
+    from migrations import apply_migrations
+
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -23,6 +28,7 @@ def init_database() -> None:
     """SQLite DB 파일을 생성하고 초기 테이블 및 더미 데이터를 삽입한다."""
     db_path = os.environ.get("PPE_DB_PATH", str(DB_PATH))
     conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
 
     try:
         cursor = conn.cursor()
@@ -32,6 +38,9 @@ def init_database() -> None:
 
         run_sql_file(cursor, SCHEMA_PATH)
         run_sql_file(cursor, SEED_PATH)
+
+        # New seed rows and pre-existing rows both receive media records once.
+        apply_migrations(conn)
 
         conn.commit()
 

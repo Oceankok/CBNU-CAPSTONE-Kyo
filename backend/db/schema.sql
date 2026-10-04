@@ -29,6 +29,33 @@ CREATE TABLE IF NOT EXISTS candidate_event (
     FOREIGN KEY (camera_id) REFERENCES camera_info(camera_id)
 );
 
+-- An event can contain its trigger camera media and reference media from peers.
+-- Legacy path columns remain temporarily for API/UI compatibility.
+CREATE TABLE IF NOT EXISTS event_media (
+    media_id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    camera_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('image','video')),
+    role TEXT NOT NULL CHECK(role IN ('thumbnail','clip','reference')),
+    storage_path TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'registered'
+        CHECK(status IN ('registered','missing','delete_pending','deleted')),
+    redaction_status TEXT NOT NULL DEFAULT 'unprocessed'
+        CHECK(redaction_status IN ('unprocessed','complete','failed','legacy_unverified')),
+    capture_start_at TEXT,
+    capture_end_at TEXT,
+    source_node_id TEXT,
+    request_id TEXT,
+    created_at TEXT NOT NULL,
+    deleted_at TEXT,
+    FOREIGN KEY (event_id) REFERENCES candidate_event(event_id) ON DELETE CASCADE,
+    FOREIGN KEY (camera_id) REFERENCES camera_info(camera_id),
+    FOREIGN KEY (source_node_id) REFERENCES field_node(node_id)
+);
+CREATE INDEX IF NOT EXISTS idx_event_media_event ON event_media(event_id,status);
+CREATE INDEX IF NOT EXISTS idx_event_media_camera_capture ON event_media(camera_id,capture_start_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_event_media_request ON event_media(request_id) WHERE request_id IS NOT NULL;
+
 -- 이벤트 리뷰 테이블
 CREATE TABLE IF NOT EXISTS event_review (
     review_id TEXT PRIMARY KEY,
@@ -42,6 +69,23 @@ CREATE TABLE IF NOT EXISTS event_review (
     second_review_needed INTEGER,
     FOREIGN KEY (event_id) REFERENCES candidate_event(event_id) ON DELETE CASCADE
 );
+
+-- Prior decisions are retained when a hold/second review updates event_review.
+CREATE TABLE IF NOT EXISTS event_review_history (
+    history_id TEXT PRIMARY KEY,
+    review_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    reviewer_id TEXT,
+    review_result TEXT NOT NULL,
+    review_reason_code TEXT,
+    review_time TEXT,
+    review_comment TEXT,
+    confirmed_violation INTEGER,
+    second_review_needed INTEGER,
+    recorded_at TEXT NOT NULL,
+    FOREIGN KEY (event_id) REFERENCES candidate_event(event_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_event_review_history_event ON event_review_history(event_id,recorded_at);
 
 -- 분기별 요약 통계
 CREATE TABLE IF NOT EXISTS quarterly_summary (
