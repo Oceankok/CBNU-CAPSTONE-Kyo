@@ -426,3 +426,7 @@ def update_broadcast_settings(request: BroadcastSettingsRequest) -> dict:
     return save_broadcast_settings(request.model_dump())
 
 app.include_router(admin_router)
+
+from backend.field.routes import admin as field_admin_router, field as field_router
+app.include_router(field_admin_router)
+app.include_router(field_router)
