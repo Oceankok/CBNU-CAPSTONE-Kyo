@@ -1,7 +1,7 @@
-import { getSession, logout } from './auth';
+import { getSession, clearSession } from './auth';
 
-// Base URL from Vite env — defaults to localhost for local dev
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+// Empty base URL uses the same-origin /api and /storage Vite proxy.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 export class ApiError extends Error {
   status: number;
@@ -14,7 +14,7 @@ export class ApiError extends Error {
 
 /**
  * Converts a storage-relative path (e.g. "storage/candidate_events/thumbnails/EVT_xxx.jpg")
- * returned by the backend into a full URL served by the static file mount at /storage.
+ * returned by the backend into a URL served by the protected /storage endpoint.
  * Returns an empty string if no path is provided.
  */
 export function mediaUrl(relativePath: string | undefined | null): string {
@@ -41,7 +41,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   });
 
   // Expired or invalid session — drop it and send the user back to login
-  if (res.status === 401 && token) logout();
+  if (res.status === 401 && token && path !== '/api/auth/login') clearSession();
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));

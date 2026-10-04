@@ -3,9 +3,8 @@ import type { Session, UserRole } from '../types';
 
 const STORAGE_KEY = 'session';
 
-// ponytail: dev-only mock until the backend ships POST /api/auth/login.
-// Never active in production builds; set VITE_AUTH_MOCK=false to test against the real API in dev.
-const MOCK_AUTH = import.meta.env.DEV && import.meta.env.VITE_AUTH_MOCK !== 'false';
+// Real authentication is the default. Mock login is an explicit development opt-in.
+export const MOCK_AUTH = import.meta.env.DEV && import.meta.env.VITE_AUTH_MOCK === 'true';
 const MOCK_USERS: Record<string, { display_name: string; role: UserRole }> = {
   admin01: { display_name: '관리자', role: 'admin' },
   worker01: { display_name: '작업자', role: 'worker' },
@@ -14,16 +13,37 @@ const MOCK_USERS: Record<string, { display_name: string; role: UserRole }> = {
 export function getSession(): Session | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Session) : null;
+    if (!raw) return null;
+    const session = JSON.parse(raw) as Session;
+    if (!session.access_token || !session.user_id ||
+        !['admin', 'worker'].includes(session.role) ||
+        (!MOCK_AUTH && session.access_token === 'mock')) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    return session;
   } catch {
     return null;
   }
 }
 
 // Full reload to /login also drops any in-memory page state from the previous user
-export function logout(): void {
+export function clearSession(): void {
   localStorage.removeItem(STORAGE_KEY);
   window.location.assign('/login');
+}
+
+export async function logout(): Promise<void> {
+  try {
+    if (getSession() && !MOCK_AUTH) {
+      await apiFetch('/api/auth/logout', { method: 'POST' });
+    }
+  } catch (error) {
+    // Local logout still works offline; the server token expires independently.
+    console.warn('서버 로그아웃에 실패했습니다. 로컬 세션을 삭제합니다.', error);
+  } finally {
+    clearSession();
+  }
 }
 
 export async function login(userId: string, password: string): Promise<Session> {

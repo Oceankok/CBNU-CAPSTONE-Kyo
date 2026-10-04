@@ -28,16 +28,46 @@ python -m uvicorn backend.api.main:app --reload
 
 ## 프론트 연동
 
-로그인 UI는 팀원의 `Feat/login-role-routing` 브랜치를 사용한다. 이 백엔드 브랜치는 로그인 화면을 재구현하지 않는다.
-해당 브랜치 통합 시 `apiFetch`의 `credentials: 'include'`를 유지한다.
-`VITE_AUTH_MOCK=false`로 실제 인증을 사용한다.
+`Feat/auth-ui-integration`은 팀원의 `Feat/login-role-routing` 로그인 UI를 통합한 브랜치이다.
+실제 인증이 기본이며 mock은 개발 환경에서 `VITE_AUTH_MOCK=true`를 명시할 때만 켜진다.
+기존 mock 세션은 실제 인증 모드에서 무시한다. 개발용 아무 비밀번호 안내도 mock 모드에서만 표시한다.
+`apiFetch`는 Bearer와 `credentials: 'include'`를 함께 사용한다.
 로그아웃은 Bearer로 `/api/auth/logout`을 호출한 후 localStorage 세션을 제거한다.
+네트워크 실패 시에도 로컬 세션을 삭제하며 서버 토큰은 만료 시까지 남을 수 있다.
+인증 API의 401 응답은 세션을 삭제하고 로그인 화면으로 이동한다. 로그인 실패는 화면에 오류로 표시한다.
 
 로그인 응답은 HttpOnly `ppe_media` 쿠키도 설정한다. 이 쿠키는 `/storage` 읽기 전용이며 API Bearer로 사용할 수 없다.
 미디어는 관리자만 접근할 수 있고 Range 요청을 지원한다. API 요청에는 쿠키 대신 Bearer가 반드시 필요하다.
 개발 시 프론트/백엔드 모두 `localhost` 또는 모두 `127.0.0.1`로 호스트명을 맞춘다.
 서로 다른 PC에서는 Vite의 `/api`, `/storage` 프록시와 `VITE_API_BASE_URL=`을 권장한다.
 운영 HTTPS에서는 `PPE_COOKIE_SECURE=true`를 설정한다. CORS 허용 origin은 `PPE_CORS_ORIGINS`(쉼표 구분)으로 지정한다.
+
+### 사용자가 직접 실행할 연동 확인
+
+이번 연동 작업에서는 패키지 설치, DB/계정 생성, 서버 실행, 빌드 및 테스트를 실행하지 않았다.
+다음 명령은 사용자가 직접 실행한다. DB 초기화는 테이블을 추가하며 계정 등록은 사용자 행을 생성한다.
+
+1. 위 인증 설정 명령으로 DB, 계정, JWT 키를 준비하고 서버를 실행한다.
+2. 별도 PowerShell에서 프론트를 시작한다:
+
+```powershell
+cd C:\Users\robin\Projects\CBNU-CAPSTONE-Kyo\frontend
+# node_modules가 없을 경우에만 실행 (의존성 설치)
+npm ci
+npm run dev
+```
+
+기본 API 주소는 빈 문자열이므로 Vite가 `/api`, `/storage`를 로컬 서버로 전달한다.
+기존 `frontend/.env.local` 등의 `VITE_API_BASE_URL` 설정이 있다면 빈 값으로 맞추고,
+`VITE_AUTH_MOCK=false`로 설정한다. 별도 서버 PC는 `vite.config.ts`의 두 프록시 대상 주소를 해당 PC로 변경한다.
+
+3. `http://localhost:5173`에서 등록한 관리자 계정으로 로그인한다. 관리자 홈과 검토 화면 접근을 확인한다.
+4. 잘못된 비밀번호는 오류를 표시해야 한다. 로그아웃 후 보호 페이지에 직접 접근하면 로그인 화면으로 이동해야 한다.
+5. 등록한 작업자 계정은 `/worker`로 이동해야 하며 관리자 경로에 접근하면 작업자 홈으로 돌아가야 한다.
+6. 기존 이벤트 미디어가 있는 경우 관리자 로그인에서 이미지/영상이 표시되는지 확인한다.
+   미디어 없는 DB에서는 이 항목을 건너뛴다. 작업자 화면은 기존 팀원 구현대로 준비 중 화면이다.
+
+프론트 빌드 확인은 `npm run build`로 직접 수행할 수 있다. 화면 연동과 빌드의 실제 통과 여부는 아직 확인하지 않았다.
 
 ## 검증
 

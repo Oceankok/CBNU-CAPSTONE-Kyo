@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { getSession, login, homePath } from '../api/auth';
+import { getSession, login, homePath, MOCK_AUTH } from '../api/auth';
 import styles from './LoginPage.module.css';
 
 export default function LoginPage() {
@@ -70,7 +70,7 @@ export default function LoginPage() {
           {submitting ? '로그인 중…' : '로그인'}
         </button>
 
-        {import.meta.env.DEV && (
+        {MOCK_AUTH && (
           <p className={styles.hint}>개발용 계정: admin01 / worker01 (비밀번호 아무거나)</p>
         )}
       </form>
