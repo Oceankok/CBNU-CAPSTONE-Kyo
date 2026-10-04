@@ -32,6 +32,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   // Spread init first so caller-supplied headers merge with (not replace) the defaults
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),

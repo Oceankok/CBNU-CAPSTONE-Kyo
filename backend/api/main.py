@@ -10,9 +10,12 @@ PPE 분석 시스템 초기 FastAPI 서버 파일.
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter, Depends, Request
+from fastapi.responses import FileResponse
+import os
+from backend.auth.service import require_admin, decode_user
+from backend.auth.routes import router as auth_router
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.db.event_repository import (
@@ -39,7 +42,8 @@ app = FastAPI(
 # Allow the Vite dev server to call the API without CORS errors
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=os.environ.get("PPE_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(","),
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -48,11 +52,24 @@ app.add_middleware(
 _STORAGE_DIR = Path(__file__).resolve().parents[2] / "storage"
 _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
-app.mount(
-    "/storage",
-    StaticFiles(directory=str(_STORAGE_DIR)),
-    name="storage",
-)
+app.include_router(auth_router)
+admin_router = APIRouter(dependencies=[Depends(require_admin)])
+
+
+@app.api_route("/storage/{media_path:path}", methods=["GET", "HEAD"])
+def read_media(media_path: str, request: Request):
+    token = request.cookies.get("ppe_media")
+    if not token:
+        raise HTTPException(401, "Media authentication required")
+    user = decode_user(token, "ppe-media")
+    if user["role"] != "admin":
+        raise HTTPException(403, "Administrator access required")
+    root = _STORAGE_DIR.resolve()
+    target = (root / media_path).resolve()
+    if not target.is_relative_to(root) or not target.is_file():
+        raise HTTPException(404, "Media not found")
+    return FileResponse(target, headers={"Cache-Control": "private, no-store"})
+
 
 
 class ReviewRequest(BaseModel):
@@ -65,7 +82,7 @@ class ReviewRequest(BaseModel):
         - hold: 판단 보류
     """
 
-    reviewer_id: str = Field(..., example="admin01")
+    reviewer_id: str | None = Field(default=None, example="admin01")
     review_result: str = Field(..., example="confirmed")
     review_reason_code: str = Field(..., example="confirmed_no_helmet")
     review_comment: str = Field(default="", example="실제 안전모 미착용")
@@ -105,7 +122,7 @@ def read_root() -> dict[str, str]:
     return {"message": "PPE Analysis API is running"}
 
 
-@app.get("/api/events")
+@admin_router.get("/api/events")
 def read_events() -> dict:
     """
     후보 이벤트 전체 목록 조회.
@@ -118,7 +135,7 @@ def read_events() -> dict:
     }
 
 
-@app.get("/api/events/{event_id}")
+@admin_router.get("/api/events/{event_id}")
 def read_event(event_id: str) -> dict:
     """
     후보 이벤트 단건 조회.
@@ -144,8 +161,8 @@ def read_event(event_id: str) -> dict:
     }
 
 
-@app.post("/api/events/{event_id}/review")
-def create_event_review(event_id: str, request: ReviewRequest) -> dict:
+@admin_router.post("/api/events/{event_id}/review")
+def create_event_review(event_id: str, request: ReviewRequest, user: dict = Depends(require_admin)) -> dict:
     """
     후보 이벤트 담당자 검토 결과 저장.
 
@@ -180,7 +197,7 @@ def create_event_review(event_id: str, request: ReviewRequest) -> dict:
     review = {
         "review_id": review_id,
         "event_id": event_id,
-        "reviewer_id": request.reviewer_id,
+        "reviewer_id": user["user_id"],
         "review_result": request.review_result,
         "review_reason_code": request.review_reason_code,
         "review_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -211,8 +228,8 @@ def create_event_review(event_id: str, request: ReviewRequest) -> dict:
     }
 
 
-@app.put("/api/events/{event_id}/review")
-def update_existing_event_review(event_id: str, request: ReviewRequest) -> dict:
+@admin_router.put("/api/events/{event_id}/review")
+def update_existing_event_review(event_id: str, request: ReviewRequest, user: dict = Depends(require_admin)) -> dict:
     """
     보류 또는 2차 검토 대상 이벤트의 기존 검토 결과를 갱신함.
 
@@ -257,7 +274,7 @@ def update_existing_event_review(event_id: str, request: ReviewRequest) -> dict:
     review = {
         "review_id": existing_review["review_id"],
         "event_id": event_id,
-        "reviewer_id": request.reviewer_id,
+        "reviewer_id": user["user_id"],
         "review_result": request.review_result,
         "review_reason_code": request.review_reason_code,
         "review_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -290,7 +307,7 @@ def update_existing_event_review(event_id: str, request: ReviewRequest) -> dict:
     }
 
 
-@app.get("/api/stats")
+@admin_router.get("/api/stats")
 def read_quarterly_stats(quarter: str = "2026-Q2") -> dict:
     """
     분기별 통계 조회.
@@ -311,7 +328,7 @@ def read_quarterly_stats(quarter: str = "2026-Q2") -> dict:
     return stats
 
 
-@app.post("/api/stats/generate")
+@admin_router.post("/api/stats/generate")
 def create_quarterly_stats(quarter: str = "2026-Q2") -> dict:
     """
     후보 이벤트와 검토 결과를 기반으로 분기별 통계를 생성함.
@@ -330,7 +347,7 @@ def create_quarterly_stats(quarter: str = "2026-Q2") -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/recommendations")
+@admin_router.get("/api/recommendations")
 def read_education_recommendations(quarter: str = "2026-Q2") -> dict:
     """
     분기별 교육 추천 조회.
@@ -354,7 +371,7 @@ def read_education_recommendations(quarter: str = "2026-Q2") -> dict:
     return recommendations
 
 
-@app.post("/api/recommendations/generate")
+@admin_router.post("/api/recommendations/generate")
 def create_education_recommendations(quarter: str = "2026-Q2") -> dict:
     """
     확정 위반 통계를 기반으로 교육 추천 데이터를 생성함.
@@ -381,7 +398,7 @@ def create_education_recommendations(quarter: str = "2026-Q2") -> dict:
     return recommendations
 
 
-@app.get("/api/broadcast/settings")
+@admin_router.get("/api/broadcast/settings")
 def read_broadcast_settings() -> dict:
     """
     경고 방송 설정 조회.
@@ -393,7 +410,7 @@ def read_broadcast_settings() -> dict:
     return get_broadcast_settings()
 
 
-@app.put("/api/broadcast/settings")
+@admin_router.put("/api/broadcast/settings")
 def update_broadcast_settings(request: BroadcastSettingsRequest) -> dict:
     """
     경고 방송 설정 저장.
@@ -407,3 +424,5 @@ def update_broadcast_settings(request: BroadcastSettingsRequest) -> dict:
             저장된 경고 방송 설정.
     """
     return save_broadcast_settings(request.model_dump())
+
+app.include_router(admin_router)

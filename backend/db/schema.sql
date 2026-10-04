@@ -128,3 +128,13 @@ CREATE TABLE IF NOT EXISTS broadcast_message_template (
     message TEXT NOT NULL,
     FOREIGN KEY (setting_id) REFERENCES broadcast_setting(setting_id) ON DELETE CASCADE
 );
+-- Dashboard users are not linked to detected people.
+CREATE TABLE IF NOT EXISTS app_user (
+    user_id TEXT PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('admin','worker')),
+    is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1)),
+    zone_name TEXT,
+    auth_version INTEGER NOT NULL DEFAULT 0
+);
