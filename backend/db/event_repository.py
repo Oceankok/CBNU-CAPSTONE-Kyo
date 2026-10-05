@@ -78,24 +78,27 @@ def row_to_dict(row: Optional[sqlite3.Row]) -> Optional[dict[str, Any]]:
     return dict(row)
 
 
-def _attach_event_media(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Attach media records while retaining the legacy single-path fields."""
+def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, Any]]:
+    """Legacy fields point only to published redacted media; raw paths stay private."""
     if not events:
         return events
+    from backend.media.service import public_media
     event_ids = [event["event_id"] for event in events]
-    placeholders = ",".join("?" for _ in event_ids)
-    with get_connection() as conn:
-        rows = conn.execute(
-            f"SELECT media_id,event_id,camera_id,kind,role,storage_path,status,"
-            f"redaction_status,capture_start_at,capture_end_at,created_at,deleted_at "
-            f"FROM event_media WHERE event_id IN ({placeholders}) ORDER BY created_at,media_id",
-            event_ids,
-        ).fetchall()
+    rows, retention = [], {}
+    for offset in range(0, len(event_ids), 500):
+        ids = event_ids[offset:offset + 500]
+        placeholders = ",".join("?" for _ in ids)
+        rows.extend(conn.execute(f"SELECT * FROM event_media WHERE event_id IN ({placeholders}) ORDER BY created_at,media_id", ids).fetchall())
+        for row in conn.execute(f"SELECT * FROM event_retention WHERE event_id IN ({placeholders})", ids):
+            retention[row["event_id"]] = dict(row)
     by_event: dict[str, list[dict[str, Any]]] = {event_id: [] for event_id in event_ids}
     for row in rows:
-        by_event[row["event_id"]].append(dict(row))
+        by_event[row["event_id"]].append(public_media(dict(row), retention.get(row["event_id"], {}).get("decision", "pending")))
     for event in events:
         event["media"] = by_event[event["event_id"]]
+        event["retention"] = retention.get(event["event_id"], {"event_id": event["event_id"], "decision": "pending", "version": 0})
+        event["thumbnail_path"] = next((m["url"] for m in event["media"] if m["role"] == "thumbnail" and m["url"]), "")
+        event["video_clip_path"] = next((m["url"] for m in event["media"] if m["role"] == "clip" and m["url"]), "")
     return events
 
 
@@ -141,7 +144,7 @@ def get_all_candidate_events() -> list[dict[str, Any]]:
 
     with get_connection() as conn:
         rows = conn.execute(query).fetchall()
-        return _attach_event_media([dict(row) for row in rows])
+        return _attach_event_media([dict(row) for row in rows], conn)
 
 
 def get_candidate_event_by_id(event_id: str) -> Optional[dict[str, Any]]:
@@ -191,7 +194,7 @@ def get_candidate_event_by_id(event_id: str) -> Optional[dict[str, Any]]:
     with get_connection() as conn:
         row = conn.execute(query, (event_id,)).fetchone()
         event = row_to_dict(row)
-        return _attach_event_media([event])[0] if event else None
+        return _attach_event_media([event], conn)[0] if event else None
 
 
 def insert_candidate_event(event: dict[str, Any]) -> None:
@@ -281,6 +284,7 @@ def insert_candidate_event(event: dict[str, Any]) -> None:
 
     with get_connection() as conn:
         conn.execute(query, event)
+        conn.execute("INSERT INTO event_retention(event_id) VALUES(?)", (event["event_id"],))
         created_at = datetime.now().astimezone().isoformat(timespec="seconds")
         for kind, role, path in (
             ("image", "thumbnail", event.get("thumbnail_path")),

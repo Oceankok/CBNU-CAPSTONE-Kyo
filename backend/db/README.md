@@ -168,7 +168,7 @@ AI가 탐지한 PPE 미착용 의심 상황을 관리자 검토 전까지 저장
 | `confirmed` | 실제 위반으로 확정       |
 | `hold`      | 추가 확인이 필요한 보류 상태 |
 
-`false_positive`도 후보 이벤트와 검토 행을 유지하고 오탐 집계에 반영함. 미디어 파일 보관/삭제는 검토 이력과 분리해 후속 기능에서 관리함.
+`false_positive`도 후보 이벤트와 검토 행을 유지하고 오탐 집계에 반영함. 미디어 파일 보관/삭제는 `event_retention`에서 검토 이력과 분리해 관리함.
 
 새 `media` 응답 배열은 `event_media`에서 조회하며, 기존 `thumbnail_path`, `video_clip_path` 필드는 프론트 호환을 위해 남겨 둠. 기존 경로는 실제 파일이나 비식별 상태까지 보장하지 않음.
 
@@ -182,11 +182,15 @@ AI가 탐지한 PPE 미착용 의심 상황을 관리자 검토 전까지 저장
 | `event_id`, `camera_id` | 이벤트와 촬영 카메라 |
 | `kind`, `role` | image/video 및 thumbnail/clip/reference 구분 |
 | `storage_path` | 기존 저장 루트 기준 상대 경로 |
-| `status` | registered/missing/delete_pending/deleted |
+| `status` | registered/processing/ready/failed/missing/delete_pending/deleted |
 | `redaction_status` | unprocessed/complete/failed/legacy_unverified |
 | `capture_start_at`, `capture_end_at` | 촬영 시간 범위 |
 
-기존 이벤트 경로는 마이그레이션에서 `legacy_unverified`로 가져옴. 신규 이벤트 경로는 `unprocessed`로 기록함. 현재 단계에서는 기존 `/storage` 인증 동작을 유지하며, 비식별 여부를 확인해 미디어 제공을 차단하는 기능은 후속 작업임.
+기존 이벤트 경로는 마이그레이션에서 `legacy_unverified`로 가져옴. 신규 자료는 얼굴 처리 후 `ready` / `complete`인 경우만 관리자에게 제공함. 기존 호환 경로도 처리 완료 자료에서 계산함.
+
+`event_retention`은 보관 결정, 동의 확인 근거, 결정자, 선택적 만료 시각, 삭제 완료 및 동시 수정 버전을 저장함. `event_retention_history`와 `event_review_history`는 결정과 이전 검토 기록을 유지함. 파일 삭제는 이벤트·검토 기록을 삭제하지 않음.
+
+실행 준비와 직접 확인 방법은 [미디어 연동 안내](../../docs/20261004_Media_Privacy_Setup.md)를 참고함.
 
 ---
 
@@ -218,7 +222,7 @@ AI가 탐지한 PPE 미착용 의심 상황을 관리자 검토 전까지 저장
 
 ## `false_positive_aggregate`
 
-관리자가 오탐으로 판단한 이벤트는 상세 기록을 유지하지 않고, 다음 기준으로 집계값만 저장함.
+관리자가 오탐으로 판단한 이벤트는 상세 이벤트·검토 기록을 유지하며, 다음 기준으로 집계값도 저장함.
 
 ```text
 분기 + 구역 + PPE 유형
@@ -233,7 +237,7 @@ AI가 탐지한 PPE 미착용 의심 상황을 관리자 검토 전까지 저장
 | `false_positive_count` | 누적 오탐 건수  |
 | `updated_at`           | 마지막 갱신 시각 |
 
-이 구조를 통해 상세 이미지나 이벤트 데이터를 장기 보존하지 않으면서, 특정 구역 또는 PPE 유형에서 오탐이 반복되는지 통계적으로 확인할 수 있음.
+미디어 삭제 후에도 이벤트·검토 및 집계 기록으로 특정 구역 또는 PPE 유형의 오탐 반복 여부를 확인할 수 있음.
 
 ---
 
@@ -520,6 +524,13 @@ python backend/db/test_event_repository.py
 * `ppe_system.db`는 로컬 실행 시 생성되는 파일이므로 Git에 포함하지 않음.
 * 생성된 후보 이벤트 썸네일 및 영상 파일도 Git에 포함하지 않음.
 * 테스트를 초기 상태에서 다시 실행하려면 기존 DB 파일을 삭제한 뒤 `init_db.py`를 다시 실행함.
-* 오탐으로 판단된 이벤트는 상세 이벤트 및 검토 데이터를 유지하지 않고 비식별 집계만 저장함.
+* 오탐으로 판단된 이벤트도 상세 이벤트 및 검토 기록을 유지함. 이미지·영상은 별도 보관/삭제 결정에 따름.
 * 통계와 교육 추천은 생성 API 실행 이후 조회 가능함.
 * 현재 후보 이벤트 서버 측 필터 API는 `main`에 통합되지 않았으며, 프론트엔드 화면 필터링으로 시연 기능을 제공함.
+
+
+### 테스트 이벤트의 미디어 경로 (2026-10-06)
+
+`init_db.py`에서 읽는 `seed.sql`의 EVT_0001~EVT_0003과 별도 `seed_events.py`의 이벤트는 이미지/영상 경로를 빈 문자열로 생성한다. 존재하지 않는 mock 파일에 대한 미디어 레코드를 생성하지 않는다. 테스트 이벤트와 카메라 정보는 유지하며, 실제 자료는 관리자 웹의 참고 자료 추가로 업로드하여 비식별화한다. 파일을 임의로 storage에 배치할 필요가 없다.
+
+이 변경은 다음 새 DB 초기화/이벤트 삽입부터 적용된다. 기존 DB는 `INSERT OR IGNORE`로 유지되므로 초기화 명령을 다시 실행해도 기존 가짜 경로나 미디어 레코드는 수정되지 않는다. 임시 DB를 새로 생성하는 현재 테스트 흐름에서는 다음 생성 때 적용된다. 기존 데이터 마이그레이션은 유지하며 실제 자료를 자동 삭제하지 않는다.

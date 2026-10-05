@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
+import EventMediaPanel from '../components/EventMediaPanel';
 import { fetchEvent, submitReview, updateReview } from '../api/events';
-import { mediaUrl } from '../api/client';
 import { getSession } from '../api/auth';
-import type { CandidateEvent, EventReview, ReviewResult, ReviewReasonCode, ReviewRequest } from '../types';
+import type { CandidateEvent, EventReview, EventReviewHistory, ReviewResult, ReviewReasonCode, ReviewRequest } from '../types';
 import styles from './ReviewDetailPage.module.css';
 
 // Flatten all reason options into a lookup map for display (code → Korean label)
@@ -45,6 +45,7 @@ export default function ReviewDetailPage() {
 
   const [event, setEvent] = useState<CandidateEvent | null>(null);
   const [existingReview, setExistingReview] = useState<EventReview | null>(null);
+  const [reviewHistory, setReviewHistory] = useState<EventReviewHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -56,23 +57,15 @@ export default function ReviewDetailPage() {
   const [submitted, setSubmitted] = useState(false);
   // True when the user clicked '재검토 시작' to overwrite an existing hold/second-review
   const [isReReview, setIsReReview] = useState(false);
-  // Controls the full-screen video modal
-  const [videoOpen, setVideoOpen] = useState(false);
-
-  // Close modal on Escape key
-  useEffect(() => {
-    if (!videoOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setVideoOpen(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [videoOpen]);
-
   useEffect(() => {
     if (!event_id) return;
     setLoading(true);
     fetchEvent(event_id)
-      .then(({ event: ev, review }) => {
+      .then(({ event: ev, review, review_history = [] }) => {
         setEvent(ev);
+        setReviewHistory(review_history);
+        setExistingReview(review);
+        setSubmitted(Boolean(review));
         if (review) {
           // Event already reviewed — show existing result and lock the form
           setExistingReview(review);
@@ -101,6 +94,14 @@ export default function ReviewDetailPage() {
     setReasonCode(''); // reset reason when the main result changes
   };
 
+  const reloadEvent = async () => {
+    if (!event_id) return;
+    const data = await fetchEvent(event_id);
+    setEvent(data.event);
+    setExistingReview(data.review);
+    setReviewHistory(data.review_history ?? []);
+  };
+
   const handleSubmit = async () => {
     if (!reviewResult || !reasonCode || !event_id) return;
     setSubmitError(null);
@@ -119,6 +120,7 @@ export default function ReviewDetailPage() {
       } else {
         await submitReview(event_id, body);
       }
+      await reloadEvent();
       setSubmitted(true);
       setIsReReview(false);
     } catch (e: unknown) {
@@ -149,44 +151,12 @@ export default function ReviewDetailPage() {
       </div>
 
       <div className={styles.grid}>
-        {/* Left: thumbnail — tapping it plays the clip when one exists */}
+        {/* All camera media use the same redaction and retention policy. */}
         <div className={styles.mediaCol}>
-          <div className={styles.thumbnail}>
-            {event.thumbnail_path ? (
-              <img src={mediaUrl(event.thumbnail_path)} alt="이벤트 썸네일" />
-            ) : (
-              <div className={styles.thumbnailPlaceholder}>
-                <span className={styles.thumbnailIcon}>📷</span>
-                <p>썸네일 없음</p>
-              </div>
-            )}
-            {event.video_clip_path && (
-              <button className={styles.playBtn} onClick={() => setVideoOpen(true)}>
-                ▶ 클립 재생
-              </button>
-            )}
-          </div>
+          <EventMediaPanel eventId={event.event_id} cameraId={event.camera_id}
+            finalReview={Boolean(existingReview && existingReview.review_result !== 'hold' && !existingReview.second_review_needed)}
+            onChange={reloadEvent} />
         </div>
-
-        {/* Video modal — blurred backdrop, closes on overlay click or Escape */}
-        {videoOpen && event.video_clip_path && (
-          <div
-            className={styles.videoOverlay}
-            onClick={() => setVideoOpen(false)}
-            role="dialog"
-            aria-modal="true"
-          >
-            <div className={styles.videoModal} onClick={(e) => e.stopPropagation()}>
-              <button className={styles.videoCloseBtn} onClick={() => setVideoOpen(false)}>✕</button>
-              <video
-                src={mediaUrl(event.video_clip_path)}
-                controls
-                autoPlay
-                className={styles.videoPlayer}
-              />
-            </div>
-          </div>
-        )}
 
         {/* Right: event details + review form */}
         <div className={styles.infoCol}>
@@ -234,6 +204,12 @@ export default function ReviewDetailPage() {
             </details>
           </div>
 
+          {reviewHistory.length > 0 && <details className={styles.card}>
+            <summary>이전 검토 기록 ({reviewHistory.length}건)</summary>
+            {reviewHistory.map(review => <p key={review.history_id}>
+              {review.review_time} · {review.reviewer_id} · {getReasonLabel(review.review_reason_code)}
+            </p>)}
+          </details>}
           {submitted ? (
             <div className={styles.submittedCard}>
               <p className={styles.submittedMsg}>

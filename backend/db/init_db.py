@@ -3,9 +3,9 @@ import sqlite3
 from pathlib import Path
 
 if __package__:
-    from .migrations import apply_migrations
+    from .migrations import LATEST_VERSION, apply_migrations
 else:  # Supports the documented `python backend/db/init_db.py` command.
-    from migrations import apply_migrations
+    from migrations import LATEST_VERSION, apply_migrations
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -32,6 +32,8 @@ def init_database() -> None:
 
     try:
         cursor = conn.cursor()
+        if cursor.execute("PRAGMA user_version").fetchone()[0] > LATEST_VERSION:
+            raise RuntimeError("Database version is newer than this application")
 
         # 외래키 제약 조건 활성화
         cursor.execute("PRAGMA foreign_keys = ON;")

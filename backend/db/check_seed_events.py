@@ -20,12 +20,8 @@ def print_event_rows(rows: list[sqlite3.Row]) -> None:
 def validate_event_row(row: sqlite3.Row) -> None:
     event_id = row["event_id"]
 
-    expected_thumbnail_path = (
-        f"storage/candidate_events/thumbnails/{event_id}.jpg"
-    )
-    expected_video_clip_path = (
-        f"storage/candidate_events/clips/{event_id}.mp4"
-    )
+    expected_thumbnail_path = ""
+    expected_video_clip_path = ""
 
     if row["thumbnail_path"] != expected_thumbnail_path:
         raise AssertionError(

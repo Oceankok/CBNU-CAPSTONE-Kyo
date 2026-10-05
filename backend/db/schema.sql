@@ -37,9 +37,9 @@ CREATE TABLE IF NOT EXISTS event_media (
     camera_id TEXT NOT NULL,
     kind TEXT NOT NULL CHECK(kind IN ('image','video')),
     role TEXT NOT NULL CHECK(role IN ('thumbnail','clip','reference')),
-    storage_path TEXT NOT NULL,
+    storage_path TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'registered'
-        CHECK(status IN ('registered','missing','delete_pending','deleted')),
+        CHECK(status IN ('registered','processing','ready','failed','missing','delete_pending','deleted')),
     redaction_status TEXT NOT NULL DEFAULT 'unprocessed'
         CHECK(redaction_status IN ('unprocessed','complete','failed','legacy_unverified')),
     capture_start_at TEXT,
@@ -48,6 +48,13 @@ CREATE TABLE IF NOT EXISTS event_media (
     request_id TEXT,
     created_at TEXT NOT NULL,
     deleted_at TEXT,
+    error_code TEXT,
+    processing_started_at REAL,
+    faces_detected INTEGER,
+    processed_frames INTEGER,
+    redaction_mode TEXT,
+    inference_backend TEXT,
+    processing_seconds REAL,
     FOREIGN KEY (event_id) REFERENCES candidate_event(event_id) ON DELETE CASCADE,
     FOREIGN KEY (camera_id) REFERENCES camera_info(camera_id),
     FOREIGN KEY (source_node_id) REFERENCES field_node(node_id)
@@ -55,6 +62,26 @@ CREATE TABLE IF NOT EXISTS event_media (
 CREATE INDEX IF NOT EXISTS idx_event_media_event ON event_media(event_id,status);
 CREATE INDEX IF NOT EXISTS idx_event_media_camera_capture ON event_media(camera_id,capture_start_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_event_media_request ON event_media(request_id) WHERE request_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS event_retention (
+    event_id TEXT PRIMARY KEY REFERENCES candidate_event(event_id) ON DELETE CASCADE,
+    decision TEXT NOT NULL DEFAULT 'pending' CHECK(decision IN ('pending','retain','delete')),
+    consent_confirmed INTEGER NOT NULL DEFAULT 0 CHECK(consent_confirmed IN (0,1)),
+    consent_reference TEXT,
+    decided_by TEXT,
+    decided_at TEXT,
+    retain_until REAL,
+    deleted_at TEXT,
+    version INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS event_retention_history (
+    history_id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL REFERENCES candidate_event(event_id) ON DELETE CASCADE,
+    decision TEXT NOT NULL,
+    decided_by TEXT NOT NULL,
+    decided_at TEXT NOT NULL,
+    consent_reference TEXT
+);
 
 -- 이벤트 리뷰 테이블
 CREATE TABLE IF NOT EXISTS event_review (
