@@ -1,5 +1,4 @@
 import json
-import sqlite3
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,15 +6,17 @@ from pydantic import BaseModel, Field
 
 from backend.auth.service import current_user, require_admin
 from backend.db.event_repository import get_connection
+from backend.zones.policy import validate_required_ppe
 
 admin = APIRouter(prefix="/api/zones", tags=["zones"], dependencies=[Depends(require_admin)])
 worker = APIRouter(prefix="/api/worker", tags=["worker"])
-ALLOWED_PPE = {"helmet", "vest", "goggles", "gloves", "safety_shoes", "hearing_protection", "mask", "harness"}
 
 
 class ZoneRuleRequest(BaseModel):
-    required_ppe: list[str] = Field(max_length=12)
-    rules: list[str] = Field(max_length=100)
+    required_ppe: list[str] = Field(
+        max_length=12, description="구역 전체의 기본 필수 PPE. 장비별 추가 PPE는 별도 설정에서 합산합니다.",
+    )
+    rules: list[str] = Field(max_length=100, description="작업자에게 표시할 안전 수칙 문구")
 
 
 def _serialize(row) -> dict:
@@ -43,11 +44,10 @@ def save_zone_rule(zone_name: str, body: ZoneRuleRequest, user: dict = Depends(r
     zone_name = zone_name.strip()
     if not zone_name or len(zone_name) > 100:
         raise HTTPException(422, "zone_name must contain 1 to 100 characters")
-    required_ppe = [item.strip() for item in body.required_ppe]
-    if any(item not in ALLOWED_PPE for item in required_ppe):
-        raise HTTPException(422, f"required_ppe values must be from: {', '.join(sorted(ALLOWED_PPE))}")
-    if len(set(required_ppe)) != len(required_ppe):
-        raise HTTPException(422, "required_ppe must not contain duplicates")
+    try:
+        required_ppe = validate_required_ppe(body.required_ppe)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     rules = [rule.strip() for rule in body.rules]
     if any(not rule or len(rule) > 500 for rule in rules):
         raise HTTPException(422, "Each rule must contain 1 to 500 characters")

@@ -796,7 +796,9 @@ curl.exe -o NUL -w "%{http_code}`n" http://127.0.0.1:8000/storage/candidate_even
 
 # 구역별 PPE 및 안전 규칙 API (#101)
 
-구역 규칙은 작업자에게 표시하는 설정이며 현재 PPE 추론 또는 이벤트·방송 생성을 자동으로 억제하지 않음. 탐지 연동은 추론 기능과 구역 설정을 함께 설계한 후 적용함. 현재 모델 탐지 항목은 `helmet`, `vest`; 규칙 표시용으로 `goggles`, `gloves`, `safety_shoes`, `hearing_protection`, `mask`, `harness`도 허용함.
+`required_ppe`는 구역 전체에 적용되는 기본 필수 PPE이고, `rules`는 작업자에게 보여 주는 안전 수칙 문구임. 장비 등록 기능에서는 장비별 추가 필수 PPE를 별도로 저장하고, 해당 카메라·작업 위치에 연결된 장비 규칙을 구역 기본 PPE에 합산함. 장비 규칙이 구역의 기본 PPE를 제거하지는 않음. 현재 API는 구역 기본 규칙을 저장·조회하며 PPE 추론 또는 이벤트·방송 생성을 자동으로 억제하지 않음.
+
+현재 모델 탐지 항목은 `helmet`, `vest`; 설정·안내용으로 `goggles`, `gloves`, `safety_shoes`, `hearing_protection`, `mask`, `harness`도 허용함. 표시용 항목을 저장했다고 해당 항목의 탐지 기능이 생기는 것은 아님. 장비 및 탐지 연동 순서는 [구역·장비 PPE 정책 설계](../../docs/20261005_Zone_Equipment_PPE_Policy.md)를 참고함.
 
 | Method | Endpoint | 권한 | 설명 |
 | --- | --- | --- | --- |

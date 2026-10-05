@@ -139,7 +139,9 @@ CREATE TABLE IF NOT EXISTS app_user (
     auth_version INTEGER NOT NULL DEFAULT 0
 );
 
--- Per-zone safety guidance shown to workers. Dashboard users are not linked to detections.
+-- Zone-wide baseline PPE and worker safety guidance.
+-- Equipment-specific additions are stored separately when equipment registration is implemented.
+-- Dashboard users are not linked to detections.
 CREATE TABLE IF NOT EXISTS zone_rule (
     zone_name TEXT PRIMARY KEY,
     required_ppe TEXT NOT NULL DEFAULT '[]',
