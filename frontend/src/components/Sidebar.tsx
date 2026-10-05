@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { to: '/stats', label: '통계' },
   { to: '/recommend', label: '교육 추천' },
   { to: '/broadcast', label: '경고 방송' },
+  { to: '/zones', label: '구역 규칙' },
 ];
 
 export default function Sidebar({ pendingCount }: { pendingCount: number }) {

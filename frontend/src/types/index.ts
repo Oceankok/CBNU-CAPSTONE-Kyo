@@ -156,3 +156,15 @@ export interface Session {
   display_name: string;
   role: UserRole;
 }
+
+// --- Zone safety rules (issue #101) ---
+
+// PPE the detection model can check today; zone rules are limited to these for now
+export type ZonePpe = Exclude<PpeType, 'all'>;
+
+export interface ZoneRule {
+  zone_name: string;
+  required_ppe: ZonePpe[];
+  rules: string[];
+  updated_at?: string;
+}
