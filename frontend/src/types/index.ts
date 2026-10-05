@@ -168,3 +168,22 @@ export interface ZoneRule {
   rules: string[];
   updated_at?: string;
 }
+
+// --- Account management (issue #104) ---
+
+// Account as listed for admins; never includes password data
+export interface AppUser {
+  user_id: string;
+  display_name: string;
+  role: UserRole;
+  zone_name: string | null;
+  is_active: boolean;
+}
+
+export interface NewUser {
+  user_id: string;
+  display_name: string;
+  role: UserRole;
+  zone_name: string | null;
+  password: string;
+}

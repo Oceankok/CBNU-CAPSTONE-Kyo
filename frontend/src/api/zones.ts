@@ -1,5 +1,6 @@
 import { apiFetch, ApiError } from './client';
 import { MOCK_AUTH, getSession } from './auth';
+import { mockZoneOf } from './users';
 import type { ZoneRule } from '../types';
 
 // ponytail: in-memory mock for VITE_AUTH_MOCK=true until the #101 API exists; resets on reload
@@ -20,7 +21,6 @@ const mockZones: ZoneRule[] = [
     rules: ['칩 제거 시 맨손 사용 금지'],
   },
 ];
-const MOCK_WORKER_ZONE = '프레스 구역';
 
 export async function fetchZones(): Promise<ZoneRule[]> {
   if (MOCK_AUTH) return structuredClone(mockZones);
@@ -59,9 +59,10 @@ export async function deleteZone(zoneName: string): Promise<void> {
 // Rule for the logged-in worker's assigned zone; 404 = no zone assigned or no rule yet
 export async function fetchMyZone(): Promise<ZoneRule> {
   if (MOCK_AUTH) {
-    const zone =
-      getSession()?.role === 'worker' &&
-      mockZones.find((z) => z.zone_name === MOCK_WORKER_ZONE);
+    const session = getSession();
+    const zoneName =
+      session?.role === 'worker' ? mockZoneOf(session.user_id) : null;
+    const zone = zoneName && mockZones.find((z) => z.zone_name === zoneName);
     if (!zone) throw new ApiError(404, '담당 구역이 지정되지 않았습니다.');
     return structuredClone(zone);
   }
