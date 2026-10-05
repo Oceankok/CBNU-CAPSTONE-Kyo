@@ -15,6 +15,7 @@ import {
 import SummaryCard from '../components/SummaryCard';
 import { fetchStats, generateStats, calcTrend } from '../api/stats';
 import type { QuarterlyStats } from '../types';
+import type { LayoutContext } from '../components/AppLayout';
 import styles from './StatsPage.module.css';
 
 const PPE_LABEL: Record<string, string> = {
@@ -24,7 +25,7 @@ const PPE_LABEL: Record<string, string> = {
 
 export default function StatsPage() {
   // Quarter comes from the TopBar selector (shared with Home / Recommend)
-  const { quarter } = useOutletContext<{ quarter: string }>();
+  const { quarter } = useOutletContext<LayoutContext>();
   const [stats, setStats] = useState<QuarterlyStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

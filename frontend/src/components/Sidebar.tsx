@@ -10,7 +10,7 @@ const NAV_ITEMS = [
   { to: '/broadcast', label: '경고 방송' },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ pendingCount }: { pendingCount: number }) {
   const session = getSession();
 
   return (
@@ -30,6 +30,14 @@ export default function Sidebar() {
             }
           >
             {item.label}
+            {item.to === '/review' && pendingCount > 0 && (
+              <span
+                className={styles.badge}
+                aria-label={`미검토 ${pendingCount}건`}
+              >
+                {pendingCount}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>

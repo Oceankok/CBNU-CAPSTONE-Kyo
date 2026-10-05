@@ -45,6 +45,25 @@
   transition: background-color 0.15s, color 0.15s;
 }
 
+.navItem {
+  position: relative;
+}
+
+/* Unreviewed count on the review tab */
+.badge {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 9px;
+  background: #e53e3e;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
 .navItem:hover {
   background-color: #2d3748;
   color: #f7fafc;
@@ -111,5 +130,12 @@
     font-size: 12px;
     text-align: center;
     white-space: nowrap;
+  }
+
+  .badge {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    margin: 0;
   }
 }
