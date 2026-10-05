@@ -4,9 +4,39 @@
 
 이번 변경은 이벤트 DB, 서버 얼굴 처리, 관리자 검토 화면을 한 흐름으로 연결한다. 자동 카메라 그룹 클립 요청과 수동 이벤트 병합은 아직 포함하지 않는다. 여러 카메라의 자료를 동일 이벤트에 직접 첨부하는 구조를 먼저 제공한다.
 
+## 현재 로컬 실행 준비 — SCRFD 기본값
+
+프로젝트 루트에서 실행한다. NVIDIA GPU/CUDA PyTorch 환경에서 기존 CPU용 `onnxruntime`이 설치돼 있다면 이를 제거하고 GPU 패키지만 유지한다. `requirements.txt`에 `onnxruntime-gpu`가 포함되며 `insightface` 전체 패키지는 필요하지 않다.
+
+```powershell
+python -m pip install -r backend/requirements.txt
+```
+
+모델 가중치는 pip 설치에 포함되지 않는다. 공식 SCRFD 다운로드 링크가 작동하면 10G ONNX를 사용한다. 해당 OneDrive 링크가 인증 오류를 반환하는 경우 다음 공식 배포본에서 직접 준비할 수 있다.
+
+1. [InsightFace v0.7 공식 배포본](https://github.com/deepinsight/insightface/releases/tag/v0.7)에서 `buffalo_l.zip`을 다운로드한다.
+2. 압축파일에서 **`det_10g.onnx`만** 추출한다. 얼굴 인식/속성/정렬 파일은 사용하지 않는다. 공식 Model Zoo는 buffalo_l의 얼굴 탐지 모델을 SCRFD-10GF로 명시한다.
+3. 추출 경로에 맞춰 등록한다.
+
+```powershell
+python -m backend.media.setup_scrfd --source "C:\Users\robin\Downloads\det_10g.onnx" --noncommercial-research
+```
+
+기본 등록 결과는 `models/privacy/scrfd_10g_bnkps.onnx`와 동일 이름의 `.manifest.json` / `.LICENSE.txt`다. 실제 파일명이 `det_10g.onnx`여도 등록 경로는 같으며, 등록 시 로컬 SHA-256을 기록하고 처리 시 대조한다. 모델은 Git에서 제외되고, 비상업적 연구 전용 조건을 따른다. 직접 경로를 지정하려면 등록 명령과 서버 실행 환경 양쪽에 `PPE_SCRFD_MODEL_PATH`를 동일하게 설정한다.
+
+YuNet GPU도 선택하려면 다음 모델 준비를 추가한다.
+
+```powershell
+python -m backend.media.setup_model
+```
+
+필요한 새 테스트 DB는 기존 `init_db.py` 절차로 준비하고 백엔드/Vite를 시작한다. 모델이 없으면 웹에 SCRFD 설치 필요 안내와 실패 상태를 표시하며 결과 URL은 제공하지 않는다. 등록 정보가 없거나 체크섬이 다르면 별도의 오류를 표시한다. 대체 YuNet 사용에는 YuNet 모델도 준비돼 있어야 한다.
+
+---
+
 ## 실행 전 준비 (사용자가 직접 수행)
 
-아래 명령은 프로젝트 루트에서 현재 사용하는 시스템 Python으로 실행한다. 이 프로젝트는 가상환경을 사용하지 않는다. 작성 과정에서는 설치, 모델 다운로드, DB 초기화, 서버 실행, 테스트를 수행하지 않았다.
+아래 명령은 프로젝트 루트에서 현재 사용하는 시스템 Python으로 실행한다. 이 프로젝트는 가상환경을 사용하지 않는다. 기본 비식별화는 SCRFD GPU이며, Python 의존성과 모델 파일을 모두 준비해야 한다.
 
 ```powershell
 python -m pip install -r backend/requirements.txt
@@ -203,7 +233,7 @@ CPU 신규 처리 경로를 제거했다. 웹과 업로드/재처리 API의 기�
 
 ## 사용자 수동 검증 결과 (2026-10-06)
 
-사용자가 실제 웹 UI와 Swagger에서 아래 항목을 직접 수행하고 통과를 보고했다. 자동 테스트 실행 결과로 표기하지 않는다.
+실제 웹 UI, Swagger 및 로컬 파일 확인으로 아래 항목을 수동 검증했다.
 
 - 이미지: 일반 정면 얼굴, 약 90도 회전된 누운 얼굴 보완 후 재검증, 여러 얼굴과 크기가 다른 얼굴 처리. 당시 사용 모델 기준이며 모든 사례를 SCRFD로 재검증했다고 확대하지 않는다.
 - 영상: MP4 처리·재생, 실제 얼굴 가림, 하나의 이벤트에 이미지/영상 여러 개 연결. SCRFD와 YuNet GPU 비교 영상 및 처리 로그 확인. 얼굴이 없는 뒷머리는 필수 가림 대상에서 제외.

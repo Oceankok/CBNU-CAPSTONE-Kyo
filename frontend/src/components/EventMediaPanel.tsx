@@ -9,6 +9,7 @@ const STATUS: Record<EventMedia['status'], string> = {
   failed: '처리 실패', missing: '원본 없음', delete_pending: '삭제 진행/재시도 대기', deleted: '파일 삭제 완료',
 };
 const ERRORS: Record<string, string> = {
+  scrfd_model_missing: '서버에 SCRFD 모델이 설치되지 않았습니다. 관리자에게 모델 설치를 요청하거나 YuNet 방식을 선택해 주세요.',
   scrfd_manifest_missing: 'SCRFD 모델 등록 정보가 없습니다. 개발 안내 문서의 모델 등록 절차를 확인해 주세요.',
   scrfd_model_incompatible: '지원하는 SCRFD 10G ONNX 형식이 아닙니다. 모델 파일을 확인해 주세요.',
   gpu_runtime_missing: 'GPU 처리에 필요한 onnxruntime-gpu가 설치되지 않았습니다. 개발 안내 문서를 확인해 주세요.',

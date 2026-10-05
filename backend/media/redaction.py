@@ -36,7 +36,7 @@ class FaceRedactor:
         self.mode = mode
         path = scrfd_model_path() if mode == "scrfd" else model_path()
         if not path.is_file():
-            raise MediaError("face_model_missing")
+            raise MediaError("scrfd_model_missing" if mode == "scrfd" else "face_model_missing")
         expected_hash = MODEL_SHA256
         if mode == "scrfd":
             try:

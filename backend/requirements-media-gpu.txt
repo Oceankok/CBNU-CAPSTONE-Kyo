@@ -1,4 +1,2 @@
-# Optional comparison mode. Keep CUDA 12 / cuDNN 9-compatible ORT releases.
-# Do not install the CPU-only onnxruntime package alongside this package.
+# Compatibility entry point: GPU runtime is now included in requirements.txt.
 -r requirements.txt
-onnxruntime-gpu>=1.21,<1.23
