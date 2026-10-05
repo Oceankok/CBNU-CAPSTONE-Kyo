@@ -10,11 +10,15 @@ def main():
     parser.add_argument("user_id")
     parser.add_argument("--role", choices=["admin", "worker"], required=True)
     parser.add_argument("--name", required=True)
+    parser.add_argument("--zone", help="Existing worker zone from zone_rule")
     args = parser.parse_args()
     password = getpass("Password (8+ characters): ")
     if password != getpass("Repeat password: "):
         raise SystemExit("Passwords do not match")
-    create_user(args.user_id, password, args.name, args.role)
+    try:
+        create_user(args.user_id, password, args.name, args.role, args.zone)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     print("Account created:", args.user_id)
 
 

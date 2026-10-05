@@ -139,6 +139,15 @@ CREATE TABLE IF NOT EXISTS app_user (
     auth_version INTEGER NOT NULL DEFAULT 0
 );
 
+-- Per-zone safety guidance shown to workers. Dashboard users are not linked to detections.
+CREATE TABLE IF NOT EXISTS zone_rule (
+    zone_name TEXT PRIMARY KEY,
+    required_ppe TEXT NOT NULL DEFAULT '[]',
+    rules TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by TEXT NOT NULL DEFAULT 'system'
+);
+
 CREATE TABLE IF NOT EXISTS field_node (
     node_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,

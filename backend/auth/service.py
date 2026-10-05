@@ -28,13 +28,17 @@ def find_user(user_id: str):
     return dict(row) if row else None
 
 
-def create_user(user_id: str, password: str, display_name: str, role: str) -> None:
+def create_user(user_id: str, password: str, display_name: str, role: str, zone_name: str | None = None) -> None:
     if role not in {"admin", "worker"} or len(password) < 8:
         raise ValueError("Valid role and password of at least 8 characters required")
+    if role == "admin" and zone_name:
+        raise ValueError("Administrators cannot be assigned to a worker zone")
     with get_connection() as conn:
+        if zone_name and not conn.execute("SELECT 1 FROM zone_rule WHERE zone_name=?", (zone_name,)).fetchone():
+            raise ValueError("zone_not_found")
         conn.execute(
-            "INSERT INTO app_user(user_id,password_hash,display_name,role) VALUES(?,?,?,?)",
-            (user_id, PASSWORDS.hash(password), display_name, role),
+            "INSERT INTO app_user(user_id,password_hash,display_name,role,zone_name) VALUES(?,?,?,?,?)",
+            (user_id, PASSWORDS.hash(password), display_name, role, zone_name),
         )
 
 
