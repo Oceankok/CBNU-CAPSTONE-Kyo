@@ -263,3 +263,8 @@ INSERT OR IGNORE INTO broadcast_message_template (
     'en',
     'Workers in this area, please check your safety vest.'
 );
+
+INSERT OR IGNORE INTO zone_rule (zone_name, required_ppe, rules, updated_at, updated_by) VALUES
+('프레스 구역', '["helmet","vest"]', '["금형 교체 전 설비 전원을 차단하세요."]', datetime('now'), 'system:seed'),
+('자재 이동 구역', '["helmet","vest"]', '["지정된 보행 통로를 이용하세요."]', datetime('now'), 'system:seed'),
+('절삭 가공 구역', '["helmet","vest","goggles"]', '["절삭 작업 중 보안경을 착용하세요."]', datetime('now'), 'system:seed');

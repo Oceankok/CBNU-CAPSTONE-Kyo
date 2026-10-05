@@ -1,0 +1,1 @@
+"""Zone safety rule endpoints."""
