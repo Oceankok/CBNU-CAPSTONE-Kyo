@@ -43,13 +43,72 @@
   padding: 16px;
 }
 
-.card h2 {
+.cardTitle {
   margin: 0 0 6px;
   font-size: 16px;
 }
 
-.card p {
+.muted {
+  margin: 0;
+  font-size: 14px;
+  color: #a0aec0;
+}
+
+.zoneLabel {
   margin: 0;
   font-size: 13px;
-  color: #a0aec0;
+  color: #718096;
+}
+
+.zoneName {
+  margin: 2px 0 16px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #1a202c;
+}
+
+.subTitle {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a5568;
+}
+
+/* Required PPE as large tiles — the main thing a worker needs to see */
+.ppeList {
+  list-style: none;
+  margin: 0 0 18px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.ppeItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 8px;
+  border: 2px solid #3182ce;
+  border-radius: 10px;
+  background: #ebf8ff;
+  font-size: 15px;
+  font-weight: 700;
+  color: #2b6cb0;
+}
+
+.ppeIcon {
+  font-size: 34px;
+}
+
+.rules {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #1a202c;
 }

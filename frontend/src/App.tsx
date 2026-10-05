@@ -8,6 +8,7 @@ import RecommendPage from './pages/RecommendPage';
 import BroadcastPage from './pages/BroadcastPage';
 import LoginPage from './pages/LoginPage';
 import WorkerHomePage from './pages/WorkerHomePage';
+import ZoneRulesPage from './pages/ZoneRulesPage';
 import { getSession, homePath } from './api/auth';
 import type { UserRole } from './types';
 
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="stats" element={<StatsPage />} />
             <Route path="recommend" element={<RecommendPage />} />
             <Route path="broadcast" element={<BroadcastPage />} />
+            <Route path="zones" element={<ZoneRulesPage />} />
           </Route>
         </Route>
 
