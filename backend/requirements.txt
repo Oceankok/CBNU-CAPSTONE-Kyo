@@ -2,6 +2,7 @@ fastapi
 uvicorn
 pyttsx3
 httpx
+opencv-python
 PyJWT>=2.10,<3
 argon2-cffi>=23.1,<26
 pydantic>=2,<3

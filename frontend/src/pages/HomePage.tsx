@@ -2,37 +2,25 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useOutletContext } from 'react-router-dom';
 import SummaryCard from '../components/SummaryCard';
-import { fetchEvents } from '../api/events';
 import { fetchStats, calcTrend } from '../api/stats';
-import type { CandidateEvent, QuarterlyStats } from '../types';
+import type { LayoutContext } from '../components/AppLayout';
+import type { QuarterlyStats } from '../types';
 import styles from './HomePage.module.css';
 
 // Number of pending events previewed on the home screen; the rest are on /review
 const PENDING_PREVIEW = 5;
 
 export default function HomePage() {
-  const { quarter } = useOutletContext<{ quarter: string }>();
+  // Pending events are polled by AppLayout, so this list stays live without its own fetch
+  const { quarter, pending, pendingError: error } = useOutletContext<LayoutContext>();
   const navigate = useNavigate();
 
   const [stats, setStats] = useState<QuarterlyStats | null>(null);
-  const [pendingEvents, setPendingEvents] = useState<CandidateEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const pendingEvents = pending ?? [];
+  const loading = pending === null && !error;
 
   useEffect(() => {
-    setLoading(true);
-    setError(null);
-    // Fetch events unconditionally; stats may not exist yet so treat 404 as null
-    fetchEvents()
-      .then((evData) =>
-        setPendingEvents(
-          evData.items
-            .filter((e) => e.event_status === 'pending')
-            .sort((a, b) => b.timestamp_start.localeCompare(a.timestamp_start)),
-        ),
-      )
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+    // Stats may not exist yet so treat 404 as null
     fetchStats(quarter)
       .then(setStats)
       .catch(() => setStats(null)); // stats 미생성 시 카드 숨김
@@ -44,7 +32,7 @@ export default function HomePage() {
       {loading && <p style={{ color: '#718096' }}>데이터를 불러오는 중...</p>}
 
       {/* Primary action: events waiting for a human decision */}
-      {!loading && !error && (
+      {pending && (
         <section className={`${styles.section} ${pendingEvents.length ? styles.pendingSection : ''}`}>
           <div className={styles.sectionHeader}>
             <div>

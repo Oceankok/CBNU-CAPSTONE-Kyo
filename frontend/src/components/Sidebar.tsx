@@ -1,5 +1,6 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { getSession, logout } from '../api/auth';
+import { SETTINGS_ITEMS } from '../nav';
 import styles from './Sidebar.module.css';
 
 const NAV_ITEMS = [
@@ -7,11 +8,16 @@ const NAV_ITEMS = [
   { to: '/review', label: '검토' },
   { to: '/stats', label: '통계' },
   { to: '/recommend', label: '교육 추천' },
-  { to: '/broadcast', label: '경고 방송' },
+  { to: '/settings', label: '설정' },
 ];
 
-export default function Sidebar() {
+// Settings sub-pages keep the 설정 tab highlighted
+const SETTINGS_PATHS = ['/settings', ...SETTINGS_ITEMS.map((i) => i.to)];
+
+export default function Sidebar({ pendingCount }: { pendingCount: number }) {
   const session = getSession();
+  const { pathname } = useLocation();
+  const inSettings = SETTINGS_PATHS.includes(pathname);
 
   return (
     <aside className={styles.sidebar}>
@@ -26,10 +32,18 @@ export default function Sidebar() {
             to={item.to}
             end={item.end}
             className={({ isActive }) =>
-              `${styles.navItem} ${isActive ? styles.active : ''}`
+              `${styles.navItem} ${isActive || (item.to === '/settings' && inSettings) ? styles.active : ''}`
             }
           >
             {item.label}
+            {item.to === '/review' && pendingCount > 0 && (
+              <span
+                className={styles.badge}
+                aria-label={`미검토 ${pendingCount}건`}
+              >
+                {pendingCount}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>

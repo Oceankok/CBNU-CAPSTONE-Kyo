@@ -13,6 +13,18 @@ $env:PPE_JWT_SECRET = python -c "import secrets; print(secrets.token_urlsafe(48)
 python -m uvicorn backend.api.main:app --reload
 ```
 
+macOS / Linux (저장소 루트, zsh·bash):
+
+```bash
+python3 backend/db/init_db.py
+python3 -m backend.auth.manage_users admin01 --role admin --name 관리자
+python3 -m backend.auth.manage_users worker01 --role worker --name 작업자
+export PPE_JWT_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+python3 -m uvicorn backend.api.main:app --reload
+```
+
+`export`는 현재 터미널에만 적용된다. 키가 바뀌면 기존 토큰이 무효화되므로 같은 값을 `~/.zshrc` 등에 저장해 재사용한다.
+
 비밀번호는 입력 프롬프트로 지정한다(최소 8자). 공유 기본 비밀번호는 만들지 않는다.
 `PPE_JWT_SECRET`은 32바이트 이상으로 설정한다. 운영 시 안전하게 보관하고 동일한 값을 재사용한다.
 키 변경 시 기존 토큰은 무효화된다. 키 미설정 시 로그인은 503을 반환한다.

@@ -775,3 +775,44 @@ curl.exe -o NUL -w "%{http_code}`n" http://127.0.0.1:8000/storage/candidate_even
 * 통계 및 교육 추천은 별도의 생성 API를 호출한 후 조회 가능함.
 * 현재 후보 이벤트 목록의 화면 필터링은 프론트엔드에서 수행하며, 서버 측 filter query parameter는 후속 확장 범위임.
 * 로컬 DB 파일과 생성된 썸네일·영상 파일은 Git에 포함하지 않음.
+# 작업자 계정 관리 API (#104)
+
+관리자 Bearer token이 필요함. 계정 응답에는 비밀번호 해시와 `auth_version`이 포함되지 않음. 작업자 구역은 등록된 구역 규칙만 지정할 수 있고, 관리자는 구역을 지정할 수 없음.
+
+| Method | Endpoint | 설명 |
+| --- | --- | --- |
+| GET | `/api/users` | 사용자 목록 |
+| POST | `/api/users` | 계정 생성 (`user_id`, `display_name`, `role`, `zone_name`, `password`) |
+| PATCH | `/api/users/{user_id}` | 이름·구역·활성 상태 부분 수정 |
+| POST | `/api/users/{user_id}/password` | 비밀번호 재설정 |
+
+계정 중복은 409, 없는 계정은 404, 잘못된 역할·구역·8자 미만 비밀번호는 422. 자기 계정 비활성화는 400. 비활성화와 비밀번호 변경은 `auth_version`을 증가시켜 기존 JWT를 무효화함. 삭제 API는 제공하지 않아 계정 이력을 유지함.
+
+계정 생성 예시:
+
+```json
+{"user_id":"worker04","display_name":"현장 작업자","role":"worker","zone_name":"절삭 가공 구역","password":"change-this-password"}
+```
+
+# 구역별 PPE 및 안전 규칙 API (#101)
+
+`required_ppe`는 구역 전체에 적용되는 기본 필수 PPE이고, `rules`는 작업자에게 보여 주는 안전 수칙 문구임. 장비 등록 기능에서는 장비별 추가 필수 PPE를 별도로 저장하고, 해당 카메라·작업 위치에 연결된 장비 규칙을 구역 기본 PPE에 합산함. 장비 규칙이 구역의 기본 PPE를 제거하지는 않음. 현재 API는 구역 기본 규칙을 저장·조회하며 PPE 추론 또는 이벤트·방송 생성을 자동으로 억제하지 않음.
+
+현재 모델 탐지 항목은 `helmet`, `vest`; 설정·안내용으로 `goggles`, `gloves`, `safety_shoes`, `hearing_protection`, `mask`, `harness`도 허용함. 표시용 항목을 저장했다고 해당 항목의 탐지 기능이 생기는 것은 아님. 장비 및 탐지 연동 순서는 [구역·장비 PPE 정책 설계](../../docs/20261005_Zone_Equipment_PPE_Policy.md)를 참고함.
+
+| Method | Endpoint | 권한 | 설명 |
+| --- | --- | --- | --- |
+| GET | `/api/zones` | 관리자 | 규칙 목록 |
+| PUT | `/api/zones/{zone_name}` | 관리자 | 규칙 생성 또는 전체 갱신 |
+| DELETE | `/api/zones/{zone_name}` | 관리자 | 사용자·카메라에서 참조되지 않는 규칙 삭제 |
+| GET | `/api/worker/zone` | 로그인 사용자 | 계정 담당 구역의 규칙 조회 |
+
+삭제하려는 구역이 계정 또는 카메라에 연결되어 있으면 409. 담당 구역이 없거나 규칙이 없으면 작업자 조회는 404. PPE 코드, 중복 항목, 문장 길이가 유효하지 않으면 422.
+
+구역 갱신 예시:
+
+```json
+{"required_ppe":["helmet","vest","goggles"],"rules":["절삭 작업 중 보안경을 착용하세요."]}
+```
+
+세 기본 구역의 규칙은 `backend/db/seed.sql`에서 `INSERT OR IGNORE`로 초기화함. 이후 관리자가 저장한 규칙은 DB 재초기화 과정에서 덮어쓰지 않음.

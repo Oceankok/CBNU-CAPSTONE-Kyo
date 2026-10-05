@@ -9,6 +9,9 @@ const PAGE_TITLES: Record<string, string> = {
   '/stats': '분기별 통계',
   '/recommend': '교육 추천',
   '/broadcast': '경고 방송 설정',
+  '/zones': '구역별 안전 규칙',
+  '/users': '작업자 관리',
+  '/settings': '설정',
 };
 
 // Pages whose content depends on the selected quarter

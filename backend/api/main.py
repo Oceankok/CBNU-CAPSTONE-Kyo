@@ -54,6 +54,11 @@ _STORAGE_DIR = Path(__file__).resolve().parents[2] / "storage"
 _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 app.include_router(auth_router)
+from backend.users.routes import router as users_router
+from backend.zones.routes import admin as zones_admin_router, worker as worker_router
+app.include_router(users_router)
+app.include_router(zones_admin_router)
+app.include_router(worker_router)
 admin_router = APIRouter(dependencies=[Depends(require_admin)])
 
 

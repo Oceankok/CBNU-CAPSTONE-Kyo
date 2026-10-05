@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { fetchRecommendations, generateRecommendations } from '../api/recommendations';
 import type { EducationRecommendation, EducationRecommendationList } from '../types';
+import type { LayoutContext } from '../components/AppLayout';
 import styles from './RecommendPage.module.css';
 
 const PPE_LABEL: Record<string, string> = {
@@ -58,7 +59,7 @@ function RecommendCard({ item }: { item: EducationRecommendation }) {
 }
 
 export default function RecommendPage() {
-  const { quarter } = useOutletContext<{ quarter: string }>();
+  const { quarter } = useOutletContext<LayoutContext>();
   const [data, setData] = useState<EducationRecommendationList | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
