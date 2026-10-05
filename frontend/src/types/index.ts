@@ -159,8 +159,15 @@ export interface Session {
 
 // --- Zone safety rules (issue #101) ---
 
-// PPE the detection model can check today; zone rules are limited to these for now
-export type ZonePpe = Exclude<PpeType, 'all'>;
+// Zone PPE codes accepted by the backend (backend/zones/policy.py); labels live in ppe.ts
+export type ZonePpe =
+  | Exclude<PpeType, 'all'>
+  | 'goggles'
+  | 'gloves'
+  | 'safety_shoes'
+  | 'hearing_protection'
+  | 'mask'
+  | 'harness';
 
 export interface ZoneRule {
   zone_name: string;

@@ -62,10 +62,16 @@ export async function createUser(user: NewUser): Promise<AppUser> {
     mockUsers.push(created);
     return structuredClone(created);
   }
-  return apiFetch<AppUser>('/api/users', {
-    method: 'POST',
-    body: JSON.stringify(user),
-  });
+  try {
+    return await apiFetch<AppUser>('/api/users', {
+      method: 'POST',
+      body: JSON.stringify(user),
+    });
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409)
+      throw new ApiError(409, '이미 사용 중인 아이디입니다.');
+    throw e;
+  }
 }
 
 export async function updateUser(

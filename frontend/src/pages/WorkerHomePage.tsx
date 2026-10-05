@@ -3,12 +3,8 @@ import { getSession, logout } from '../api/auth';
 import { fetchMyZone } from '../api/zones';
 import { ApiError } from '../api/client';
 import type { ZoneRule } from '../types';
+import { ppeInfo } from '../ppe';
 import styles from './WorkerHomePage.module.css';
-
-const PPE_INFO: Record<string, { icon: string; label: string }> = {
-  helmet: { icon: '🪖', label: '안전모' },
-  vest: { icon: '🦺', label: '안전조끼' },
-};
 
 export default function WorkerHomePage() {
   const session = getSession();
@@ -47,10 +43,8 @@ export default function WorkerHomePage() {
                 <ul className={styles.ppeList}>
                   {zone.required_ppe.map((p) => (
                     <li key={p} className={styles.ppeItem}>
-                      <span className={styles.ppeIcon}>
-                        {PPE_INFO[p]?.icon ?? '🦺'}
-                      </span>
-                      {PPE_INFO[p]?.label ?? p}
+                      <span className={styles.ppeIcon}>{ppeInfo(p).icon}</span>
+                      {ppeInfo(p).label}
                     </li>
                   ))}
                 </ul>

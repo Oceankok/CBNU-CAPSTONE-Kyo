@@ -17,7 +17,7 @@ const mockZones: ZoneRule[] = [
   },
   {
     zone_name: '절삭 가공 구역',
-    required_ppe: ['helmet'],
+    required_ppe: ['helmet', 'vest', 'goggles'],
     rules: ['칩 제거 시 맨손 사용 금지'],
   },
 ];
@@ -51,9 +51,20 @@ export async function deleteZone(zoneName: string): Promise<void> {
     if (i >= 0) mockZones.splice(i, 1);
     return;
   }
-  await apiFetch(`/api/zones/${encodeURIComponent(zoneName)}`, {
-    method: 'DELETE',
-  });
+  try {
+    await apiFetch(`/api/zones/${encodeURIComponent(zoneName)}`, {
+      method: 'DELETE',
+    });
+  } catch (e) {
+    // Backend detail is English; this case is common enough to explain in Korean
+    if (e instanceof ApiError && e.status === 409) {
+      throw new ApiError(
+        409,
+        '이 구역에 배정된 작업자나 카메라가 있어 삭제할 수 없습니다.',
+      );
+    }
+    throw e;
+  }
 }
 
 // Rule for the logged-in worker's assigned zone; 404 = no zone assigned or no rule yet
