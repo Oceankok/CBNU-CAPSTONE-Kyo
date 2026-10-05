@@ -1,12 +1,8 @@
 import { useEffect, useState } from 'react';
 import { fetchZones, saveZone, deleteZone } from '../api/zones';
 import type { ZonePpe, ZoneRule } from '../types';
+import { ZONE_PPE } from '../ppe';
 import styles from './ZoneRulesPage.module.css';
-
-const PPE_OPTIONS: { value: ZonePpe; label: string }[] = [
-  { value: 'helmet', label: '🪖 안전모' },
-  { value: 'vest', label: '🦺 안전조끼' },
-];
 
 // Editable copy of a rule; rules are edited as one-per-line text
 interface Draft {
@@ -28,10 +24,15 @@ const toDraft = (z: ZoneRule): Draft => ({
 const toRule = (d: Draft): ZoneRule => ({
   zone_name: d.zone_name,
   required_ppe: d.required_ppe,
-  rules: d.rulesText
-    .split('\n')
-    .map((r) => r.trim())
-    .filter(Boolean),
+  // Backend rejects duplicate lines (422), so drop repeats here
+  rules: [
+    ...new Set(
+      d.rulesText
+        .split('\n')
+        .map((r) => r.trim())
+        .filter(Boolean),
+    ),
+  ],
 });
 
 export default function ZoneRulesPage() {
@@ -132,7 +133,7 @@ export default function ZoneRulesPage() {
           </div>
 
           <div className={styles.ppeRow} role="group" aria-label="필수 PPE">
-            {PPE_OPTIONS.map((o) => (
+            {ZONE_PPE.map((o) => (
               <button
                 key={o.value}
                 type="button"
@@ -140,10 +141,15 @@ export default function ZoneRulesPage() {
                 aria-pressed={d.required_ppe.includes(o.value)}
                 onClick={() => togglePpe(d, o.value)}
               >
-                {o.label}
+                {o.icon} {o.label}
+                {!o.detected && <span className={styles.notDetected}>*</span>}
               </button>
             ))}
           </div>
+          <p className={styles.ppeNote}>
+            * 현재 AI는 안전모·안전조끼만 자동 탐지합니다. 나머지는 작업자
+            안내용입니다.
+          </p>
 
           <label className={styles.field}>
             <span className={styles.fieldLabel}>안전 수칙 (한 줄에 하나)</span>
