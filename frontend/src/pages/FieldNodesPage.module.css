@@ -1,0 +1,303 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 860px;
+}
+
+.desc,
+.hint {
+  margin: 0;
+  font-size: 13px;
+  color: #718096;
+}
+
+.hint {
+  font-size: 12px;
+  color: #a0aec0;
+}
+
+.errorMsg,
+.okMsg {
+  margin: 0;
+  font-size: 13px;
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+
+.errorMsg {
+  color: #c53030;
+  background: #fff5f5;
+  border: 1px solid #fed7d7;
+}
+
+.okMsg {
+  color: #276749;
+  background: #f0fff4;
+  border: 1px solid #c6f6d5;
+}
+
+.card,
+.tokenCard {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tokenCard {
+  border-color: #f6e05e;
+  background: #fffff0;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a202c;
+}
+
+.warn {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #b7791f;
+}
+
+.token {
+  display: block;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+  word-break: break-all;
+  user-select: all;
+}
+
+.code {
+  margin: 0;
+  padding: 10px 12px;
+  background: #1a202c;
+  color: #e2e8f0;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ─── Node list ─────────────────────────────────── */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.node + .node {
+  border-top: 1px solid #f0f4f8;
+}
+
+.nodeHead {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nodeHead:hover {
+  background: #f7fafc;
+}
+
+.dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #cbd5e0;
+}
+
+.online {
+  background: #38a169;
+  box-shadow: 0 0 0 3px #c6f6d5;
+}
+
+.nodeMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nodeName {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a202c;
+}
+
+.nodeMeta {
+  font-size: 12px;
+  color: #a0aec0;
+}
+
+.nodeLang {
+  font-size: 13px;
+  color: #4a5568;
+  white-space: nowrap;
+}
+
+.chevron {
+  font-size: 10px;
+  color: #a0aec0;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 16px 18px 38px;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.blockTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a5568;
+  cursor: default;
+}
+
+summary.blockTitle {
+  cursor: pointer;
+}
+
+.commands {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.commands li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #edf2f7;
+  color: #4a5568;
+}
+
+.completed {
+  background: #f0fff4;
+  color: #276749;
+}
+
+.failed,
+.expired {
+  background: #fff5f5;
+  color: #c53030;
+}
+
+/* ─── Forms ─────────────────────────────────────── */
+.formRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.formRow .input {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+/* 16px keeps iOS Safari from zooming on focus */
+.input {
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 16px;
+  color: #1a202c;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #3182ce;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btn,
+.primaryBtn {
+  align-self: flex-start;
+  padding: 9px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #2b6cb0;
+}
+
+.primaryBtn {
+  border: none;
+  background: #3182ce;
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn:disabled,
+.primaryBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .card,
+  .tokenCard {
+    padding: 16px;
+  }
+
+  .detail {
+    padding: 4px 16px 18px;
+  }
+
+  .formRow .primaryBtn,
+  .formRow .btn {
+    flex: 1;
+  }
+}

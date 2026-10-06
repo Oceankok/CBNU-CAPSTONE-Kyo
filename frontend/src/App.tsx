@@ -21,6 +21,7 @@ const BroadcastPage = lazy(() => import('./pages/BroadcastPage'));
 const ZoneRulesPage = lazy(() => import('./pages/ZoneRulesPage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const FieldNodesPage = lazy(() => import('./pages/FieldNodesPage'));
 const WorkerHomePage = lazy(() => import('./pages/WorkerHomePage'));
 
 // Route guard: no session → /login, wrong role → that role's home.
@@ -55,6 +56,7 @@ export default function App() {
               <Route path="zones" element={<ZoneRulesPage />} />
               <Route path="users" element={<UsersPage />} />
               <Route path="settings" element={<SettingsPage />} />
+              <Route path="nodes" element={<FieldNodesPage />} />
             </Route>
           </Route>
 
