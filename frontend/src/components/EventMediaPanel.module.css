@@ -1,17 +1,290 @@
-.panel { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; }
-.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.panel h3 { margin: 0 0 12px; }
-.panel p { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
-.panel label { display: block; font-size: 14px; margin: 12px 0; }
-.panel input:not([type='checkbox']) { display: block; width: 100%; box-sizing: border-box; padding: 9px; margin-top: 6px; border: 1px solid #cbd5e0; border-radius: 6px; }
-.panel select { display: block; width: 100%; padding: 9px; margin-top: 6px; border: 1px solid #cbd5e0; border-radius: 6px; }
-.upload button + button { margin-left: 8px; }
-.panel button { border: 1px solid #cbd5e0; background: #f7fafc; color: #1a365d; padding: 9px 12px; border-radius: 6px; cursor: pointer; }
-.panel button:disabled { opacity: .5; cursor: default; }
-.media { border-top: 1px solid #e2e8f0; padding: 12px 0; }
-.media img, .media video { display: block; max-width: 100%; max-height: 420px; margin: auto; border-radius: 6px; }
-.error { color: #b91c1c; }
-.upload { margin: 16px 0; }
-.upload summary { cursor: pointer; }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.check { display: flex !important; align-items: flex-start; gap: 8px; }
+/* ─── Primary viewer ─────────────────────────────── */
+.viewer {
+  position: relative;
+  background: #1a202c;
+  border-radius: 8px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.viewer img,
+.viewer video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: #a0aec0;
+}
+
+.placeholderIcon {
+  font-size: 40px;
+}
+
+.placeholder p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.playBtn {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  background: rgba(26, 32, 44, 0.85);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.playBtn:hover {
+  background: #2b6cb0;
+}
+
+.cameraTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cameraTab {
+  padding: 6px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #fff;
+  color: #4a5568;
+  font-size: 12px;
+  font-family: monospace;
+  cursor: pointer;
+}
+
+.cameraTabOn {
+  border-color: #3182ce;
+  background: #ebf8ff;
+  color: #2b6cb0;
+}
+
+.notice {
+  margin: 0;
+  font-size: 12px;
+  color: #a0aec0;
+}
+
+.error {
+  margin: 0;
+  font-size: 13px;
+  color: #c53030;
+}
+
+/* ─── Clip modal ─────────────────────────────────── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: fadeIn 0.18s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.modal {
+  position: relative;
+  width: min(860px, 92vw);
+  background: #1a202c;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+}
+
+.player {
+  display: block;
+  width: 100%;
+  max-height: 70vh;
+  background: #000;
+}
+
+.closeBtn {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 10;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+/* ─── Retention card ─────────────────────────────── */
+.card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px 20px;
+}
+
+.cardTitle {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a202c;
+}
+
+.text {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #2d3748;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  margin: 0;
+  font-size: 13px;
+  color: #a0aec0;
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: #2d3748;
+  cursor: pointer;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4a5568;
+}
+
+/* 16px keeps iOS Safari from zooming on focus */
+.input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 16px;
+  font-weight: 400;
+  color: #1a202c;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.btn,
+.primaryBtn,
+.dangerBtn {
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #2b6cb0;
+}
+
+.primaryBtn {
+  border: none;
+  background: #3182ce;
+  color: #fff;
+  font-weight: 600;
+}
+
+.dangerBtn {
+  border: 1px solid #fed7d7;
+  background: #fff;
+  color: #e53e3e;
+}
+
+.btn:disabled,
+.primaryBtn:disabled,
+.dangerBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─── Collapsed details ──────────────────────────── */
+.details {
+  font-size: 13px;
+}
+
+.details summary {
+  color: #a0aec0;
+  cursor: pointer;
+}
+
+.details[open] summary {
+  margin-bottom: 8px;
+}
+
+.mediaList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mediaList li {
+  padding: 10px 0;
+  border-top: 1px solid #f0f4f8;
+}
+
+.mediaList .actions {
+  justify-content: flex-start;
+  margin-top: 6px;
+}
+
+/* Single-column review page: retention and details come after the review form */
+@media (max-width: 1024px) {
+  .card,
+  .details {
+    order: 2;
+  }
+}
+
+@media (max-width: 768px) {
+  .card {
+    padding: 16px;
+  }
+
+  .actions .primaryBtn,
+  .actions .dangerBtn {
+    flex: 1;
+    padding: 12px;
+  }
+}
