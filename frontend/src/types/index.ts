@@ -231,3 +231,39 @@ export interface NewUser {
   zone_name: string | null;
   password: string;
 }
+
+// --- Field PCs (broadcast output nodes, #96/#97) ---
+
+export interface FieldNode {
+  node_id: string;
+  name: string;
+  is_active: number;
+  last_seen_at: number | null; // unix seconds
+  language: string | null;
+  voice_id: string | null;
+  online: boolean;
+}
+
+export interface FieldVoice {
+  id: string;
+  name: string;
+  languages: string[];
+}
+
+export interface NodeVoices {
+  items: FieldVoice[];
+  checked_at: number | null;
+  language: string | null;
+  voice_id: string | null;
+  installable_languages: string[];
+}
+
+export interface FieldCommand {
+  command_id: string;
+  kind: string;
+  status: string;
+  created_at: number;
+  finished_at: number | null;
+  payload: Record<string, unknown>;
+  result: Record<string, unknown> | null;
+}

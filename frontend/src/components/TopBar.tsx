@@ -11,6 +11,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/broadcast': '경고 방송 설정',
   '/zones': '구역별 안전 규칙',
   '/users': '작업자 관리',
+  '/nodes': '현장 PC 관리',
   '/settings': '설정',
 };
 
