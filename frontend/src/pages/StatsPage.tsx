@@ -15,6 +15,7 @@ import {
 import SummaryCard from '../components/SummaryCard';
 import { fetchStats, generateStats, calcTrend } from '../api/stats';
 import type { QuarterlyStats } from '../types';
+import { ApiError } from '../api/client';
 import type { LayoutContext } from '../components/AppLayout';
 import styles from './StatsPage.module.css';
 
@@ -32,13 +33,17 @@ export default function StatsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
 
-  // Load stats whenever the selected quarter changes
+  // AppLayout remounts this page when the quarter changes, so this runs once per quarter
   useEffect(() => {
-    setLoading(true);
-    setError(null);
     fetchStats(quarter)
       .then(setStats)
-      .catch((e) => setError(e.message))
+      .catch((e) =>
+        setError(
+          e instanceof ApiError && e.status === 404
+            ? `${quarter} 통계가 아직 없습니다. '통계 새로고침'으로 생성할 수 있습니다.`
+            : e.message,
+        ),
+      )
       .finally(() => setLoading(false));
   }, [quarter]);
 
@@ -50,6 +55,7 @@ export default function StatsPage() {
       .then(() => fetchStats(quarter))
       .then((data) => {
         setStats(data);
+        setError(null);
         setRefreshMsg('통계가 갱신되었습니다.');
         setTimeout(() => setRefreshMsg(null), 3000);
       })
@@ -80,78 +86,113 @@ export default function StatsPage() {
         </button>
       </div>
 
-      {error && <p style={{ color: '#e53e3e', marginBottom: '1rem' }}>⚠ {error}</p>}
-      {refreshMsg && <p style={{ color: '#276749', marginBottom: '1rem' }}>✓ {refreshMsg}</p>}
-      {loading && <p style={{ color: '#718096', marginBottom: '1rem' }}>데이터를 불러오는 중...</p>}
+      {error && (
+        <p style={{ color: '#e53e3e', marginBottom: '1rem' }}>⚠ {error}</p>
+      )}
+      {refreshMsg && (
+        <p style={{ color: '#276749', marginBottom: '1rem' }}>✓ {refreshMsg}</p>
+      )}
+      {loading && (
+        <p style={{ color: '#718096', marginBottom: '1rem' }}>
+          데이터를 불러오는 중...
+        </p>
+      )}
 
       {stats && (
         <>
-      <div className={styles.cardRow}>
-        <SummaryCard label="확정 위반" value={stats.summary.confirmed_count} trend={calcTrend(stats.trend)} accent />
-        <SummaryCard label="보류" value={stats.summary.hold_count} />
-        <SummaryCard label="오탐" value={stats.summary.false_positive_count} />
-        <SummaryCard label="전체 후보" value={stats.summary.candidate_count} />
-      </div>
-
-      <div className={styles.chartRow}>
-        <section className={styles.section}>
-          <h3>PPE 유형별 확정 위반</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={ppeData} margin={{ top: 8, right: 20, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="name" tick={{ fontSize: 13 }} />
-              <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip />
-              <Bar dataKey="확정위반" fill="#3182ce" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </section>
-
-        <section className={styles.section}>
-          <h3>구역별 확정 위반</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={zoneData} margin={{ top: 8, right: 20, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip />
-              <Bar dataKey="확정위반" fill="#e67e22" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </section>
-      </div>
-
-      <section className={styles.section}>
-        <h3>분기별 위반 추이</h3>
-        <ResponsiveContainer width="100%" height={240}>
-          <LineChart data={stats.trend} margin={{ top: 8, right: 24, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="quarter" tick={{ fontSize: 12 }} />
-            <YAxis tick={{ fontSize: 12 }} />
-            <Tooltip />
-            <Legend />
-            <Line
-              type="monotone"
-              dataKey="helmet"
-              name="안전모"
-              stroke="#3182ce"
-              strokeWidth={2}
-              dot={{ r: 4 }}
+          <div className={styles.cardRow}>
+            <SummaryCard
+              label="확정 위반"
+              value={stats.summary.confirmed_count}
+              trend={calcTrend(stats.trend)}
+              accent
             />
-            <Line
-              type="monotone"
-              dataKey="vest"
-              name="안전조끼"
-              stroke="#e67e22"
-              strokeWidth={2}
-              dot={{ r: 4 }}
+            <SummaryCard label="보류" value={stats.summary.hold_count} />
+            <SummaryCard
+              label="오탐"
+              value={stats.summary.false_positive_count}
             />
-          </LineChart>
-        </ResponsiveContainer>
-      </section>
+            <SummaryCard
+              label="전체 후보"
+              value={stats.summary.candidate_count}
+            />
+          </div>
+
+          <div className={styles.chartRow}>
+            <section className={styles.section}>
+              <h3>PPE 유형별 확정 위반</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart
+                  data={ppeData}
+                  margin={{ top: 8, right: 20, left: 0, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="name" tick={{ fontSize: 13 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip />
+                  <Bar
+                    dataKey="확정위반"
+                    fill="#3182ce"
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </section>
+
+            <section className={styles.section}>
+              <h3>구역별 확정 위반</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart
+                  data={zoneData}
+                  margin={{ top: 8, right: 20, left: 0, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip />
+                  <Bar
+                    dataKey="확정위반"
+                    fill="#e67e22"
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </section>
+          </div>
+
+          <section className={styles.section}>
+            <h3>분기별 위반 추이</h3>
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart
+                data={stats.trend}
+                margin={{ top: 8, right: 24, left: 0, bottom: 0 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="quarter" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="helmet"
+                  name="안전모"
+                  stroke="#3182ce"
+                  strokeWidth={2}
+                  dot={{ r: 4 }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="vest"
+                  name="안전조끼"
+                  stroke="#e67e22"
+                  strokeWidth={2}
+                  dot={{ r: 4 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </section>
         </>
       )}
     </div>
   );
 }
-

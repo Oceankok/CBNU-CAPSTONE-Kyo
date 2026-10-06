@@ -4,14 +4,24 @@ import StatusBadge from '../components/StatusBadge';
 import EventMediaPanel from '../components/EventMediaPanel';
 import { fetchEvent, submitReview, updateReview } from '../api/events';
 import { getSession } from '../api/auth';
-import type { CandidateEvent, EventReview, EventReviewHistory, ReviewResult, ReviewReasonCode, ReviewRequest } from '../types';
+import type {
+  CandidateEvent,
+  EventReview,
+  EventReviewHistory,
+  ReviewResult,
+  ReviewReasonCode,
+  ReviewRequest,
+} from '../types';
 import styles from './ReviewDetailPage.module.css';
 
 // Flatten all reason options into a lookup map for display (code → Korean label)
 const REASON_LABEL: Record<string, string> = {};
 
 // Reason code options grouped by the review result selection
-const REASON_OPTIONS: Record<ReviewResult, { value: ReviewReasonCode; label: string }[]> = {
+const REASON_OPTIONS: Record<
+  ReviewResult,
+  { value: ReviewReasonCode; label: string }[]
+> = {
   confirmed: [
     { value: 'confirmed_no_helmet', label: '안전모 미착용 확인' },
     { value: 'confirmed_no_vest', label: '안전조끼 미착용 확인' },
@@ -39,12 +49,19 @@ function getReasonLabel(code: string): string {
   return REASON_LABEL[code] ?? code;
 }
 
+// Keyed by event id so moving between events starts from a fresh loading state
 export default function ReviewDetailPage() {
   const { event_id } = useParams<{ event_id: string }>();
+  return <ReviewDetail key={event_id} event_id={event_id} />;
+}
+
+function ReviewDetail({ event_id }: { event_id: string | undefined }) {
   const navigate = useNavigate();
 
   const [event, setEvent] = useState<CandidateEvent | null>(null);
-  const [existingReview, setExistingReview] = useState<EventReview | null>(null);
+  const [existingReview, setExistingReview] = useState<EventReview | null>(
+    null,
+  );
   const [reviewHistory, setReviewHistory] = useState<EventReviewHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -59,31 +76,33 @@ export default function ReviewDetailPage() {
   const [isReReview, setIsReReview] = useState(false);
   useEffect(() => {
     if (!event_id) return;
-    setLoading(true);
     fetchEvent(event_id)
       .then(({ event: ev, review, review_history = [] }) => {
         setEvent(ev);
         setReviewHistory(review_history);
         setExistingReview(review);
+        // Already reviewed — show the existing result and lock the form
         setSubmitted(Boolean(review));
-        if (review) {
-          // Event already reviewed — show existing result and lock the form
-          setExistingReview(review);
-          setSubmitted(true);
-        }
       })
       .catch((e) => setLoadError(e.message))
       .finally(() => setLoading(false));
   }, [event_id]);
 
   if (loading) {
-    return <div className={styles.notFound}><p>이벤트를 불러오는 중...</p></div>;
+    return (
+      <div className={styles.notFound}>
+        <p>이벤트를 불러오는 중...</p>
+      </div>
+    );
   }
 
   if (loadError || !event) {
     return (
       <div className={styles.notFound}>
-        <p>이벤트를 찾을 수 없습니다. (ID: {event_id}){loadError ? ` — ${loadError}` : ''}</p>
+        <p>
+          이벤트를 찾을 수 없습니다. (ID: {event_id})
+          {loadError ? ` — ${loadError}` : ''}
+        </p>
         <button onClick={() => navigate('/review')}>목록으로 돌아가기</button>
       </div>
     );
@@ -124,7 +143,9 @@ export default function ReviewDetailPage() {
       setSubmitted(true);
       setIsReReview(false);
     } catch (e: unknown) {
-      setSubmitError(e instanceof Error ? e.message : '제출 중 오류가 발생했습니다.');
+      setSubmitError(
+        e instanceof Error ? e.message : '제출 중 오류가 발생했습니다.',
+      );
     }
   };
 
@@ -153,9 +174,16 @@ export default function ReviewDetailPage() {
       <div className={styles.grid}>
         {/* All camera media use the same redaction and retention policy. */}
         <div className={styles.mediaCol}>
-          <EventMediaPanel eventId={event.event_id} cameraId={event.camera_id}
-            finalReview={Boolean(existingReview && existingReview.review_result !== 'hold' && !existingReview.second_review_needed)}
-            onChange={reloadEvent} />
+          <EventMediaPanel
+            eventId={event.event_id}
+            cameraId={event.camera_id}
+            finalReview={Boolean(
+              existingReview &&
+              existingReview.review_result !== 'hold' &&
+              !existingReview.second_review_needed,
+            )}
+            onChange={reloadEvent}
+          />
         </div>
 
         {/* Right: event details + review form */}
@@ -166,7 +194,8 @@ export default function ReviewDetailPage() {
               {event.ppe_type === 'helmet' ? '안전모' : '안전조끼'} 미착용 의심
             </p>
             <p className={styles.headlineSub}>
-              {event.zone_name} · {new Date(event.timestamp_start).toLocaleString('ko-KR')}
+              {event.zone_name} ·{' '}
+              {new Date(event.timestamp_start).toLocaleString('ko-KR')}
             </p>
             <dl className={styles.dl}>
               <dt>AI 신뢰도</dt>
@@ -204,16 +233,23 @@ export default function ReviewDetailPage() {
             </details>
           </div>
 
-          {reviewHistory.length > 0 && <details className={styles.card}>
-            <summary>이전 검토 기록 ({reviewHistory.length}건)</summary>
-            {reviewHistory.map(review => <p key={review.history_id}>
-              {review.review_time} · {review.reviewer_id} · {getReasonLabel(review.review_reason_code)}
-            </p>)}
-          </details>}
+          {reviewHistory.length > 0 && (
+            <details className={styles.card}>
+              <summary>이전 검토 기록 ({reviewHistory.length}건)</summary>
+              {reviewHistory.map((review) => (
+                <p key={review.history_id}>
+                  {review.review_time} · {review.reviewer_id} ·{' '}
+                  {getReasonLabel(review.review_reason_code)}
+                </p>
+              ))}
+            </details>
+          )}
           {submitted ? (
             <div className={styles.submittedCard}>
               <p className={styles.submittedMsg}>
-                {existingReview ? '⚠ 이미 검토된 이벤트입니다.' : '✅ 검토가 제출되었습니다.'}
+                {existingReview
+                  ? '⚠ 이미 검토된 이벤트입니다.'
+                  : '✅ 검토가 제출되었습니다.'}
               </p>
               {/* Show a summary of the review decision */}
               {(existingReview || reviewResult) && (
@@ -221,41 +257,69 @@ export default function ReviewDetailPage() {
                   <dt>판단 결과</dt>
                   <dd>
                     {existingReview
-                      ? existingReview.review_result === 'confirmed' ? '확정 위반'
-                        : existingReview.review_result === 'false_positive' ? '오탐'
-                        : '보류'
-                      : reviewResult === 'confirmed' ? '확정 위반'
-                        : reviewResult === 'false_positive' ? '오탐'
-                        : '보류'}
+                      ? existingReview.review_result === 'confirmed'
+                        ? '확정 위반'
+                        : existingReview.review_result === 'false_positive'
+                          ? '오탐'
+                          : '보류'
+                      : reviewResult === 'confirmed'
+                        ? '확정 위반'
+                        : reviewResult === 'false_positive'
+                          ? '오탐'
+                          : '보류'}
                   </dd>
                   <dt>판단 사유</dt>
-                  <dd>{existingReview ? getReasonLabel(existingReview.review_reason_code) : getReasonLabel(reasonCode)}</dd>
+                  <dd>
+                    {existingReview
+                      ? getReasonLabel(existingReview.review_reason_code)
+                      : getReasonLabel(reasonCode)}
+                  </dd>
                   {(existingReview?.review_comment || comment) && (
                     <>
                       <dt>코멘트</dt>
-                      <dd>{existingReview ? existingReview.review_comment : comment}</dd>
+                      <dd>
+                        {existingReview
+                          ? existingReview.review_comment
+                          : comment}
+                      </dd>
                     </>
                   )}
                   <dt>검토 시각</dt>
-                  <dd>{existingReview ? existingReview.review_time : new Date().toLocaleString('ko-KR')}</dd>
+                  <dd>
+                    {existingReview
+                      ? existingReview.review_time
+                      : new Date().toLocaleString('ko-KR')}
+                  </dd>
                 </dl>
               )}
               <div className={styles.actionRow}>
-                <button className={styles.secondaryBtn} onClick={() => navigate('/review')}>
+                <button
+                  className={styles.secondaryBtn}
+                  onClick={() => navigate('/review')}
+                >
                   ← 목록으로
                 </button>
                 {/* Allow re-review only for hold or second-review-needed events.
                     !! converts to boolean to prevent React rendering numeric 0 as text */}
-                {existingReview && !!(event?.event_status === 'hold' || existingReview.second_review_needed) && (
-                  <button className={styles.primaryBtn} onClick={handleStartReReview}>
-                    🔄 재검토 시작
-                  </button>
-                )}
+                {existingReview &&
+                  !!(
+                    event?.event_status === 'hold' ||
+                    existingReview.second_review_needed
+                  ) && (
+                    <button
+                      className={styles.primaryBtn}
+                      onClick={handleStartReReview}
+                    >
+                      🔄 재검토 시작
+                    </button>
+                  )}
               </div>
             </div>
           ) : (
             <div className={styles.card}>
-              <h4 className={styles.cardTitle}>{isReReview ? '🔄 재검토 입력' : '검토 입력'}</h4>
+              <h4 className={styles.cardTitle}>
+                {isReReview ? '🔄 재검토 입력' : '검토 입력'}
+              </h4>
 
               {/* Three-button toggle for review result */}
               <div className={styles.resultButtons}>
@@ -285,7 +349,9 @@ export default function ReviewDetailPage() {
                 <select
                   className={styles.select}
                   value={reasonCode}
-                  onChange={(e) => setReasonCode(e.target.value as ReviewReasonCode)}
+                  onChange={(e) =>
+                    setReasonCode(e.target.value as ReviewReasonCode)
+                  }
                   disabled={!reviewResult}
                 >
                   <option value="">-- 사유 선택 --</option>
@@ -321,10 +387,15 @@ export default function ReviewDetailPage() {
               </label>
 
               {submitError && (
-                <p style={{ color: '#e53e3e', marginTop: '0.5rem' }}>⚠ {submitError}</p>
+                <p style={{ color: '#e53e3e', marginTop: '0.5rem' }}>
+                  ⚠ {submitError}
+                </p>
               )}
               <div className={styles.actionRow}>
-                <button className={styles.secondaryBtn} onClick={() => navigate('/review')}>
+                <button
+                  className={styles.secondaryBtn}
+                  onClick={() => navigate('/review')}
+                >
                   취소
                 </button>
                 <button

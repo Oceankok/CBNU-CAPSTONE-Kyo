@@ -1,5 +1,5 @@
 import { useLocation } from 'react-router-dom';
-import { AVAILABLE_QUARTERS } from '../mock';
+import { recentQuarters } from '../quarters';
 import { logout } from '../api/auth';
 import styles from './TopBar.module.css';
 
@@ -41,7 +41,7 @@ export default function TopBar({ quarter, onQuarterChange }: TopBarProps) {
             value={quarter}
             onChange={(e) => onQuarterChange(e.target.value)}
           >
-            {AVAILABLE_QUARTERS.map((q) => (
+            {recentQuarters().map((q) => (
               <option key={q} value={q}>
                 {q}
               </option>
