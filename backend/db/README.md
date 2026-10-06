@@ -484,7 +484,7 @@ python backend/db/seed_events.py
 ## 4. Repository 기본 테스트
 
 ```bash
-python backend/db/test_event_repository.py
+python -m backend.db.test_event_repository
 ```
 
 테스트 스크립트 범위에 따라 아래 항목을 확인할 수 있음.

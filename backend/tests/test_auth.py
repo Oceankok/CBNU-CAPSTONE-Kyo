@@ -60,6 +60,14 @@ class AuthenticationTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "clip.mp4").write_bytes(b"0123456789")
+            # /storage only serves files registered as redacted, ready event media (#108)
+            with get_connection() as conn:
+                conn.execute(
+                    "INSERT INTO event_media(media_id,event_id,camera_id,kind,role,storage_path,status,"
+                    "redaction_status,created_at) VALUES('M_TEST','EVT_0001','CAM_001','video','clip',?,"
+                    "'ready','complete',datetime('now'))",
+                    (f"{root.name}/clip.mp4",),
+                )
             with patch("backend.api.main._STORAGE_DIR", root):
                 self.assertEqual(self.client.get("/storage/clip.mp4").status_code, 401)
                 login(self.client, "worker01")

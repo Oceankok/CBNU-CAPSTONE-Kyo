@@ -14,12 +14,12 @@ event_repository.py에 작성한 DB 접근 함수들이 정상적으로 작동�
     python backend/db/init_db.py
 
 실행:
-    python backend/db/test_event_repository.py
+    python -m backend.db.test_event_repository
 """
 
 from datetime import datetime
 
-from event_repository import (
+from backend.db.event_repository import (
     delete_candidate_event,
     get_all_candidate_events,
     get_candidate_event_by_id,
