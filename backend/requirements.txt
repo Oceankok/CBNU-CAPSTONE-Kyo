@@ -2,7 +2,12 @@ fastapi
 uvicorn
 pyttsx3
 httpx
-opencv-python
 PyJWT>=2.10,<3
 argon2-cffi>=23.1,<26
 pydantic>=2,<3
+opencv-python>=4.8,<6
+imageio-ffmpeg>=0.6,<1
+# SCRFD / YuNet media processing uses CUDA 12 and cuDNN 9.
+# Do not install CPU-only onnxruntime alongside onnxruntime-gpu.
+# ONNX model weights are installed separately; see docs/20261004_Media_Privacy_Setup.md.
+onnxruntime-gpu>=1.21,<1.23

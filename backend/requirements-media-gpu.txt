@@ -1,0 +1,2 @@
+# Compatibility entry point: GPU runtime is now included in requirements.txt.
+-r requirements.txt

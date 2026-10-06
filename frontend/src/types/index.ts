@@ -16,6 +16,41 @@ export type ReviewReasonCode =
   | 'hold_low_resolution'
   | 'hold_other';
 
+export type RedactionMode = 'enhanced' | 'scrfd';
+
+export interface EventMedia {
+  media_id: string;
+  camera_id: string;
+  kind: 'image' | 'video';
+  role: 'thumbnail' | 'clip' | 'reference';
+  status: 'registered' | 'processing' | 'ready' | 'failed' | 'missing' | 'delete_pending' | 'deleted';
+  redaction_status: 'unprocessed' | 'complete' | 'failed' | 'legacy_unverified';
+  url: string | null;
+  can_reprocess: boolean;
+  error_code: string | null;
+  faces_detected: number | null;
+  processed_frames: number | null;
+  redaction_mode?: RedactionMode | 'legacy' | null;
+  inference_backend?: string | null;
+  processing_seconds?: number | null;
+}
+
+export interface EventRetention {
+  event_id: string;
+  decision: 'pending' | 'retain' | 'delete';
+  consent_reference?: string | null;
+  decided_by?: string | null;
+  decided_at?: string | null;
+  retain_until?: number | null;
+  deleted_at?: string | null;
+  version: number;
+}
+
+export interface EventReviewHistory extends EventReview {
+  history_id: string;
+  recorded_at: string;
+}
+
 export interface CandidateEvent {
   event_id: string;
   camera_id: string;
@@ -34,6 +69,8 @@ export interface CandidateEvent {
   ppe_detected: boolean;
   model_version: string;
   event_status: EventStatus;
+  media?: EventMedia[];
+  retention?: EventRetention;
 }
 
 export interface EventReview {

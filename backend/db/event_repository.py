@@ -25,6 +25,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Optional
 from datetime import datetime
+from uuid import uuid4
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -77,6 +78,30 @@ def row_to_dict(row: Optional[sqlite3.Row]) -> Optional[dict[str, Any]]:
     return dict(row)
 
 
+def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, Any]]:
+    """Legacy fields point only to published redacted media; raw paths stay private."""
+    if not events:
+        return events
+    from backend.media.service import public_media
+    event_ids = [event["event_id"] for event in events]
+    rows, retention = [], {}
+    for offset in range(0, len(event_ids), 500):
+        ids = event_ids[offset:offset + 500]
+        placeholders = ",".join("?" for _ in ids)
+        rows.extend(conn.execute(f"SELECT * FROM event_media WHERE event_id IN ({placeholders}) ORDER BY created_at,media_id", ids).fetchall())
+        for row in conn.execute(f"SELECT * FROM event_retention WHERE event_id IN ({placeholders})", ids):
+            retention[row["event_id"]] = dict(row)
+    by_event: dict[str, list[dict[str, Any]]] = {event_id: [] for event_id in event_ids}
+    for row in rows:
+        by_event[row["event_id"]].append(public_media(dict(row), retention.get(row["event_id"], {}).get("decision", "pending")))
+    for event in events:
+        event["media"] = by_event[event["event_id"]]
+        event["retention"] = retention.get(event["event_id"], {"event_id": event["event_id"], "decision": "pending", "version": 0})
+        event["thumbnail_path"] = next((m["url"] for m in event["media"] if m["role"] == "thumbnail" and m["url"]), "")
+        event["video_clip_path"] = next((m["url"] for m in event["media"] if m["role"] == "clip" and m["url"]), "")
+    return events
+
+
 def get_all_candidate_events() -> list[dict[str, Any]]:
     """
     전체 후보 이벤트 목록을 조회한다.
@@ -119,7 +144,7 @@ def get_all_candidate_events() -> list[dict[str, Any]]:
 
     with get_connection() as conn:
         rows = conn.execute(query).fetchall()
-        return [dict(row) for row in rows]
+        return _attach_event_media([dict(row) for row in rows], conn)
 
 
 def get_candidate_event_by_id(event_id: str) -> Optional[dict[str, Any]]:
@@ -168,7 +193,8 @@ def get_candidate_event_by_id(event_id: str) -> Optional[dict[str, Any]]:
 
     with get_connection() as conn:
         row = conn.execute(query, (event_id,)).fetchone()
-        return row_to_dict(row)
+        event = row_to_dict(row)
+        return _attach_event_media([event], conn)[0] if event else None
 
 
 def insert_candidate_event(event: dict[str, Any]) -> None:
@@ -258,6 +284,21 @@ def insert_candidate_event(event: dict[str, Any]) -> None:
 
     with get_connection() as conn:
         conn.execute(query, event)
+        conn.execute("INSERT INTO event_retention(event_id) VALUES(?)", (event["event_id"],))
+        created_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        for kind, role, path in (
+            ("image", "thumbnail", event.get("thumbnail_path")),
+            ("video", "clip", event.get("video_clip_path")),
+        ):
+            if not path:
+                continue
+            conn.execute(
+                """INSERT INTO event_media (
+                       media_id,event_id,camera_id,kind,role,storage_path,
+                       status,redaction_status,created_at
+                ) VALUES (?,?,?,?,?,?,'registered','unprocessed',?)""",
+                (str(uuid4()), event["event_id"], event["camera_id"], kind, role, path, created_at),
+            )
         conn.commit()
 
 def delete_candidate_event(event_id: str) -> None:
@@ -369,7 +410,7 @@ def insert_event_review(review: dict[str, Any]) -> None:
 
     Notes:
         - confirmed, hold는 candidate_event.event_status를 review_result 값으로 갱신한다.
-        - false_positive는 비식별 오탐 집계에 반영한 뒤 candidate_event에서 삭제한다.
+        - false_positive도 검토 기록과 후보 이벤트를 유지하고 집계에 반영한다.
         - event_id는 candidate_event 테이블에 이미 존재해야 한다.
         - confirmed_violation, second_review_needed는 1 또는 0으로 저장한다.
 
@@ -418,9 +459,6 @@ def insert_event_review(review: dict[str, Any]) -> None:
 
     with get_connection() as conn:
         if review["review_result"] == "false_positive":
-            # For false positives: record in aggregate and delete the event.
-            # We do NOT insert event_review because ON DELETE CASCADE would
-            # immediately remove it when candidate_event is deleted.
             event = conn.execute(
                 """
                 SELECT
@@ -439,23 +477,15 @@ def insert_event_review(review: dict[str, Any]) -> None:
             if event is not None:
                 _upsert_false_positive_aggregate(conn, event)
 
-            conn.execute(
-                """
-                DELETE FROM candidate_event
-                WHERE event_id = ?;
-                """,
-                (review["event_id"],),
-            )
-        else:
-            # For confirmed/hold: save the review record and update event status
-            conn.execute(review_query, review)
-            conn.execute(
-                status_query,
-                {
-                    "event_status": review["review_result"],
-                    "event_id": review["event_id"],
-                },
-            )
+        # Keep the review and event for audit/statistics; media lifecycle is separate.
+        conn.execute(review_query, review)
+        conn.execute(
+            status_query,
+            {
+                "event_status": review["review_result"],
+                "event_id": review["event_id"],
+            },
+        )
 
         conn.commit()
         
@@ -482,10 +512,7 @@ def update_event_review(review: dict[str, Any]) -> None:
     Notes:
         - confirmed, hold는 기존 event_review 행을 갱신하고
           candidate_event.event_status를 함께 갱신함.
-        - false_positive는 기존 정책에 따라 비식별 오탐 집계에 반영한 뒤
-          candidate_event를 삭제함.
-        - candidate_event 삭제 시 ON DELETE CASCADE에 의해
-          기존 event_review 행도 함께 삭제됨.
+        - false_positive도 이벤트/검토 기록을 보존하고 비식별 오탐 집계에 반영함.
     """
     review_query = """
         UPDATE event_review
@@ -509,7 +536,7 @@ def update_event_review(review: dict[str, Any]) -> None:
     with get_connection() as conn:
         existing_review = conn.execute(
             """
-            SELECT review_id
+            SELECT *
             FROM event_review
             WHERE event_id = ?;
             """,
@@ -518,6 +545,22 @@ def update_event_review(review: dict[str, Any]) -> None:
 
         if existing_review is None:
             raise ValueError("Review does not exist")
+
+        previous = dict(existing_review)
+        conn.execute(
+            """INSERT INTO event_review_history (
+                   history_id,review_id,event_id,reviewer_id,review_result,
+                   review_reason_code,review_time,review_comment,confirmed_violation,
+                   second_review_needed,recorded_at
+               ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                str(uuid4()), previous["review_id"], previous["event_id"],
+                previous["reviewer_id"], previous["review_result"],
+                previous["review_reason_code"], previous["review_time"],
+                previous["review_comment"], previous["confirmed_violation"],
+                previous["second_review_needed"], datetime.now().astimezone().isoformat(timespec="seconds"),
+            ),
+        )
 
         if review["review_result"] == "false_positive":
             event = conn.execute(
@@ -540,28 +583,31 @@ def update_event_review(review: dict[str, Any]) -> None:
 
             _upsert_false_positive_aggregate(conn, event)
 
-            conn.execute(
-                """
-                DELETE FROM candidate_event
-                WHERE event_id = ?;
-                """,
-                (review["event_id"],),
-            )
-        else:
-            cursor = conn.execute(review_query, review)
-
-            if cursor.rowcount == 0:
-                raise ValueError("Review does not exist")
-
-            conn.execute(
-                status_query,
-                {
-                    "event_status": review["review_result"],
-                    "event_id": review["event_id"],
-                },
-            )
+        cursor = conn.execute(review_query, review)
+        if cursor.rowcount == 0:
+            raise ValueError("Review does not exist")
+        conn.execute(
+            status_query,
+            {
+                "event_status": review["review_result"],
+                "event_id": review["event_id"],
+            },
+        )
 
         conn.commit()
+
+
+def get_review_history_by_event_id(event_id: str) -> list[dict[str, Any]]:
+    """Return prior review decisions in chronological order."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT history_id,review_id,event_id,reviewer_id,review_result,
+                      review_reason_code,review_time,review_comment,confirmed_violation,
+                      second_review_needed,recorded_at
+               FROM event_review_history WHERE event_id=? ORDER BY recorded_at,history_id""",
+            (event_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def get_review_by_event_id(event_id: str) -> Optional[dict[str, Any]]:

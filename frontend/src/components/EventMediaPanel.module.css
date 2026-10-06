@@ -1,0 +1,17 @@
+.panel { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; }
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.panel h3 { margin: 0 0 12px; }
+.panel p { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.panel label { display: block; font-size: 14px; margin: 12px 0; }
+.panel input:not([type='checkbox']) { display: block; width: 100%; box-sizing: border-box; padding: 9px; margin-top: 6px; border: 1px solid #cbd5e0; border-radius: 6px; }
+.panel select { display: block; width: 100%; padding: 9px; margin-top: 6px; border: 1px solid #cbd5e0; border-radius: 6px; }
+.upload button + button { margin-left: 8px; }
+.panel button { border: 1px solid #cbd5e0; background: #f7fafc; color: #1a365d; padding: 9px 12px; border-radius: 6px; cursor: pointer; }
+.panel button:disabled { opacity: .5; cursor: default; }
+.media { border-top: 1px solid #e2e8f0; padding: 12px 0; }
+.media img, .media video { display: block; max-width: 100%; max-height: 420px; margin: auto; border-radius: 6px; }
+.error { color: #b91c1c; }
+.upload { margin: 16px 0; }
+.upload summary { cursor: pointer; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.check { display: flex !important; align-items: flex-start; gap: 8px; }

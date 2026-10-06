@@ -22,6 +22,7 @@ from backend.db.event_repository import (
     get_all_candidate_events,
     get_candidate_event_by_id,
     get_review_by_event_id,
+    get_review_history_by_event_id,
     insert_event_review,
     update_event_review,
     get_quarterly_stats,
@@ -73,6 +74,15 @@ def read_media(media_path: str, request: Request):
     target = (root / media_path).resolve()
     if not target.is_relative_to(root) or not target.is_file():
         raise HTTPException(404, "Media not found")
+    from backend.db.event_repository import get_connection
+    key = target.relative_to(root.parent).as_posix()
+    with get_connection() as conn:
+        permitted = conn.execute("""SELECT 1 FROM event_media m
+            LEFT JOIN event_retention r ON r.event_id=m.event_id
+            WHERE m.storage_path=? AND m.status='ready' AND m.redaction_status='complete'
+              AND COALESCE(r.decision,'pending')!='delete' LIMIT 1""", (key,)).fetchone()
+    if not permitted:
+        raise HTTPException(404, "Media unavailable")
     return FileResponse(target, headers={"Cache-Control": "private, no-store"})
 
 
@@ -163,6 +173,7 @@ def read_event(event_id: str) -> dict:
     return {
         "event": event,
         "review": review,
+        "review_history": get_review_history_by_event_id(event_id),
     }
 
 
@@ -218,9 +229,11 @@ def create_event_review(event_id: str, request: ReviewRequest, user: dict = Depe
     if request.review_result == "false_positive":
         return {
             "status": "ok",
-            "message": "False positive event deleted",
+            "message": "False positive review saved; event and review history retained",
             "event_id": event_id,
             "review_result": request.review_result,
+            "event": get_candidate_event_by_id(event_id),
+            "review": get_review_by_event_id(event_id),
         }
 
     updated_event = get_candidate_event_by_id(event_id)
@@ -247,7 +260,7 @@ def update_existing_event_review(event_id: str, request: ReviewRequest, user: di
     Returns:
         dict:
             갱신된 검토 결과와 후보 이벤트 정보.
-            false_positive인 경우 삭제 처리 결과 반환.
+            false_positive도 사건·검토 기록을 보존한 결과 반환.
     """
     event = get_candidate_event_by_id(event_id)
 
@@ -296,9 +309,11 @@ def update_existing_event_review(event_id: str, request: ReviewRequest, user: di
     if request.review_result == "false_positive":
         return {
             "status": "ok",
-            "message": "False positive event deleted after re-review",
+            "message": "False positive re-review saved; event and review history retained",
             "event_id": event_id,
             "review_result": request.review_result,
+            "event": get_candidate_event_by_id(event_id),
+            "review": get_review_by_event_id(event_id),
         }
 
     updated_event = get_candidate_event_by_id(event_id)
@@ -435,3 +450,6 @@ app.include_router(admin_router)
 from backend.field.routes import admin as field_admin_router, field as field_router
 app.include_router(field_admin_router)
 app.include_router(field_router)
+
+from backend.media.routes import router as media_router
+app.include_router(media_router)
