@@ -175,6 +175,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
         {/* All camera media use the same redaction and retention policy. */}
         <div className={styles.mediaCol}>
           <EventMediaPanel
+            key={event.event_id}
             eventId={event.event_id}
             cameraId={event.camera_id}
             finalReview={Boolean(
