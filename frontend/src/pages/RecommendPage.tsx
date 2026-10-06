@@ -1,7 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { fetchRecommendations, generateRecommendations } from '../api/recommendations';
-import type { EducationRecommendation, EducationRecommendationList } from '../types';
+import {
+  fetchRecommendations,
+  generateRecommendations,
+} from '../api/recommendations';
+import type {
+  EducationRecommendation,
+  EducationRecommendationList,
+} from '../types';
+import { ApiError } from '../api/client';
 import type { LayoutContext } from '../components/AppLayout';
 import styles from './RecommendPage.module.css';
 
@@ -31,7 +38,9 @@ function RecommendCard({ item }: { item: EducationRecommendation }) {
           {item.recommendation_rank}순위
         </span>
         <div className={styles.tags}>
-          <span className={styles.tag}>{PPE_LABEL[item.ppe_type] ?? item.ppe_type}</span>
+          <span className={styles.tag}>
+            {PPE_LABEL[item.ppe_type] ?? item.ppe_type}
+          </span>
           <span className={styles.tag}>{item.zone_name}</span>
         </div>
       </div>
@@ -43,11 +52,19 @@ function RecommendCard({ item }: { item: EducationRecommendation }) {
         <summary className={styles.breakdownTitle}>
           우선순위 점수 {item.priority_score.toFixed(1)}점 · 산정 근거
         </summary>
-        <ScoreRow label="확정 위반 건수" value={`${item.score_breakdown.confirmed_count}건`} />
-        <ScoreRow label="반복 발생 주수" value={`${item.score_breakdown.repeat_weeks}주`} />
+        <ScoreRow
+          label="확정 위반 건수"
+          value={`${item.score_breakdown.confirmed_count}건`}
+        />
+        <ScoreRow
+          label="반복 발생 주수"
+          value={`${item.score_breakdown.repeat_weeks}주`}
+        />
         <ScoreRow
           label="구역 집중도"
-          value={(item.score_breakdown.zone_concentration * 100).toFixed(0) + '%'}
+          value={
+            (item.score_breakdown.zone_concentration * 100).toFixed(0) + '%'
+          }
         />
         <ScoreRow
           label="공정 위험 가중치"
@@ -64,16 +81,22 @@ export default function RecommendPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // AppLayout remounts this page when the quarter changes, so this runs once per quarter
   useEffect(() => {
-    setLoading(true);
-    setError(null);
     fetchRecommendations(quarter)
       .then(setData)
       .catch(() =>
         // If no recommendations exist yet, auto-generate for the current quarter
         generateRecommendations(quarter)
           .then(setData)
-          .catch((e) => setError(e.message))
+          .catch((e) =>
+            setError(
+              // 4xx here means the quarter has no confirmed violations to rank yet
+              e instanceof ApiError && e.status < 500
+                ? `${quarter}에는 추천을 만들 확정 위반 기록이 아직 없습니다.`
+                : e.message,
+            ),
+          ),
       )
       .finally(() => setLoading(false));
   }, [quarter]);
@@ -84,8 +107,14 @@ export default function RecommendPage() {
         분기별 확정 위반 통계를 바탕으로 우선 교육이 필요한 항목을 추천합니다.
       </p>
 
-      {error && <p style={{ color: '#e53e3e', marginBottom: '1rem' }}>⚠ {error}</p>}
-      {loading && <p style={{ color: '#718096', marginBottom: '1rem' }}>데이터를 불러오는 중...</p>}
+      {error && (
+        <p style={{ color: '#e53e3e', marginBottom: '1rem' }}>⚠ {error}</p>
+      )}
+      {loading && (
+        <p style={{ color: '#718096', marginBottom: '1rem' }}>
+          데이터를 불러오는 중...
+        </p>
+      )}
 
       {data && (
         <div className={styles.cardList}>
@@ -97,4 +126,3 @@ export default function RecommendPage() {
     </div>
   );
 }
-

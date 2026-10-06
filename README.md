@@ -39,30 +39,48 @@
 
 ## 실행 방법
 
-인증·현장 방송 신규 실행 절차는 [인증 및 방송 가이드](docs/20261003_Auth_Broadcast_Setup.md)를 참고한다.
-로그인 화면은 `Feat/login-role-routing` 브랜치와 연동하며, 사용자 생성 및 JWT 키 설정이 필요하다.
+> 요구 사항: **Python 3.12 이상** (3.9에서는 인증 코드가 실행되지 않음), **Node.js 20.19 이상**
+> 상세 설정: [인증·현장 방송](docs/20261003_Auth_Broadcast_Setup.md) · [얼굴 비식별화(GPU)](docs/20261004_Media_Privacy_Setup.md)
 
-### DB 초기화
+### 1. 백엔드 (저장소 루트에서 실행)
 
 ```bash
-python3 backend/db/init_db.py
-python3 backend/db/check_db.py
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r backend/requirements.txt
+
+python backend/db/init_db.py                                   # 테이블·시드 생성 (기존 데이터 유지)
+python -m backend.auth.manage_users admin01 --role admin --name 관리자
+python -m backend.auth.manage_users worker01 --role worker --name 작업자 --zone "프레스 구역"
+
+export PPE_JWT_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"   # Windows: $env:PPE_JWT_SECRET = ...
+python -m uvicorn backend.api.main:app --reload
 ```
 
-### 프론트엔드 개발 서버
+- `cd backend && uvicorn api.main:app`처럼 `backend/` 안에서 실행하면 import 오류가 난다. 반드시 저장소 루트에서 `backend.api.main:app`으로 실행한다.
+- `PPE_JWT_SECRET`이 없으면 로그인이 503을 반환한다. 키를 바꾸면 기존 로그인이 풀리므로 같은 값을 재사용한다.
+- 얼굴 비식별화는 CUDA GPU가 필요하다. `onnxruntime-gpu`는 macOS용 배포판이 없어 **Mac에서는 `backend/requirements.txt` 설치가 실패**한다. Mac에서는 해당 줄을 빼고 설치한다:
+  `grep -v '^onnxruntime-gpu' backend/requirements.txt | pip install -r /dev/stdin`
+
+### 2. 프론트엔드
 
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev                         # http://localhost:5173 (API는 Vite proxy로 localhost:8000 전달)
+VITE_AUTH_MOCK=true npm run dev     # 백엔드 없이 화면 확인 (admin01 / worker01, 비밀번호 아무거나)
+npm run dev:mobile                  # 같은 Wi-Fi의 휴대폰에서 터미널의 Network 주소로 접속
 ```
 
-### 백엔드 API 서버
+- 백엔드 CORS가 `localhost:5173`만 허용하므로 5173 포트가 사용 중이면 dev 서버가 시작되지 않는다 (`lsof -iTCP:5173 -sTCP:LISTEN`으로 확인).
+
+### 3. 테스트
 
 ```bash
-cd backend
-uvicorn api.main:app --reload
+python -m unittest discover -s backend -t .   # 백엔드 (저장소 루트)
+cd frontend && npm test && npm run build      # 프론트
 ```
+
+PR마다 GitHub Actions(CI)가 위 테스트와 빌드를 자동으로 실행한다.
 
 ---
 
@@ -71,6 +89,9 @@ uvicorn api.main:app --reload
 - [docs/20260407_PPE.md](docs/20260407_PPE.md) — 시스템 전체 설계
 - [docs/20260411_Dashboard.md](docs/20260411_Dashboard.md) — 대시보드 프론트엔드 설계
 - [docs/20260504_ServiceScope_Legal.md](docs/20260504_ServiceScope_Legal.md) — 서비스 범위 및 운영 원칙
+- [docs/20261003_Auth_Broadcast_Setup.md](docs/20261003_Auth_Broadcast_Setup.md) — 인증·현장 PC 방송 설정
+- [docs/20261004_Media_Privacy_Setup.md](docs/20261004_Media_Privacy_Setup.md) — 얼굴 비식별화·자료 보관
+- [docs/20261005_Zone_Equipment_PPE_Policy.md](docs/20261005_Zone_Equipment_PPE_Policy.md) — 구역·장비별 PPE 정책
 
 ---
 

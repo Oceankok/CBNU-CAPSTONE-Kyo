@@ -49,8 +49,13 @@ function getReasonLabel(code: string): string {
   return REASON_LABEL[code] ?? code;
 }
 
+// Keyed by event id so moving between events starts from a fresh loading state
 export default function ReviewDetailPage() {
   const { event_id } = useParams<{ event_id: string }>();
+  return <ReviewDetail key={event_id} event_id={event_id} />;
+}
+
+function ReviewDetail({ event_id }: { event_id: string | undefined }) {
   const navigate = useNavigate();
 
   const [event, setEvent] = useState<CandidateEvent | null>(null);
@@ -71,18 +76,13 @@ export default function ReviewDetailPage() {
   const [isReReview, setIsReReview] = useState(false);
   useEffect(() => {
     if (!event_id) return;
-    setLoading(true);
     fetchEvent(event_id)
       .then(({ event: ev, review, review_history = [] }) => {
         setEvent(ev);
         setReviewHistory(review_history);
         setExistingReview(review);
+        // Already reviewed — show the existing result and lock the form
         setSubmitted(Boolean(review));
-        if (review) {
-          // Event already reviewed — show existing result and lock the form
-          setExistingReview(review);
-          setSubmitted(true);
-        }
       })
       .catch((e) => setLoadError(e.message))
       .finally(() => setLoading(false));

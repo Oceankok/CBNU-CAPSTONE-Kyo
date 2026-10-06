@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import { usePendingEvents } from '../hooks/usePendingEvents';
+import { quarterOf } from '../quarters';
 import type { CandidateEvent } from '../types';
 import styles from './AppLayout.module.css';
 
@@ -13,7 +14,7 @@ export interface LayoutContext {
 }
 
 export default function AppLayout() {
-  const [quarter, setQuarter] = useState('2026-Q2');
+  const [quarter, setQuarter] = useState(() => quarterOf(new Date()));
   const { pathname } = useLocation();
   // Path as trigger: re-check after navigating (e.g. returning from a submitted review)
   const { pending, error, newCount, clearNew } = usePendingEvents(pathname);
@@ -38,7 +39,9 @@ export default function AppLayout() {
       <div className={styles.main}>
         <TopBar quarter={quarter} onQuarterChange={setQuarter} />
         <main className={styles.content}>
+          {/* key: pages remount per quarter, so each starts in its loading state */}
           <Outlet
+            key={quarter}
             context={
               { quarter, pending, pendingError: error } satisfies LayoutContext
             }
