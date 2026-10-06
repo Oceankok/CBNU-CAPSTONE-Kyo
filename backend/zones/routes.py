@@ -87,3 +87,28 @@ def get_my_zone(user: dict = Depends(current_user)):
     if not row:
         raise HTTPException(404, "No safety rule exists for the assigned zone")
     return _serialize(row)
+
+
+@worker.get("/education")
+def get_my_education(user: dict = Depends(current_user)):
+    """Expose only education content for the authenticated worker's assigned zone."""
+    if user["role"] != "worker":
+        raise HTTPException(403, "Worker access required")
+    zone = user.get("zone_name")
+    empty = {"quarter": None, "zone_name": zone, "items": [], "empty_reason": None}
+    if not zone:
+        return {**empty, "empty_reason": "zone_unassigned"}
+    with get_connection() as conn:
+        quarter = conn.execute(
+            "SELECT MAX(quarter) FROM education_recommendation WHERE zone_name=?",
+            (zone,),
+        ).fetchone()[0]
+        if quarter is None:
+            return {**empty, "empty_reason": "recommendations_unavailable"}
+        rows = conn.execute(
+            """SELECT recommendation_id,ppe_type,zone_name,education_topic
+               FROM education_recommendation WHERE zone_name=? AND quarter=?
+               ORDER BY recommendation_rank,recommendation_id""", (zone, quarter),
+        ).fetchall()
+    return {"quarter": quarter, "zone_name": zone,
+            "items": [{**dict(row), "material": None} for row in rows], "empty_reason": None}

@@ -14,10 +14,8 @@ import cv2
 import numpy as np
 
 from backend.db.event_repository import delete_candidate_event
-from backend.services.candidate_event_service import (
-    PROJECT_ROOT,
-    create_no_helmet_candidate_event,
-)
+from backend.media.paths import PROJECT_ROOT
+from backend.services.candidate_event_service import create_no_helmet_candidate_event
 
 
 def main() -> None:

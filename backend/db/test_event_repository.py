@@ -14,12 +14,12 @@ event_repository.py에 작성한 DB 접근 함수들이 정상적으로 작동�
     python backend/db/init_db.py
 
 실행:
-    python backend/db/test_event_repository.py
+    python -m backend.db.test_event_repository
 """
 
 from datetime import datetime
 
-from event_repository import (
+from backend.db.event_repository import (
     delete_candidate_event,
     get_all_candidate_events,
     get_candidate_event_by_id,
@@ -27,6 +27,7 @@ from event_repository import (
     insert_event_review,
     get_review_by_event_id,
 )
+from backend.tests.support import ready_media
 
 
 def print_section(title: str) -> None:
@@ -94,7 +95,8 @@ def main() -> None:
             "second_review_needed": 0,
         }
 
-        insert_event_review(review)
+        with ready_media("EVT_TEST_0001"):
+            insert_event_review(review)
         print("검토 결과 삽입 성공")
 
         print_section("검토 결과 조회")
@@ -113,3 +115,7 @@ def main() -> None:
 
     finally:
         cleanup_test_event()
+
+
+if __name__ == "__main__":
+    main()
