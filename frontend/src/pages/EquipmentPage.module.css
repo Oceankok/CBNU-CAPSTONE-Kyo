@@ -1,0 +1,275 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 860px;
+}
+
+.desc,
+.muted {
+  margin: 0;
+  font-size: 13px;
+  color: #718096;
+}
+
+.muted {
+  font-size: 12px;
+  color: #a0aec0;
+}
+
+.warn {
+  margin: 0;
+  font-size: 12px;
+  color: #b7791f;
+}
+
+.errorMsg {
+  margin: 0;
+  font-size: 13px;
+  color: #c53030;
+  background: #fff5f5;
+  border: 1px solid #fed7d7;
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filter {
+  padding: 6px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #fff;
+  color: #4a5568;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.filterOn {
+  border-color: #3182ce;
+  background: #ebf8ff;
+  color: #2b6cb0;
+  font-weight: 600;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a202c;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid #f0f4f8;
+}
+
+.inactive .itemMain {
+  opacity: 0.5;
+}
+
+.itemMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.itemActions {
+  display: flex;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+.name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a202c;
+}
+
+.meta {
+  font-size: 12px;
+  color: #718096;
+}
+
+.label {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4a5568;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #ebf8ff;
+  color: #2b6cb0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.toggle {
+  padding: 6px 12px;
+  border: 2px solid #e2e8f0;
+  border-radius: 999px;
+  background: #f7fafc;
+  color: #718096;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toggleOn {
+  border-color: #3182ce;
+  background: #ebf8ff;
+  color: #2b6cb0;
+}
+
+.policy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.form {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  margin-top: 4px;
+  background: #f7fafc;
+  border-radius: 6px;
+}
+
+.formRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.formRow .input {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+/* 16px keeps iOS Safari from zooming on focus */
+.input {
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 16px;
+  color: #1a202c;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #3182ce;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #2d3748;
+  cursor: pointer;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btn,
+.primaryBtn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #2b6cb0;
+}
+
+.primaryBtn {
+  border: none;
+  background: #3182ce;
+  color: #fff;
+  font-weight: 600;
+}
+
+.primaryBtn:disabled,
+.btn:disabled,
+.linkBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.linkBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #3182ce;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+@media (max-width: 768px) {
+  .card {
+    padding: 16px;
+  }
+
+  .item {
+    flex-direction: column;
+  }
+
+  .actions button {
+    flex: 1;
+    padding: 12px;
+  }
+}

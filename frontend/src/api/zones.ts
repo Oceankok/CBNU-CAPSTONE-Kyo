@@ -4,7 +4,7 @@ import { mockZoneOf } from './users';
 import type { ZoneRule } from '../types';
 
 // ponytail: in-memory mock for VITE_AUTH_MOCK=true until the #101 API exists; resets on reload
-const mockZones: ZoneRule[] = [
+export const mockZones: ZoneRule[] = [
   {
     zone_name: '프레스 구역',
     required_ppe: ['helmet', 'vest'],
