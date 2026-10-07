@@ -112,6 +112,13 @@ export default function StatsPage() {
               label="오탐"
               value={stats.summary.false_positive_count}
             />
+            {/* Closed without a decision because media was unrecoverable; not counted as violations */}
+            {stats.summary.unreviewable_count != null && (
+              <SummaryCard
+                label="검토 불가"
+                value={stats.summary.unreviewable_count}
+              />
+            )}
             <SummaryCard
               label="전체 후보"
               value={stats.summary.candidate_count}

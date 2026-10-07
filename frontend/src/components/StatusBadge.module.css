@@ -30,3 +30,9 @@
   background-color: #fffff0;
   color: #d69e2e;
 }
+
+/* unreviewable: dark gray — closed without a violation decision */
+.unreviewable {
+  background-color: #e2e8f0;
+  color: #4a5568;
+}

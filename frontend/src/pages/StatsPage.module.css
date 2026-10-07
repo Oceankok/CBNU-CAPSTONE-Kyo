@@ -37,7 +37,8 @@
 
 .cardRow {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* 4 or 5 cards (검토 불가 appears once the backend reports it) */
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 16px;
 }
 
@@ -62,10 +63,6 @@
 }
 
 @media (max-width: 1024px) {
-  .cardRow {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
   .chartRow {
     grid-template-columns: 1fr;
   }

@@ -1,9 +1,19 @@
 // Event status reflects the review lifecycle of a candidate event
-export type EventStatus = 'pending' | 'confirmed' | 'false_positive' | 'hold';
+// unreviewable: media could not be recovered, recorded separately from violations (#116)
+export type EventStatus =
+  | 'pending'
+  | 'confirmed'
+  | 'false_positive'
+  | 'hold'
+  | 'unreviewable';
 
 export type PpeType = 'helmet' | 'vest' | 'all';
 
-export type ReviewResult = 'confirmed' | 'false_positive' | 'hold';
+export type ReviewResult =
+  | 'confirmed'
+  | 'false_positive'
+  | 'hold'
+  | 'unreviewable';
 
 export type ReviewReasonCode =
   | 'confirmed_no_helmet'
@@ -14,7 +24,10 @@ export type ReviewReasonCode =
   | 'false_positive_other'
   | 'hold_unclear'
   | 'hold_low_resolution'
-  | 'hold_other';
+  | 'hold_other'
+  | 'source_missing'
+  | 'source_corrupt'
+  | 'clip_unavailable';
 
 export type RedactionMode = 'enhanced' | 'scrfd';
 
@@ -23,16 +36,44 @@ export interface EventMedia {
   camera_id: string;
   kind: 'image' | 'video';
   role: 'thumbnail' | 'clip' | 'reference';
-  status: 'registered' | 'processing' | 'ready' | 'failed' | 'missing' | 'delete_pending' | 'deleted';
+  status:
+    | 'registered'
+    | 'processing'
+    | 'ready'
+    | 'failed'
+    | 'missing'
+    | 'delete_pending'
+    | 'deleted';
   redaction_status: 'unprocessed' | 'complete' | 'failed' | 'legacy_unverified';
   url: string | null;
   can_reprocess: boolean;
+  reprocess_unavailable_reason?: string | null;
+  source_expires_at?: number | null;
+  failure_category?:
+    | 'source_unavailable'
+    | 'source_invalid'
+    | 'redaction_failed'
+    | 'cleanup_failed'
+    | null;
   error_code: string | null;
   faces_detected: number | null;
   processed_frames: number | null;
   redaction_mode?: RedactionMode | 'legacy' | null;
   inference_backend?: string | null;
   processing_seconds?: number | null;
+}
+
+// Whether the event can be judged with the media that exists (GET /api/events/{id}/media)
+export interface ReviewAvailability {
+  state:
+    | 'available'
+    | 'awaiting_clip'
+    | 'processing'
+    | 'retryable_failure'
+    | 'no_usable_media';
+  can_review: boolean;
+  can_mark_unreviewable: boolean;
+  missing_media_count: number;
 }
 
 export interface EventRetention {
@@ -100,6 +141,7 @@ export interface QuarterlySummary {
   confirmed_count: number;
   false_positive_count: number;
   hold_count: number;
+  unreviewable_count?: number;
 }
 
 export interface PpeTypeStat {
@@ -266,4 +308,19 @@ export interface FieldCommand {
   finished_at: number | null;
   payload: Record<string, unknown>;
   result: Record<string, unknown> | null;
+}
+
+// --- Worker education (GET /api/worker/education, #111) ---
+
+export interface WorkerEducation {
+  quarter: string | null;
+  zone_name: string | null;
+  items: {
+    recommendation_id: string;
+    ppe_type: string;
+    zone_name: string;
+    education_topic: string;
+    material: string | null; // AI-generated, admin-approved text (not generated yet)
+  }[];
+  empty_reason: 'zone_unassigned' | 'recommendations_unavailable' | null;
 }

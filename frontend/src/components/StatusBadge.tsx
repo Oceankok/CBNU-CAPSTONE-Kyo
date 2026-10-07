@@ -7,6 +7,7 @@ const STATUS_CONFIG: Record<EventStatus, { label: string; className: string }> =
     confirmed: { label: '확정 위반', className: styles.confirmed },
     false_positive: { label: '오탐', className: styles.falsePositive },
     hold: { label: '보류', className: styles.hold },
+    unreviewable: { label: '검토 불가', className: styles.unreviewable },
   };
 
 interface StatusBadgeProps {

@@ -7,7 +7,12 @@ import {
   uploadEventMedia,
 } from '../api/events';
 import { mediaUrl } from '../api/client';
-import type { EventMedia, EventRetention, RedactionMode } from '../types';
+import type {
+  EventMedia,
+  EventRetention,
+  RedactionMode,
+  ReviewAvailability,
+} from '../types';
 import styles from './EventMediaPanel.module.css';
 
 const STATUS: Record<EventMedia['status'], string> = {
@@ -42,6 +47,26 @@ const ERRORS: Record<string, string> = {
   file_delete_failed:
     '파일 삭제에 실패했습니다. 재시도하거나 서버의 파일 상태를 확인해 주세요.',
 };
+// Why the reprocess button is unavailable (reprocess_unavailable_reason, #116)
+const REPROCESS_BLOCKED: Record<string, string> = {
+  deletion_requested: '삭제가 결정된 자료입니다.',
+  processing_in_progress: '처리 중입니다.',
+  source_expired:
+    '원본 보관 기간(기본 24시간)이 지나 재처리할 수 없습니다. 클립을 다시 받아야 합니다.',
+  source_file_missing:
+    '원본 파일이 없어 재처리할 수 없습니다. 클립을 다시 받아야 합니다.',
+  source_invalid:
+    '원본이 손상되어 같은 파일로는 재처리할 수 없습니다. 클립을 다시 받아야 합니다.',
+  unsafe_source_path: '원본 경로가 안전하지 않아 처리할 수 없습니다.',
+  unsafe_storage_path: '저장 경로가 안전하지 않아 처리할 수 없습니다.',
+};
+const FAILURE_LABEL: Record<string, string> = {
+  source_unavailable: '원본 없음',
+  source_invalid: '원본 손상',
+  redaction_failed: '얼굴 가림 처리 오류',
+  cleanup_failed: '파일 정리 실패',
+};
+
 const MODE_LABEL: Record<string, string> = {
   scrfd: 'SCRFD · GPU',
   enhanced: 'YuNet · GPU',
@@ -74,11 +99,16 @@ export default function EventMediaPanel({
   eventId,
   cameraId,
   finalReview,
+  unreviewable = false,
+  onAvailability,
   onChange,
 }: {
   eventId: string;
   cameraId: string;
   finalReview: boolean;
+  // Event closed as unreviewable: media can be deleted but not retained
+  unreviewable?: boolean;
+  onAvailability?: (a: ReviewAvailability | null) => void;
   onChange: () => Promise<void>;
 }) {
   const [items, setItems] = useState<EventMedia[]>([]);
@@ -95,18 +125,22 @@ export default function EventMediaPanel({
   const [sourceCamera, setSourceCamera] = useState(cameraId);
   const [redactionMode, setRedactionMode] = useState<RedactionMode>('scrfd');
 
-  const apply = (data: Awaited<ReturnType<typeof fetchEventMedia>>) => {
-    setItems(data.items);
-    setRetention(data.retention);
-    setLoaded(true);
-  };
-  const reload = useCallback(() => fetchEventMedia(eventId).then(apply), [eventId]);
+  const apply = useCallback(
+    (data: Awaited<ReturnType<typeof fetchEventMedia>>) => {
+      setItems(data.items);
+      setRetention(data.retention);
+      setLoaded(true);
+      onAvailability?.(data.review_availability ?? null);
+    },
+    [onAvailability],
+  );
+  const reload = useCallback(() => fetchEventMedia(eventId).then(apply), [eventId, apply]);
 
   useEffect(() => {
     fetchEventMedia(eventId)
       .then(apply)
       .catch((e: Error) => setError(e.message));
-  }, [eventId]);
+  }, [eventId, apply]);
 
   // Poll while the server is still redacting or deleting
   const processing = items.some(
@@ -293,16 +327,24 @@ export default function EventMediaPanel({
                 모델 개선용으로 보관 중 · 근거: {retention.consent_reference}
               </p>
             )}
-            <label className={styles.check}>
-              <input
-                type="checkbox"
-                checked={consent}
-                disabled={busy}
-                onChange={(e) => setConsent(e.target.checked)}
-              />
-              모델 개선용 이용 동의를 확인했습니다.
-            </label>
-            {consent && (
+            {unreviewable && (
+              <p className={styles.muted}>
+                검토 불가로 종결된 이벤트는 자료를 보관할 수 없고 삭제만
+                가능합니다.
+              </p>
+            )}
+            {!unreviewable && (
+              <label className={styles.check}>
+                <input
+                  type="checkbox"
+                  checked={consent}
+                  disabled={busy}
+                  onChange={(e) => setConsent(e.target.checked)}
+                />
+                모델 개선용 이용 동의를 확인했습니다.
+              </label>
+            )}
+            {consent && !unreviewable && (
               <>
                 <label className={styles.field}>
                   동의 확인 근거 / 기록 번호
@@ -334,13 +376,15 @@ export default function EventMediaPanel({
               >
                 동의 없음 · 파일 삭제
               </button>
-              <button
-                className={styles.primaryBtn}
-                disabled={busy || !retention || !consent || !reference.trim()}
-                onClick={() => decide('retain')}
-              >
-                동의 확인 후 보관
-              </button>
+              {!unreviewable && (
+                <button
+                  className={styles.primaryBtn}
+                  disabled={busy || !retention || !consent || !reference.trim()}
+                  onClick={() => decide('retain')}
+                >
+                  동의 확인 후 보관
+                </button>
+              )}
             </div>
           </>
         )}
@@ -357,6 +401,8 @@ export default function EventMediaPanel({
                   <strong>{item.camera_id}</strong> ·{' '}
                   {item.kind === 'image' ? '이미지' : '영상'} ·{' '}
                   {STATUS[item.status]}
+                  {item.failure_category &&
+                    ` · ${FAILURE_LABEL[item.failure_category] ?? item.failure_category}`}
                 </p>
                 <p className={styles.muted}>
                   {MODE_LABEL[item.redaction_mode ?? ''] ?? '처리 방식 미기록'}
@@ -369,6 +415,22 @@ export default function EventMediaPanel({
                 {item.status === 'ready' && item.faces_detected === 0 && (
                   <p className={styles.muted}>
                     탐지된 얼굴이 없습니다. 누락 여부를 확인해 주세요.
+                  </p>
+                )}
+                {!item.can_reprocess &&
+                  item.reprocess_unavailable_reason &&
+                  item.status !== 'ready' && (
+                    <p className={styles.muted}>
+                      {REPROCESS_BLOCKED[item.reprocess_unavailable_reason] ??
+                        item.reprocess_unavailable_reason}
+                    </p>
+                  )}
+                {item.source_expires_at != null && item.can_reprocess && (
+                  <p className={styles.muted}>
+                    원본 재처리 기한:{' '}
+                    {new Date(item.source_expires_at * 1000).toLocaleString(
+                      'ko-KR',
+                    )}
                   </p>
                 )}
                 {item.error_code && (

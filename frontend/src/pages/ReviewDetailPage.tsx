@@ -11,6 +11,7 @@ import type {
   ReviewResult,
   ReviewReasonCode,
   ReviewRequest,
+  ReviewAvailability,
 } from '../types';
 import styles from './ReviewDetailPage.module.css';
 
@@ -37,6 +38,39 @@ const REASON_OPTIONS: Record<
     { value: 'hold_low_resolution', label: '해상도 부족' },
     { value: 'hold_other', label: '기타 (보류)' },
   ],
+  unreviewable: [
+    { value: 'source_missing', label: '원본 소실' },
+    { value: 'source_corrupt', label: '원본 손상' },
+    { value: 'clip_unavailable', label: '클립 확보 불가' },
+  ],
+};
+
+const RESULT_LABEL: Record<ReviewResult, string> = {
+  confirmed: '확정 위반',
+  false_positive: '오탐',
+  hold: '보류',
+  unreviewable: '검토 불가',
+};
+
+// Why confirm / false-positive are locked (review_availability.state)
+const AVAILABILITY_MSG: Record<ReviewAvailability['state'], string> = {
+  available: '',
+  awaiting_clip:
+    '현장 PC에서 클립을 받는 중입니다. 자료가 도착한 뒤 판단할 수 있습니다. (보류는 가능)',
+  processing:
+    '얼굴 가림 처리 중입니다. 처리가 끝나면 판단할 수 있습니다. (보류는 가능)',
+  retryable_failure:
+    '자료 처리에 실패했습니다. 왼쪽 "자료 처리 정보"에서 재처리하거나 클립을 다시 받아야 합니다. (보류는 가능)',
+  no_usable_media:
+    '판단에 쓸 수 있는 자료가 없습니다. 자료를 복구할 수 없다면 "검토 불가"로 종결하세요.',
+};
+
+// Backend 409 codes on review submit
+const SUBMIT_ERRORS: Record<string, string> = {
+  usable_redacted_media_required:
+    '얼굴 가림 처리된 자료가 있어야 확정·오탐으로 판단할 수 있습니다.',
+  media_recovery_pending:
+    '자료를 아직 복구할 수 있어 검토 불가로 종결할 수 없습니다. 재처리나 클립 수신을 먼저 확인하세요.',
 };
 
 // Populate the lookup map after REASON_OPTIONS is defined
@@ -74,6 +108,12 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
   const [submitted, setSubmitted] = useState(false);
   // True when the user clicked '재검토 시작' to overwrite an existing hold/second-review
   const [isReReview, setIsReReview] = useState(false);
+  // Submitted in this visit (reloadEvent then fills existingReview, so it can't tell us)
+  const [justSubmitted, setJustSubmitted] = useState(false);
+  // Reported by EventMediaPanel from the media API; null until loaded
+  const [availability, setAvailability] = useState<ReviewAvailability | null>(
+    null,
+  );
   useEffect(() => {
     if (!event_id) return;
     fetchEvent(event_id)
@@ -123,6 +163,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
 
   const handleSubmit = async () => {
     if (!reviewResult || !reasonCode || !event_id) return;
+    if (reviewResult === 'unreviewable' && !comment.trim()) return;
     setSubmitError(null);
     const body: ReviewRequest = {
       // Backend should derive the reviewer from the token; sent for compatibility until it does
@@ -130,7 +171,8 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
       review_result: reviewResult,
       review_reason_code: reasonCode as ReviewReasonCode,
       review_comment: comment,
-      second_review_needed: secondReview,
+      second_review_needed:
+        reviewResult === 'unreviewable' ? false : secondReview,
     };
     try {
       // Use PUT when overwriting an existing review (re-review flow)
@@ -140,12 +182,13 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
         await submitReview(event_id, body);
       }
       await reloadEvent();
+      setJustSubmitted(true);
       setSubmitted(true);
       setIsReReview(false);
     } catch (e: unknown) {
-      setSubmitError(
-        e instanceof Error ? e.message : '제출 중 오류가 발생했습니다.',
-      );
+      const message =
+        e instanceof Error ? e.message : '제출 중 오류가 발생했습니다.';
+      setSubmitError(SUBMIT_ERRORS[message] ?? message);
     }
   };
 
@@ -183,6 +226,8 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
               existingReview.review_result !== 'hold' &&
               !existingReview.second_review_needed,
             )}
+            unreviewable={existingReview?.review_result === 'unreviewable'}
+            onAvailability={setAvailability}
             onChange={reloadEvent}
           />
         </div>
@@ -248,26 +293,20 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
           {submitted ? (
             <div className={styles.submittedCard}>
               <p className={styles.submittedMsg}>
-                {existingReview
-                  ? '⚠ 이미 검토된 이벤트입니다.'
-                  : '✅ 검토가 제출되었습니다.'}
+                {justSubmitted
+                  ? '✅ 검토가 제출되었습니다.'
+                  : '⚠ 이미 검토된 이벤트입니다.'}
               </p>
               {/* Show a summary of the review decision */}
               {(existingReview || reviewResult) && (
                 <dl className={styles.reviewSummary}>
                   <dt>판단 결과</dt>
                   <dd>
-                    {existingReview
-                      ? existingReview.review_result === 'confirmed'
-                        ? '확정 위반'
-                        : existingReview.review_result === 'false_positive'
-                          ? '오탐'
-                          : '보류'
-                      : reviewResult === 'confirmed'
-                        ? '확정 위반'
-                        : reviewResult === 'false_positive'
-                          ? '오탐'
-                          : '보류'}
+                    {
+                      RESULT_LABEL[
+                        existingReview?.review_result ?? reviewResult ?? 'hold'
+                      ]
+                    }
                   </dd>
                   <dt>판단 사유</dt>
                   <dd>
@@ -305,6 +344,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
                 {existingReview &&
                   !!(
                     event?.event_status === 'hold' ||
+                    event?.event_status === 'unreviewable' ||
                     existingReview.second_review_needed
                   ) && (
                     <button
@@ -322,17 +362,25 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
                 {isReReview ? '🔄 재검토 입력' : '검토 입력'}
               </h4>
 
-              {/* Three-button toggle for review result */}
+              {availability && !availability.can_review && (
+                <p className={styles.blockedNote} role="status">
+                  {AVAILABILITY_MSG[availability.state]}
+                </p>
+              )}
+
+              {/* Result toggle; confirm / false positive need usable redacted media */}
               <div className={styles.resultButtons}>
                 <button
                   className={`${styles.resultBtn} ${styles.confirmedBtn} ${reviewResult === 'confirmed' ? styles.activeConfirmed : ''}`}
                   onClick={() => handleResultClick('confirmed')}
+                  disabled={availability?.can_review === false}
                 >
                   ✓ 확정 위반
                 </button>
                 <button
                   className={`${styles.resultBtn} ${styles.falsePosBtn} ${reviewResult === 'false_positive' ? styles.activeFalsePos : ''}`}
                   onClick={() => handleResultClick('false_positive')}
+                  disabled={availability?.can_review === false}
                 >
                   ✕ 오탐
                 </button>
@@ -342,6 +390,15 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
                 >
                   ⏸ 보류
                 </button>
+                {(availability?.can_mark_unreviewable ||
+                  reviewResult === 'unreviewable') && (
+                  <button
+                    className={`${styles.resultBtn} ${styles.unreviewableBtn} ${reviewResult === 'unreviewable' ? styles.activeUnreviewable : ''}`}
+                    onClick={() => handleResultClick('unreviewable')}
+                  >
+                    ⊘ 검토 불가
+                  </button>
+                )}
               </div>
 
               {/* Reason code dropdown — options depend on the selected result */}
@@ -367,25 +424,36 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
 
               <div className={styles.field}>
                 <label className={styles.fieldLabel}>
-                  검토 의견 <span className={styles.optional}>(선택)</span>
+                  검토 의견{' '}
+                  <span className={styles.optional}>
+                    {reviewResult === 'unreviewable'
+                      ? '(필수 — 복구할 수 없는 이유)'
+                      : '(선택)'}
+                  </span>
                 </label>
                 <textarea
                   className={styles.textarea}
                   rows={3}
-                  placeholder="추가 의견을 입력하세요..."
+                  placeholder={
+                    reviewResult === 'unreviewable'
+                      ? '예: 현장 PC에서도 원본 복구가 불가능함을 확인했습니다.'
+                      : '추가 의견을 입력하세요...'
+                  }
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                 />
               </div>
 
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={secondReview}
-                  onChange={(e) => setSecondReview(e.target.checked)}
-                />
-                2차 검토 요청
-              </label>
+              {reviewResult !== 'unreviewable' && (
+                <label className={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={secondReview}
+                    onChange={(e) => setSecondReview(e.target.checked)}
+                  />
+                  2차 검토 요청
+                </label>
+              )}
 
               {submitError && (
                 <p style={{ color: '#e53e3e', marginTop: '0.5rem' }}>
@@ -401,7 +469,11 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
                 </button>
                 <button
                   className={styles.primaryBtn}
-                  disabled={!reviewResult || !reasonCode}
+                  disabled={
+                    !reviewResult ||
+                    !reasonCode ||
+                    (reviewResult === 'unreviewable' && !comment.trim())
+                  }
                   onClick={handleSubmit}
                 >
                   검토 제출
