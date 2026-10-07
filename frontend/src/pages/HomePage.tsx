@@ -12,10 +12,15 @@ const PENDING_PREVIEW = 5;
 
 export default function HomePage() {
   // Pending events are polled by AppLayout, so this list stays live without its own fetch
-  const { quarter, pending, pendingError: error } = useOutletContext<LayoutContext>();
+  const {
+    quarter,
+    pending,
+    pendingError: error,
+  } = useOutletContext<LayoutContext>();
   const navigate = useNavigate();
 
   const [stats, setStats] = useState<QuarterlyStats | null>(null);
+  const [statsMissing, setStatsMissing] = useState(false);
   const pendingEvents = pending ?? [];
   const loading = pending === null && !error;
 
@@ -23,7 +28,7 @@ export default function HomePage() {
     // Stats may not exist yet so treat 404 as null
     fetchStats(quarter)
       .then(setStats)
-      .catch(() => setStats(null)); // stats 미생성 시 카드 숨김
+      .catch(() => setStatsMissing(true)); // stats 미생성 시 카드 대신 안내
   }, [quarter]);
 
   return (
@@ -33,14 +38,21 @@ export default function HomePage() {
 
       {/* Primary action: events waiting for a human decision */}
       {pending && (
-        <section className={`${styles.section} ${pendingEvents.length ? styles.pendingSection : ''}`}>
+        <section
+          className={`${styles.section} ${pendingEvents.length ? styles.pendingSection : ''}`}
+        >
           <div className={styles.sectionHeader}>
             <div>
               <span className={styles.pendingLabel}>검토 대기</span>
-              <span className={styles.pendingCount}>{pendingEvents.length}건</span>
+              <span className={styles.pendingCount}>
+                {pendingEvents.length}건
+              </span>
             </div>
             {pendingEvents.length > 0 && (
-              <button className={styles.primaryBtn} onClick={() => navigate('/review')}>
+              <button
+                className={styles.primaryBtn}
+                onClick={() => navigate('/review')}
+              >
                 검토하러 가기 →
               </button>
             )}
@@ -56,8 +68,13 @@ export default function HomePage() {
                     onClick={() => navigate(`/review/${event.event_id}`)}
                   >
                     <span className={styles.pendingMain}>
-                      <strong>{event.ppe_type === 'helmet' ? '안전모' : '안전조끼'} 미착용</strong>
-                      <span className={styles.pendingZone}>{event.zone_name}</span>
+                      <strong>
+                        {event.ppe_type === 'helmet' ? '안전모' : '안전조끼'}{' '}
+                        미착용
+                      </strong>
+                      <span className={styles.pendingZone}>
+                        {event.zone_name}
+                      </span>
                     </span>
                     <span className={styles.pendingMeta}>
                       {new Date(event.timestamp_start).toLocaleString('ko-KR', {
@@ -75,19 +92,39 @@ export default function HomePage() {
             </ul>
           )}
           {pendingEvents.length > PENDING_PREVIEW && (
-            <button className={styles.viewAll} onClick={() => navigate('/review')}>
+            <button
+              className={styles.viewAll}
+              onClick={() => navigate('/review')}
+            >
               외 {pendingEvents.length - PENDING_PREVIEW}건 더 보기 →
             </button>
           )}
         </section>
       )}
 
+      {statsMissing && (
+        <p className={styles.statsMissing}>
+          {quarter} 분기 통계가 아직 생성되지 않았습니다.
+        </p>
+      )}
+
       {stats && (
         <div className={styles.cardRow}>
-          <SummaryCard label="확정 위반" value={stats.summary.confirmed_count} trend={calcTrend(stats.trend)} accent />
+          <SummaryCard
+            label="확정 위반"
+            value={stats.summary.confirmed_count}
+            trend={calcTrend(stats.trend)}
+            accent
+          />
           <SummaryCard label="보류" value={stats.summary.hold_count} />
-          <SummaryCard label="오탐" value={stats.summary.false_positive_count} />
-          <SummaryCard label="전체 후보" value={stats.summary.candidate_count} />
+          <SummaryCard
+            label="오탐"
+            value={stats.summary.false_positive_count}
+          />
+          <SummaryCard
+            label="전체 후보"
+            value={stats.summary.candidate_count}
+          />
         </div>
       )}
 
@@ -98,14 +135,17 @@ export default function HomePage() {
             <div className={styles.barList}>
               {stats.by_ppe_type.map((p) => (
                 <div key={p.ppe_type} className={styles.barItem}>
-                  <span className={styles.barName}>{p.ppe_type === 'helmet' ? '안전모' : '안전조끼'}</span>
+                  <span className={styles.barName}>
+                    {p.ppe_type === 'helmet' ? '안전모' : '안전조끼'}
+                  </span>
                   <div className={styles.barWrap}>
                     {/* Width proportional to share of total confirmed violations */}
                     <div
                       className={styles.barFill}
                       style={{
                         width: `${(p.confirmed_count / (stats.summary.confirmed_count || 1)) * 100}%`,
-                        backgroundColor: p.ppe_type === 'helmet' ? '#e53e3e' : '#d69e2e',
+                        backgroundColor:
+                          p.ppe_type === 'helmet' ? '#e53e3e' : '#d69e2e',
                       }}
                     />
                   </div>

@@ -196,3 +196,9 @@
     gap: 10px;
   }
 }
+
+.statsMissing {
+  margin: 0;
+  font-size: 13px;
+  color: #a0aec0;
+}
