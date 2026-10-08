@@ -5,6 +5,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STORAGE_ROOT = PROJECT_ROOT / "storage"
 PROCESSED_ROOT = STORAGE_ROOT / "candidate_events" / "processed"
 WORK_ROOT = PROJECT_ROOT / ".private_media"
+SOURCE_ROOT = WORK_ROOT / "originals"
+
+
+def private_source_path(key: str) -> Path:
+    """Resolve a private original without accepting absolute or escaping paths."""
+    relative = Path(key)
+    root = SOURCE_ROOT.resolve()
+    target = (root / relative).resolve()
+    if not key or relative.is_absolute() or target == root or not target.is_relative_to(root):
+        raise ValueError("unsafe_source_path")
+    return target
 MODEL_SHA256 = "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
 
 

@@ -82,7 +82,7 @@ def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, An
     """Legacy fields point only to published redacted media; raw paths stay private."""
     if not events:
         return events
-    from backend.media.service import public_media
+    from backend.media.service import public_media, review_availability
     event_ids = [event["event_id"] for event in events]
     rows, retention = [], {}
     for offset in range(0, len(event_ids), 500):
@@ -96,6 +96,9 @@ def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, An
         by_event[row["event_id"]].append(public_media(dict(row), retention.get(row["event_id"], {}).get("decision", "pending")))
     for event in events:
         event["media"] = by_event[event["event_id"]]
+        requests = [dict(row) for row in conn.execute("SELECT * FROM event_clip_request WHERE event_id=? ORDER BY created_at", (event["event_id"],))]
+        event["clip_requests"] = requests
+        event["review_availability"] = review_availability(event["media"], requests)
         event["retention"] = retention.get(event["event_id"], {"event_id": event["event_id"], "decision": "pending", "version": 0})
         event["thumbnail_path"] = next((m["url"] for m in event["media"] if m["role"] == "thumbnail" and m["url"]), "")
         event["video_clip_path"] = next((m["url"] for m in event["media"] if m["role"] == "clip" and m["url"]), "")
@@ -458,6 +461,9 @@ def insert_event_review(review: dict[str, Any]) -> None:
     """
 
     with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        from backend.media.service import validate_review
+        validate_review(conn, review)
         if review["review_result"] == "false_positive":
             event = conn.execute(
                 """
@@ -534,6 +540,9 @@ def update_event_review(review: dict[str, Any]) -> None:
     """
 
     with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        from backend.media.service import validate_review
+        validate_review(conn, review)
         existing_review = conn.execute(
             """
             SELECT *
@@ -668,7 +677,8 @@ def get_quarterly_stats(quarter: str) -> Optional[dict]:
                 candidate_count,
                 confirmed_count,
                 false_positive_count,
-                hold_count
+                hold_count,
+                unreviewable_count
             FROM quarterly_summary
             WHERE quarter = ?;
             """,
@@ -725,6 +735,7 @@ def get_quarterly_stats(quarter: str) -> Optional[dict]:
             "confirmed_count": summary_row["confirmed_count"],
             "false_positive_count": summary_row["false_positive_count"],
             "hold_count": summary_row["hold_count"],
+            "unreviewable_count": summary_row["unreviewable_count"],
         },
         "by_ppe_type": [dict(row) for row in ppe_rows],
         "by_zone": [dict(row) for row in zone_rows],
@@ -902,6 +913,11 @@ def generate_quarterly_stats(quarter: str) -> dict:
             (start_date, end_date),
         ).fetchone()["count"]
 
+        unreviewable_count = conn.execute(
+            "SELECT COUNT(*) FROM candidate_event WHERE timestamp_start>=? AND timestamp_start<? AND event_status='unreviewable'",
+            (start_date, end_date),
+        ).fetchone()[0]
+
         false_positive_count = conn.execute(
             """
             SELECT COALESCE(SUM(false_positive_count), 0) AS count
@@ -940,9 +956,10 @@ def generate_quarterly_stats(quarter: str) -> dict:
                 confirmed_count,
                 false_positive_count,
                 hold_count,
+                unreviewable_count,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?);
+            VALUES (?, ?, ?, ?, ?, ?, ?);
             """,
             (
                 quarter,
@@ -950,6 +967,7 @@ def generate_quarterly_stats(quarter: str) -> dict:
                 confirmed_count,
                 false_positive_count,
                 hold_count,
+                unreviewable_count,
                 created_at,
             ),
         )

@@ -5,17 +5,53 @@ import json
 import logging
 import tempfile
 import time
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from backend.db.event_repository import get_connection
-from backend.media.paths import PROCESSED_ROOT, WORK_ROOT, owned_path, storage_key
-from backend.media.redaction import MediaError, redact_frame, redact_image, redact_video
+from backend.media.paths import PROCESSED_ROOT, WORK_ROOT, SOURCE_ROOT, private_source_path, owned_path, storage_key
+from backend.media.redaction import MediaError, redact_image, redact_video
 
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def reprocess_unavailable_reason(row: dict, decision: str = "pending") -> str | None:
+    if decision == "delete" or row["status"] in {"delete_pending", "deleted"}:
+        return "deletion_requested"
+    if row["status"] == "processing" or row.get("processing_started_at") is not None:
+        return "processing_in_progress"
+    if failure_category(row.get("error_code")) == "source_invalid":
+        return "source_invalid"
+    if row.get("source_path"):
+        if row.get("source_expires_at") is not None and row["source_expires_at"] <= time.time():
+            return "source_expired"
+        try:
+            return None if private_source_path(row["source_path"]).is_file() else "source_file_missing"
+        except (ValueError, OSError):
+            return "unsafe_source_path"
+    # Pre-migration unverified files can be imported once. Never re-redact a published output.
+    if row["redaction_status"] == "legacy_unverified" and row.get("storage_path"):
+        try:
+            return None if owned_path(row["storage_path"]).is_file() else "source_file_missing"
+        except (ValueError, OSError):
+            return "unsafe_storage_path"
+    return "source_file_missing"
+
+
+def failure_category(code: str | None) -> str | None:
+    if not code:
+        return None
+    if code in {"source_file_missing", "source_expired"}:
+        return "source_unavailable"
+    if code in {"invalid_frame", "video_decode_failed", "incomplete_video_decode", "invalid_video_fps", "video_resolution_changed"}:
+        return "source_invalid"
+    if code in {"file_delete_failed", "private_cleanup_pending"}:
+        return "cleanup_failed"
+    return "redaction_failed"
 
 
 def public_media(row: dict, decision: str = "pending") -> dict:
@@ -24,15 +60,99 @@ def public_media(row: dict, decision: str = "pending") -> dict:
     result.pop("source_node_id", None)
     result.pop("request_id", None)
     result.pop("processing_started_at", None)
+    result.pop("source_path", None)
     safe = False
     try:
-        owned_path(path)
-        safe = True
-    except ValueError:
+        safe = owned_path(path).is_file()
+    except (ValueError, OSError):
         pass
     result["url"] = "/" + path if safe and row["status"] == "ready" and row["redaction_status"] == "complete" and decision != "delete" else None
-    result["can_reprocess"] = bool(safe and path and row["status"] in {"registered", "failed", "missing"} and decision != "delete")
+    reason = reprocess_unavailable_reason(row, decision)
+    result["can_reprocess"] = reason is None
+    result["reprocess_unavailable_reason"] = reason
+    result["failure_category"] = failure_category(row.get("error_code"))
     return result
+
+
+def review_availability(media: list[dict], requests: list[dict]) -> dict:
+    available = [item for item in media if item.get("url")]
+    latest = {}
+    for request in requests:
+        previous = latest.get(request["camera_id"])
+        if previous is None or request["created_at"] > previous["created_at"]:
+            latest[request["camera_id"]] = request
+    waiting = any(item["status"] in {"pending", "failed"} for item in latest.values())
+    processing = any(item["status"] == "processing" for item in media)
+    retryable = any(item.get("can_reprocess") for item in media)
+    if available:
+        state = "available"
+    elif waiting:
+        state = "awaiting_clip"
+    elif processing:
+        state = "processing"
+    elif retryable:
+        state = "retryable_failure"
+    else:
+        state = "no_usable_media"
+    return {"state": state, "can_review": bool(available),
+            "can_mark_unreviewable": not (available or waiting or processing or retryable),
+            "missing_media_count": sum(not item.get("url") for item in media)}
+
+
+def validate_review(conn, review: dict):
+    """Called inside the review write transaction, not only in the UI."""
+    result = review["review_result"]
+    if result not in {"confirmed", "false_positive", "hold", "unreviewable"}:
+        raise ValueError("invalid_review_result")
+    if result == "hold":
+        return
+    retention = conn.execute("SELECT decision FROM event_retention WHERE event_id=?", (review["event_id"],)).fetchone()
+    media = [public_media(dict(row), retention[0] if retention else "pending") for row in conn.execute("SELECT * FROM event_media WHERE event_id=?", (review["event_id"],))]
+    requests = [dict(row) for row in conn.execute("SELECT * FROM event_clip_request WHERE event_id=?", (review["event_id"],))]
+    availability = review_availability(media, requests)
+    if result in {"confirmed", "false_positive"} and not availability["can_review"]:
+        raise ValueError("usable_redacted_media_required")
+    if result == "unreviewable":
+        if not availability["can_mark_unreviewable"]:
+            raise ValueError("media_recovery_pending")
+        if review.get("review_reason_code") not in {"source_missing", "source_corrupt", "clip_unavailable"} or not review.get("review_comment", "").strip():
+            raise ValueError("unreviewable_reason_required")
+        if review.get("confirmed_violation") or review.get("second_review_needed"):
+            raise ValueError("invalid_unreviewable_flags")
+
+
+def _preserve_source(media_id: str, source=None, frame=None, consume_source: bool = False) -> Path:
+    """Persist raw input privately before inference so failures remain retryable."""
+    import cv2
+    SOURCE_ROOT.mkdir(parents=True, exist_ok=True)
+    suffix = ".png" if frame is not None else Path(source).suffix
+    key = media_id + suffix
+    target = private_source_path(key)
+    ttl = int(os.environ.get("PPE_MEDIA_SOURCE_TTL_SECONDS", "86400"))
+    if ttl <= 0:
+        raise ValueError("invalid_source_ttl")
+    try:
+        with get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT m.status,r.decision FROM event_media m LEFT JOIN event_retention r ON r.event_id=m.event_id WHERE media_id=?", (media_id,)).fetchone()
+            if not row or row["status"] != "processing" or row["decision"] == "delete":
+                raise ValueError("event_media_deleted")
+            if frame is not None:
+                if not cv2.imwrite(str(target), frame):
+                    raise MediaError("image_encode_failed")
+            elif consume_source:
+                if not Path(source).is_file():
+                    raise MediaError("source_file_missing")
+                os.replace(source, target)
+            else:
+                if not Path(source).is_file():
+                    raise MediaError("source_file_missing")
+                shutil.copyfile(source, target)
+            conn.execute("UPDATE event_media SET source_path=?,source_expires_at=? WHERE media_id=?", (key, time.time() + ttl, media_id))
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    return target
 
 
 def get_retention(event_id: str) -> dict:
@@ -111,14 +231,9 @@ def _process(media_id: str, kind: str, source=None, frame=None, consume_source: 
         WORK_ROOT.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=f"ppe_{media_id}_", dir=WORK_ROOT) as folder:
             work = Path(folder)
-            if consume_source:
-                private_source = work / ("source" + Path(source).suffix)
-                os.replace(source, private_source)
-                source = private_source
+            source = _preserve_source(media_id, source, frame, consume_source)
             output = work / ("output.jpg" if kind == "image" else "output.mp4")
-            if frame is not None:
-                details = redact_frame(frame, output, mode)
-            elif kind == "image":
+            if kind == "image":
                 details = redact_image(Path(source), output, mode)
             else:
                 details = redact_video(Path(source), output, work, mode)
@@ -167,14 +282,14 @@ def reprocess_media(media_id: str, mode: str = "scrfd") -> dict:
         row = conn.execute("SELECT * FROM event_media WHERE media_id=?", (media_id,)).fetchone()
         if not row:
             raise ValueError("media_not_found")
-        if row["status"] not in {"registered", "failed", "missing"}:
-            raise ValueError("media_not_reprocessable")
         retention = conn.execute("SELECT decision FROM event_retention WHERE event_id=?", (row["event_id"],)).fetchone()
         if retention and retention["decision"] == "delete":
             raise ValueError("event_media_deleted")
-        source = owned_path(row["storage_path"])
-        if not source.is_file():
-            raise ValueError("source_file_missing")
+        reason = reprocess_unavailable_reason(dict(row), retention["decision"] if retention else "pending")
+        if reason:
+            raise ValueError(reason)
+        source = private_source_path(row["source_path"]) if row["source_path"] else owned_path(row["storage_path"])
+        legacy = not row["source_path"]
         conn.execute("UPDATE event_media SET status='processing',redaction_status='unprocessed',processing_started_at=?,error_code=NULL,redaction_mode=?,inference_backend=NULL,processing_seconds=NULL WHERE media_id=?",
                      (time.time(), mode, media_id))
     work = None
@@ -182,10 +297,11 @@ def reprocess_media(media_id: str, mode: str = "scrfd") -> dict:
         WORK_ROOT.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=f"ppe_{media_id}_", dir=WORK_ROOT) as folder:
             work = Path(folder)
-            private_source = work / ("source" + source.suffix)
-            os.replace(source, private_source)
-            with get_connection() as conn:
-                conn.execute("UPDATE event_media SET storage_path='' WHERE media_id=?", (media_id,))
+            private_source = source
+            if legacy:
+                private_source = _preserve_source(media_id, source=source, consume_source=True)
+                with get_connection() as conn:
+                    conn.execute("UPDATE event_media SET storage_path='' WHERE media_id=?", (media_id,))
             output = work / ("output.jpg" if row["kind"] == "image" else "output.mp4")
             details = redact_image(private_source, output, mode) if row["kind"] == "image" else redact_video(private_source, output, work, mode)
             _publish(media_id, output, details)
@@ -209,8 +325,10 @@ def delete_event_media(event_id: str) -> dict:
         try:
             if row["storage_path"]:
                 owned_path(row["storage_path"]).unlink(missing_ok=True)
+            if row["source_path"]:
+                private_source_path(row["source_path"]).unlink(missing_ok=True)
             with get_connection() as conn:
-                conn.execute("""UPDATE event_media SET status='deleted',storage_path='',deleted_at=?,error_code=NULL
+                conn.execute("""UPDATE event_media SET status='deleted',storage_path='',source_path='',source_expires_at=NULL,deleted_at=?,error_code=NULL
                     WHERE media_id=? AND status='delete_pending'""", (now(), row["media_id"]))
         except (OSError, ValueError):
             with get_connection() as conn:
@@ -247,6 +365,8 @@ def decide_retention(event_id: str, decision: str, actor: str, expected_version:
         review = conn.execute("SELECT * FROM event_review WHERE event_id=?", (event_id,)).fetchone()
         if not review or event["event_status"] in {"pending", "hold"} or review["second_review_needed"]:
             raise ValueError("final_review_required")
+        if decision == "retain" and review["review_result"] == "unreviewable":
+            raise ValueError("unreviewable_media_cannot_be_retained")
         conn.execute("INSERT OR IGNORE INTO event_retention(event_id) VALUES(?)", (event_id,))
         current = conn.execute("SELECT * FROM event_retention WHERE event_id=?", (event_id,)).fetchone()
         if current["version"] != expected_version:

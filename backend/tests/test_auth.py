@@ -8,7 +8,7 @@ import jwt
 
 from backend.auth.service import secret
 from backend.db.event_repository import get_connection
-from backend.tests.support import isolated_api, login
+from backend.tests.support import isolated_api, login, ready_media
 
 
 class AuthenticationTests(unittest.TestCase):
@@ -39,7 +39,8 @@ class AuthenticationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["review"]["reviewer_id"], "admin02")
         body["review_result"] = "confirmed"
-        response = self.client.put("/api/events/EVT_0001/review", headers=headers, json=body)
+        with ready_media():
+            response = self.client.put("/api/events/EVT_0001/review", headers=headers, json=body)
         self.assertEqual(response.json()["review"]["reviewer_id"], "admin02")
 
     def test_expired_disabled_and_logout(self):

@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-LATEST_VERSION = 3
+LATEST_VERSION = 4
 
 
 def _now() -> str:
@@ -105,6 +105,29 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
                     conn.execute(f"ALTER TABLE event_media ADD COLUMN {name} {sql_type}")
             # Historical outputs have no trustworthy mode/timing information.
             conn.execute("PRAGMA user_version = 3")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 4:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("""CREATE TABLE IF NOT EXISTS event_clip_request (
+                request_id TEXT PRIMARY KEY,
+                event_id TEXT NOT NULL REFERENCES candidate_event(event_id) ON DELETE CASCADE,
+                camera_id TEXT NOT NULL REFERENCES camera_info(camera_id),
+                status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','received','failed','unavailable')),
+                error_code TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL
+            )""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_clip_request_event ON event_clip_request(event_id,status)")
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(event_media)")}
+            for name, declaration in (("source_path", "TEXT NOT NULL DEFAULT ''"), ("source_expires_at", "REAL")):
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE event_media ADD COLUMN {name} {declaration}")
+            if "unreviewable_count" not in {row[1] for row in conn.execute("PRAGMA table_info(quarterly_summary)")}:
+                conn.execute("ALTER TABLE quarterly_summary ADD COLUMN unreviewable_count INTEGER NOT NULL DEFAULT 0")
+            conn.execute("PRAGMA user_version = 4")
             conn.commit()
         except Exception:
             conn.rollback()

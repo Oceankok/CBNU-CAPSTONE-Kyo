@@ -95,6 +95,7 @@ class ReviewRequest(BaseModel):
         - confirmed: 확정 위반
         - false_positive: 오탐
         - hold: 판단 보류
+        - unreviewable: 원본 소실·손상 등으로 복구 불가능한 검토 불가
     """
 
     reviewer_id: str | None = Field(default=None, example="admin01")
@@ -197,10 +198,10 @@ def create_event_review(event_id: str, request: ReviewRequest, user: dict = Depe
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    if request.review_result not in {"confirmed", "false_positive", "hold"}:
+    if request.review_result not in {"confirmed", "false_positive", "hold", "unreviewable"}:
         raise HTTPException(
             status_code=400,
-            detail="review_result must be one of: confirmed, false_positive, hold",
+            detail="review_result must be one of: confirmed, false_positive, hold, unreviewable",
         )
 
     existing_review = get_review_by_event_id(event_id)
@@ -222,7 +223,10 @@ def create_event_review(event_id: str, request: ReviewRequest, user: dict = Depe
         "second_review_needed": 1 if request.second_review_needed else 0,
     }
 
-    insert_event_review(review)
+    try:
+        insert_event_review(review)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     saved_review = get_review_by_event_id(event_id)
 
@@ -267,10 +271,10 @@ def update_existing_event_review(event_id: str, request: ReviewRequest, user: di
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    if request.review_result not in {"confirmed", "false_positive", "hold"}:
+    if request.review_result not in {"confirmed", "false_positive", "hold", "unreviewable"}:
         raise HTTPException(
             status_code=400,
-            detail="review_result must be one of: confirmed, false_positive, hold",
+            detail="review_result must be one of: confirmed, false_positive, hold, unreviewable",
         )
 
     existing_review = get_review_by_event_id(event_id)
@@ -278,7 +282,7 @@ def update_existing_event_review(event_id: str, request: ReviewRequest, user: di
     if existing_review is None:
         raise HTTPException(status_code=409, detail="Review does not exist")
 
-    is_hold_event = event["event_status"] == "hold"
+    is_hold_event = event["event_status"] in {"hold", "unreviewable"}
     needs_second_review = existing_review["second_review_needed"] == 1
 
     if not is_hold_event and not needs_second_review:

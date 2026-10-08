@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS event_media (
     kind TEXT NOT NULL CHECK(kind IN ('image','video')),
     role TEXT NOT NULL CHECK(role IN ('thumbnail','clip','reference')),
     storage_path TEXT NOT NULL DEFAULT '',
+    source_path TEXT NOT NULL DEFAULT '',
+    source_expires_at REAL,
     status TEXT NOT NULL DEFAULT 'registered'
         CHECK(status IN ('registered','processing','ready','failed','missing','delete_pending','deleted')),
     redaction_status TEXT NOT NULL DEFAULT 'unprocessed'
@@ -62,6 +64,18 @@ CREATE TABLE IF NOT EXISTS event_media (
 CREATE INDEX IF NOT EXISTS idx_event_media_event ON event_media(event_id,status);
 CREATE INDEX IF NOT EXISTS idx_event_media_camera_capture ON event_media(camera_id,capture_start_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_event_media_request ON event_media(request_id) WHERE request_id IS NOT NULL;
+
+-- Delivery state is separate from redaction state; pending is not permanent loss.
+CREATE TABLE IF NOT EXISTS event_clip_request (
+    request_id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL REFERENCES candidate_event(event_id) ON DELETE CASCADE,
+    camera_id TEXT NOT NULL REFERENCES camera_info(camera_id),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','received','failed','unavailable')),
+    error_code TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_clip_request_event ON event_clip_request(event_id,status);
 
 CREATE TABLE IF NOT EXISTS event_retention (
     event_id TEXT PRIMARY KEY REFERENCES candidate_event(event_id) ON DELETE CASCADE,
@@ -121,6 +135,7 @@ CREATE TABLE IF NOT EXISTS quarterly_summary (
     confirmed_count INTEGER NOT NULL DEFAULT 0,
     false_positive_count INTEGER NOT NULL DEFAULT 0,
     hold_count INTEGER NOT NULL DEFAULT 0,
+    unreviewable_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 
