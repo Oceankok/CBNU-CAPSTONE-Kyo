@@ -22,12 +22,17 @@ export function mediaUrl(relativePath: string | undefined | null): string {
   // Already a full URL (shouldn't happen, but guard anyway)
   if (relativePath.startsWith('http')) return relativePath;
   // Normalise leading slash
-  const normalised = relativePath.startsWith('/') ? relativePath : `/${relativePath}`;
+  const normalised = relativePath.startsWith('/')
+    ? relativePath
+    : `/${relativePath}`;
   return `${BASE_URL}${normalised}`;
 }
 
 // Thin wrapper around fetch that throws ApiError on non-2xx responses
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiFetch<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
   const token = getSession()?.access_token;
   // Spread init first so caller-supplied headers merge with (not replace) the defaults
   const res = await fetch(`${BASE_URL}${path}`, {
@@ -45,7 +50,11 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new ApiError(res.status, body.detail ?? res.statusText);
+    // FastAPI validation errors (422) are an array of { msg, loc }; flatten to one message
+    const detail = Array.isArray(body.detail)
+      ? body.detail.map((d: { msg?: string }) => d.msg ?? String(d)).join(', ')
+      : body.detail;
+    throw new ApiError(res.status, detail ?? res.statusText);
   }
 
   return res.json() as Promise<T>;

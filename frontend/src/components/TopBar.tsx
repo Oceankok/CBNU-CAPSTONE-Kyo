@@ -12,6 +12,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/zones': '구역별 안전 규칙',
   '/users': '작업자 관리',
   '/nodes': '현장 PC 관리',
+  '/equipment': '장비 관리',
   '/settings': '설정',
 };
 
