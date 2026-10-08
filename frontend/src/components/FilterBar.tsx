@@ -19,6 +19,7 @@ const STATUS_OPTIONS: { value: EventStatus | 'all'; label: string }[] = [
   { value: 'confirmed', label: '확정 위반' },
   { value: 'false_positive', label: '오탐' },
   { value: 'hold', label: '보류' },
+  { value: 'unreviewable', label: '검토 불가' },
 ];
 
 export default function FilterBar({

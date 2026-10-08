@@ -143,7 +143,9 @@
 /* Review result toggle buttons */
 .resultButtons {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* 3 or 4 equal columns depending on whether 검토 불가 is offered */
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: 8px;
   margin-bottom: 16px;
 }
@@ -176,6 +178,18 @@
   color: #d69e2e;
 }
 
+.unreviewableBtn:hover {
+  border-color: #4a5568;
+  color: #2d3748;
+}
+
+.resultBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: transparent;
+  color: #a0aec0;
+}
+
 /* Active / selected state */
 .activeConfirmed {
   background: #fff5f5;
@@ -187,6 +201,23 @@
   background: #ebf8ff;
   border-color: #3182ce;
   color: #3182ce;
+}
+
+.activeUnreviewable {
+  background: #edf2f7;
+  border-color: #4a5568;
+  color: #2d3748;
+}
+
+/* Shown when confirm / false positive are locked by media availability */
+.blockedNote {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #fffaf0;
+  border: 1px solid #fbd38d;
+  font-size: 13px;
+  color: #7b341e;
 }
 
 .activeHold {
