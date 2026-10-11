@@ -68,12 +68,16 @@ def save_zone_rule(zone_name: str, body: ZoneRuleRequest, user: dict = Depends(r
 def remove_zone_rule(zone_name: str):
     zone_name = zone_name.strip()
     with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         if not _find(conn, zone_name):
             raise HTTPException(404, "Zone rule not found")
         users = conn.execute("SELECT COUNT(*) FROM app_user WHERE zone_name=?", (zone_name,)).fetchone()[0]
         cameras = conn.execute("SELECT COUNT(*) FROM camera_info WHERE zone_name=?", (zone_name,)).fetchone()[0]
+        equipment = conn.execute("SELECT COUNT(*) FROM equipment WHERE zone_name=?", (zone_name,)).fetchone()[0]
         if users or cameras:
             raise HTTPException(409, "Zone is assigned to users or cameras; reassign them before deleting")
+        if equipment:
+            raise HTTPException(409, "zone_has_equipment")
         conn.execute("DELETE FROM zone_rule WHERE zone_name=?", (zone_name,))
     return {"status": "deleted", "zone_name": zone_name}
 

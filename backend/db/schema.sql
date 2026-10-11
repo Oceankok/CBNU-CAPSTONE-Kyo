@@ -268,3 +268,26 @@ CREATE TABLE IF NOT EXISTS field_command (
 );
 CREATE INDEX IF NOT EXISTS idx_field_command_poll ON field_command(node_id,status,created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_broadcast_event ON field_command(node_id,event_id) WHERE kind='broadcast' AND event_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS equipment (
+    equipment_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    equipment_type TEXT,
+    zone_name TEXT NOT NULL REFERENCES zone_rule(zone_name),
+    required_ppe TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','inactive')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_equipment_zone ON equipment(zone_name,status);
+CREATE TABLE IF NOT EXISTS camera_equipment_config (
+    camera_id TEXT PRIMARY KEY REFERENCES camera_info(camera_id) ON DELETE CASCADE,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS camera_equipment (
+    camera_id TEXT NOT NULL REFERENCES camera_info(camera_id) ON DELETE CASCADE,
+    equipment_id TEXT NOT NULL REFERENCES equipment(equipment_id),
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(camera_id,equipment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_camera_equipment_equipment ON camera_equipment(equipment_id);
