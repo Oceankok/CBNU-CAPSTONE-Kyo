@@ -2,7 +2,7 @@
 
 ## 상태와 적용 범위
 
-이 문서는 프론트 mock 선행 개발을 위한 계약입니다. 2026-10-09 작업 브랜치에서 카메라 조회·장비 수동 CRUD·카메라 장비 연결·적용 PPE 미리보기를 구현했습니다. VLM 후보 API는 아직 제안 계약이며, 제공업체 선정 후 구현합니다. 기존 `/api/zones`와 인증 계약은 유지합니다. 구현된 경로의 테스트 실행은 별도 승인 후 진행합니다.
+이 문서는 장비 관리 프론트와 백엔드의 연동 계약입니다. 카메라 조회·장비 수동 CRUD·카메라 장비 연결·적용 PPE 미리보기는 PR #122 범위입니다. 2026-10-11 `Feat/equipment-recognition` 브랜치에서는 후보 분석·확정 API와 DB 공통 구조를 추가했습니다. 제공업체 선택은 보류했으므로 실제 VLM 호출과 후보 생성은 아직 사용할 수 없습니다. 기존 `/api/zones`와 인증 계약은 유지합니다. 새 경로의 테스트 실행은 별도 승인 후 진행합니다.
 
 초기 범위는 장비 CRUD, 이미지 1장 기반 상용 VLM 후보, 관리자 확인 등록, 카메라 전체에 적용할 장비 연결, 적용 PPE 미리보기입니다. 화면 내 여러 작업 위치 구분·ROI·Re-ID·자동 PPE 추론 연동은 이번 API 계약과 분리합니다. 카메라 전체에 규칙을 적용할 수 없는 장소에는 장비를 연결하지 않고 위치별 적용 기능을 후속으로 설계합니다.
 
@@ -66,6 +66,8 @@ PATCH는 전달된 필드만 변경합니다. `name`·`zone_name`은 공백 제�
 
 서버는 얼굴 비식별화를 먼저 완료한 이미지만 상용 인식 API에 전송하고 관리자에게 제공합니다. 비식별화에 실패하면 외부 API를 호출하지 않습니다. 원본 이미지 URL을 반환하지 않습니다. 특정 제공업체는 계약에 고정하지 않습니다.
 
+공통 구조 단계에서는 유효한 이미지에 `status=failed`, `error_code=provider_not_configured`, 빈 후보 목록과 `evidence_url=null`을 반환합니다. 이 경우 불필요한 GPU 처리를 실행하거나 원본을 저장하지 않습니다. 제공업체 어댑터가 연결되면 SCRFD 처리를 먼저 수행하고 비식별 JPEG만 전달합니다. JPEG/PNG 디코딩 실패·16메가픽셀 초과는 `422 source_invalid`로 거절합니다. 근거 저장 실패는 `evidence_store_failed`로 기록하며 내부 예외·경로를 응답에 포함하지 않습니다.
+
 분석은 초기에는 동기 요청으로 처리합니다. 외부 요청 제한 시간은 기본 30초로 설정하고 중복 클릭을 차단합니다. 비동기 작업 큐는 후속 최적화로 둡니다.
 
 입력이 유효하면 분석 기록을 생성하고 201로 반환합니다. 모델·네트워크·외부 API 실패도 아래 객체의 `status=failed`, `error_code`로 기록하여 수동 등록 fallback을 제공할 수 있도록 합니다. 파일 형식 오류·크기 초과·손상은 각각 415·413·422로 거절합니다.
@@ -120,6 +122,12 @@ PATCH는 전달된 필드만 변경합니다. `name`·`zone_name`은 공백 제�
 확정은 DB 트랜잭션 안에서 장비 생성과 기록 연결을 함께 수행합니다. 동일 분석의 중복 확정은 `409 recognition_already_confirmed`로 거절하고 GET의 `equipment_id`로 기존 결과를 확인하도록 합니다. 실패·기각 기록은 확정할 수 없으며 수동 POST 장비 등록을 사용합니다. 기각 요청은 반복해도 성공하지만 확정 기록의 기각은 409로 거절합니다. 재분석은 새 POST 요청으로 진행합니다.
 
 근거 이미지는 초기에는 24시간 뒤 자동 삭제하고, 만료 후 `evidence_url=null`로 반환합니다. 만료된 분석은 확정을 차단하고 새 분석 또는 수동 등록을 안내합니다. 분석·등록 기록은 남기되 이미지를 모델 학습용으로 자동 보관하지 않습니다. 장비 설정용 자료에는 이벤트 최종 검토·학습 보관 동의 절차를 그대로 적용하지 않으며, 기간 연장이 필요하면 별도 목적과 정책을 합의합니다.
+
+근거 이미지는 공개 `/storage`와 분리된 `.private_media/equipment/`에 저장합니다. 만료 즉시 조회·확정을 차단하며 실제 파일 삭제는 기존 `python -m backend.media.maintenance --once` 또는 반복 실행으로 수행합니다. 삭제 실패 시 참조를 유지하여 다음 maintenance 실행에서 재시도합니다. 기각·확정 후에도 최초 24시간 만료 시각은 유지합니다. DB 버전 6은 `equipment_recognition`을 추가하고 기존 장비·이벤트 데이터를 보존합니다.
+
+제공업체 어댑터 경계는 `backend/equipment/provider.py`의 `RecognitionProvider.analyze`입니다. 어댑터는 30초 요청 제한, 최대 5개 후보와 0~1 신뢰 값 검증, 안전한 오류 코드 반환을 지켜야 합니다. 현재 `get_provider()`는 `None`을 반환하며 API 키 설정·SDK 설치·외부 전송을 수행하지 않습니다.
+
+2026-10-11 격리 DB·임시 이미지·가짜 제공업체 응답을 사용한 후보 인식 테스트 7개 및 이를 포함한 백엔드 전체 테스트 53개가 통과했습니다. 제공업체 미설정·입력 오류·관리자 권한·비식별화 실패 시 외부 호출 차단·비식별 바이트 전달·근거 접근 보호·확정과 중복 차단·만료 및 삭제 재시도·기각·잘못된 제공업체 응답·DB 5→6 마이그레이션을 검증했습니다. 실제 GPU 모델과 외부 VLM API를 사용한 검증은 포함하지 않았습니다.
 
 이미지 조회는 Bearer 인증 후 fetch로 받은 blob을 표시합니다. HTML img 태그에 Bearer 헤더를 넣을 수 없으므로 원본 공개 경로나 URL query token으로 우회하지 않습니다.
 
@@ -220,7 +228,7 @@ python -m unittest discover -s backend -t . -v
 | 409 | `equipment_has_camera_links`, `equipment_zone_mismatch`, `equipment_inactive`, `recognition_already_confirmed`, `recognition_not_confirmable`, `recognition_evidence_expired` |
 | 422 | `zone_not_found`, `candidate_not_in_recognition` 또는 기존 형식 검증 오류 |
 
-분석 실패 객체의 `error_code`는 `redaction_failed`, `provider_not_configured`, `provider_timeout`, `provider_unavailable`, `provider_rate_limited`, `provider_response_invalid` 등을 사용합니다. 외부 API 키나 원본 경로·외부 응답 원문을 프론트에 노출하지 않습니다.
+분석 실패 객체의 `error_code`는 `redaction_failed`, `provider_not_configured`, `provider_timeout`, `provider_unavailable`, `provider_rate_limited`, `provider_response_invalid`, `provider_auth_required`, `provider_usage_limit` 등을 사용합니다. 외부 API 키나 원본 경로·외부 응답 원문을 프론트에 노출하지 않습니다. `provider_auth_required`는 제공업체 재로그인, `provider_usage_limit`은 구독 사용량 확인 또는 수동 등록이 필요함을 나타냅니다. 두 실패 모두 일반 유료 API로 자동 전환하지 않습니다. 구독 연동 설정은 [장비 ChatGPT 구독 연동 안내](20261011_Equipment_ChatGPT_Subscription_Setup.md)를 참고합니다. 제공업체 로그인 UI는 추가하지 않았습니다.
 
 ## 권장 구현 순서
 

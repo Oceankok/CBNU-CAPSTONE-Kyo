@@ -291,3 +291,15 @@ CREATE TABLE IF NOT EXISTS camera_equipment (
     PRIMARY KEY(camera_id,equipment_id)
 );
 CREATE INDEX IF NOT EXISTS idx_camera_equipment_equipment ON camera_equipment(equipment_id);
+
+CREATE TABLE IF NOT EXISTS equipment_recognition (
+    recognition_id TEXT PRIMARY KEY,
+    camera_id TEXT REFERENCES camera_info(camera_id),
+    status TEXT NOT NULL CHECK(status IN ('analyzed','failed','confirmed','dismissed')),
+    candidates_json TEXT NOT NULL DEFAULT '[]',
+    evidence_path TEXT NOT NULL DEFAULT '', evidence_expires_at REAL,
+    equipment_id TEXT REFERENCES equipment(equipment_id), error_code TEXT,
+    created_at TEXT NOT NULL, created_by TEXT NOT NULL,
+    decided_at TEXT, decided_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_equipment_recognition_status ON equipment_recognition(status,created_at);
