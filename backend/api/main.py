@@ -459,4 +459,6 @@ from backend.media.routes import router as media_router
 app.include_router(media_router)
 
 from backend.equipment.routes import router as equipment_router
+from backend.equipment.recognition_routes import router as recognition_router
+app.include_router(recognition_router)  # Static /recognitions must precede /{equipment_id}.
 app.include_router(equipment_router)

@@ -64,6 +64,8 @@ def maintain_once(stale_after: int = 3600) -> dict:
                     cleaned += 1
                 except OSError:
                     pass
+    from backend.equipment.recognition import cleanup as cleanup_recognitions
+    cleaned += cleanup_recognitions(stale_after)
     return {"expired_events": len(expired), "retried_events": len(pending), "cleaned_paths": cleaned}
 
 
