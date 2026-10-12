@@ -1,6 +1,6 @@
 import { apiFetch, ApiError } from './client';
 import { MOCK_AUTH, getSession } from './auth';
-import { mockZoneOf } from './users';
+import { mockZonesOf } from './users';
 import type { ZoneRule } from '../types';
 
 // ponytail: in-memory mock for VITE_AUTH_MOCK=true until the #101 API exists; resets on reload
@@ -63,22 +63,22 @@ export async function deleteZone(zoneName: string): Promise<void> {
         // zone_has_equipment (#122) also blocks on inactive equipment
         e.message === 'zone_has_equipment'
           ? '이 구역에 등록된 장비가 있어 삭제할 수 없습니다. 장비 관리에서 장비를 다른 구역으로 옮기세요.'
-          : '이 구역에 배정된 작업자나 카메라가 있어 삭제할 수 없습니다.',
+          : '이 구역에 배정된 작업자나 설치된 카메라가 있어 삭제할 수 없습니다. 작업자는 구역 카드에서 제외하세요.',
       );
     }
     throw e;
   }
 }
 
-// Rule for the logged-in worker's assigned zone; 404 = no zone assigned or no rule yet
-export async function fetchMyZone(): Promise<ZoneRule> {
+// Rules for every zone the logged-in worker is assigned to (empty when unassigned)
+export async function fetchMyZones(): Promise<ZoneRule[]> {
   if (MOCK_AUTH) {
     const session = getSession();
-    const zoneName =
-      session?.role === 'worker' ? mockZoneOf(session.user_id) : null;
-    const zone = zoneName && mockZones.find((z) => z.zone_name === zoneName);
-    if (!zone) throw new ApiError(404, '담당 구역이 지정되지 않았습니다.');
-    return structuredClone(zone);
+    const names =
+      session?.role === 'worker' ? mockZonesOf(session.user_id) : [];
+    return structuredClone(
+      mockZones.filter((z) => names.includes(z.zone_name)),
+    );
   }
-  return apiFetch<ZoneRule>('/api/worker/zone');
+  return (await apiFetch<{ items: ZoneRule[] }>('/api/worker/zones')).items;
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchZones, saveZone, deleteZone } from '../api/zones';
-import { fetchUsers, updateUser } from '../api/users';
+import { fetchUsers, setZoneMembers } from '../api/users';
 import { fetchCameras } from '../api/cameras';
 import type { Camera } from '../api/cameras';
 import type { AppUser, ZonePpe, ZoneRule } from '../types';
@@ -60,18 +60,22 @@ export default function ZoneRulesPage() {
       .catch(() => {});
   }, []);
 
-  // ponytail: one zone per worker (app_user.zone_name) — adding moves them from their old zone
-  const assign = (u: AppUser, zone_name: string | null) => {
+  // Replaces this zone's worker list only; the workers' other zones stay (#127)
+  const assign = (zone: string, userIds: string[]) => {
     setError(null);
-    updateUser(u.user_id, { zone_name })
-      .then((saved) =>
+    setZoneMembers(zone, userIds)
+      .then(() =>
         setWorkers((prev) =>
-          prev.map((x) => (x.user_id === saved.user_id ? saved : x)),
+          prev.map((w) => {
+            const others = w.zone_names.filter((z) => z !== zone);
+            const names = userIds.includes(w.user_id)
+              ? [...others, zone].sort()
+              : others;
+            return { ...w, zone_names: names, zone_name: names[0] ?? null };
+          }),
         ),
       )
-      .catch((e: Error) =>
-        setError(`${u.display_name} 구역 변경 실패: ${e.message}`),
-      );
+      .catch((e: Error) => setError(`${zone} 작업자 변경 실패: ${e.message}`));
   };
 
   const patch = (zone: string, p: Partial<Draft>) =>
@@ -251,10 +255,10 @@ function ZoneMembers({
   saved: boolean;
   workers: AppUser[];
   cameras: Camera[];
-  onAssign: (u: AppUser, zone: string | null) => void;
+  onAssign: (zone: string, userIds: string[]) => void;
 }) {
-  const members = workers.filter((w) => w.zone_name === zone);
-  const others = workers.filter((w) => w.zone_name !== zone);
+  const members = workers.filter((w) => w.zone_names.includes(zone));
+  const others = workers.filter((w) => !w.zone_names.includes(zone));
 
   return (
     <div className={styles.members}>
@@ -283,7 +287,14 @@ function ZoneMembers({
                     type="button"
                     className={styles.memberRemove}
                     aria-label={`${w.display_name} 구역에서 제외`}
-                    onClick={() => onAssign(w, null)}
+                    onClick={() =>
+                      onAssign(
+                        zone,
+                        members
+                          .filter((m) => m.user_id !== w.user_id)
+                          .map((m) => m.user_id),
+                      )
+                    }
                   >
                     ×
                   </button>
@@ -296,7 +307,11 @@ function ZoneMembers({
                 value=""
                 onChange={(e) => {
                   const w = others.find((x) => x.user_id === e.target.value);
-                  if (w) onAssign(w, zone);
+                  if (w)
+                    onAssign(
+                      zone,
+                      [...members, w].map((m) => m.user_id),
+                    );
                 }}
                 aria-label={`${zone}에 작업자 추가`}
               >
@@ -304,7 +319,7 @@ function ZoneMembers({
                 {others.map((w) => (
                   <option key={w.user_id} value={w.user_id}>
                     {w.display_name} ({w.user_id})
-                    {w.zone_name ? ` — 현재 ${w.zone_name}` : ''}
+                    {w.zone_names.length ? ` — ${w.zone_names.join(', ')}` : ''}
                   </option>
                 ))}
               </select>
