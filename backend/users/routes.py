@@ -4,13 +4,15 @@ import sqlite3
 
 from backend.auth.service import PASSWORDS, current_user, require_admin
 from backend.db.event_repository import get_connection
+from backend.zones.membership import zones_for, replace_user_zones
 
 router = APIRouter(prefix="/api/users", tags=["users"], dependencies=[Depends(require_admin)])
 
 
-def _public(row) -> dict:
+def _public(conn, row) -> dict:
     return {"user_id": row["user_id"], "display_name": row["display_name"],
-            "role": row["role"], "zone_name": row["zone_name"], "is_active": bool(row["is_active"])}
+            "role": row["role"], "zone_name": row["zone_name"], "zone_names": zones_for(conn, row["user_id"]),
+            "is_active": bool(row["is_active"])}
 
 
 def _zone_exists(conn, zone_name: str | None) -> bool:
@@ -24,12 +26,14 @@ class UserCreate(BaseModel):
     display_name: str = Field(min_length=1, max_length=100)
     role: str
     zone_name: str | None = None
+    zone_names: list[str] | None = Field(default=None, max_length=100)
     password: str = Field(min_length=8, max_length=1024)
 
 
 class UserPatch(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=100)
     zone_name: str | None = None
+    zone_names: list[str] | None = Field(default=None, max_length=100)
     is_active: bool | None = None
 
 
@@ -44,7 +48,7 @@ def list_users():
             "SELECT user_id,display_name,role,zone_name,is_active FROM app_user "
             "ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END,user_id"
         ).fetchall()
-    return {"items": [_public(row) for row in rows]}
+        return {"items": [_public(conn, row) for row in rows]}
 
 
 @router.post("", status_code=201)
@@ -57,7 +61,12 @@ def add_user(body: UserCreate):
         raise HTTPException(422, "role must be admin or worker")
     if body.role == "admin" and zone_name is not None:
         raise HTTPException(422, "Administrators cannot be assigned to a worker zone")
+    if "zone_names" in body.model_fields_set and "zone_name" in body.model_fields_set:
+        raise HTTPException(422, "Use either zone_name or zone_names")
+    if "zone_names" in body.model_fields_set and body.zone_names is None:
+        raise HTTPException(422, "zone_names must be an array")
     with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         if not _zone_exists(conn, zone_name):
             raise HTTPException(422, "zone_name must refer to an existing zone rule")
         try:
@@ -67,10 +76,11 @@ def add_user(body: UserCreate):
             )
         except sqlite3.IntegrityError as exc:
             raise HTTPException(409, "user_id already exists") from exc
+        replace_user_zones(conn, user_id, body.zone_names if body.zone_names is not None else ([zone_name] if zone_name else []))
         row = conn.execute(
             "SELECT user_id,display_name,role,zone_name,is_active FROM app_user WHERE user_id=?", (user_id,)
         ).fetchone()
-    return _public(row)
+        return _public(conn, row)
 
 
 @router.patch("/{user_id}")
@@ -78,6 +88,10 @@ def edit_user(user_id: str, body: UserPatch, actor: dict = Depends(current_user)
     changes = body.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(422, "At least one field is required")
+    if "zone_names" in changes and "zone_name" in changes:
+        raise HTTPException(422, "Use either zone_name or zone_names")
+    if "zone_names" in changes and changes["zone_names"] is None:
+        raise HTTPException(422, "zone_names must be an array")
     if "display_name" in changes:
         changes["display_name"] = (changes["display_name"] or "").strip()
         if not changes["display_name"]:
@@ -88,6 +102,7 @@ def edit_user(user_id: str, body: UserPatch, actor: dict = Depends(current_user)
         changes["zone_name"] = changes["zone_name"].strip() or None
 
     with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM app_user WHERE user_id=?", (user_id,)).fetchone()
         if not row:
             raise HTTPException(404, "User not found")
@@ -97,6 +112,11 @@ def edit_user(user_id: str, body: UserPatch, actor: dict = Depends(current_user)
             raise HTTPException(422, "zone_name must refer to an existing zone rule")
         if row["role"] == "admin" and changes.get("zone_name"):
             raise HTTPException(422, "Administrators cannot be assigned to a worker zone")
+        if "zone_names" in changes:
+            replace_user_zones(conn, user_id, changes.pop("zone_names"))
+        elif "zone_name" in changes:
+            zone = changes.pop("zone_name")
+            replace_user_zones(conn, user_id, [zone] if zone else [])
         assignments = [f"{field}=?" for field in changes]
         values = [int(value) if field == "is_active" else value for field, value in changes.items()]
         if changes.get("is_active") is False and row["is_active"]:
@@ -106,7 +126,7 @@ def edit_user(user_id: str, body: UserPatch, actor: dict = Depends(current_user)
         updated = conn.execute(
             "SELECT user_id,display_name,role,zone_name,is_active FROM app_user WHERE user_id=?", (user_id,)
         ).fetchone()
-    return _public(updated)
+        return _public(conn, updated)
 
 
 @router.post("/{user_id}/password")

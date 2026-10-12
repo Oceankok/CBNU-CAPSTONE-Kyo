@@ -236,6 +236,13 @@ CREATE TABLE IF NOT EXISTS zone_rule (
     updated_by TEXT NOT NULL DEFAULT 'system'
 );
 
+CREATE TABLE IF NOT EXISTS user_zone (
+    user_id TEXT NOT NULL REFERENCES app_user(user_id) ON DELETE CASCADE,
+    zone_name TEXT NOT NULL REFERENCES zone_rule(zone_name),
+    PRIMARY KEY(user_id, zone_name)
+);
+CREATE INDEX IF NOT EXISTS idx_user_zone_zone ON user_zone(zone_name);
+
 CREATE TABLE IF NOT EXISTS field_node (
     node_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,

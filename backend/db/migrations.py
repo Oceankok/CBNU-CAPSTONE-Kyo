@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-LATEST_VERSION = 6
+LATEST_VERSION = 7
 
 
 def _now() -> str:
@@ -176,6 +176,29 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
             )""")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_equipment_recognition_status ON equipment_recognition(status,created_at)")
             conn.execute("PRAGMA user_version = 6")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 7:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if conn.execute("""SELECT 1 FROM app_user u WHERE u.role='worker' AND u.zone_name IS NOT NULL
+                AND NOT EXISTS(SELECT 1 FROM zone_rule z WHERE z.zone_name=u.zone_name) LIMIT 1""").fetchone():
+                raise RuntimeError("Worker references an unknown zone; repair assignment before migration")
+            conn.execute("""CREATE TABLE IF NOT EXISTS user_zone (
+                user_id TEXT NOT NULL REFERENCES app_user(user_id) ON DELETE CASCADE,
+                zone_name TEXT NOT NULL REFERENCES zone_rule(zone_name),
+                PRIMARY KEY(user_id,zone_name)
+            )""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_user_zone_zone ON user_zone(zone_name)")
+            conn.execute("""INSERT OR IGNORE INTO user_zone(user_id,zone_name)
+                SELECT u.user_id,u.zone_name FROM app_user u JOIN zone_rule z ON z.zone_name=u.zone_name
+                WHERE u.role='worker'""")
+            conn.execute("""UPDATE app_user SET zone_name=(SELECT MIN(zone_name) FROM user_zone
+                WHERE user_zone.user_id=app_user.user_id)""")
+            conn.execute("PRAGMA user_version = 7")
             conn.commit()
         except Exception:
             conn.rollback()
