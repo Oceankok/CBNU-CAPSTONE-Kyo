@@ -1,0 +1,195 @@
+.card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a202c;
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  color: #a0aec0;
+}
+
+.label {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4a5568;
+}
+
+.ok,
+.error {
+  margin: 0;
+  font-size: 13px;
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+
+.ok {
+  color: #276749;
+  background: #f0fff4;
+  border: 1px solid #c6f6d5;
+}
+
+.error {
+  color: #c53030;
+  background: #fff5f5;
+  border: 1px solid #fed7d7;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.row .input {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+/* 16px keeps iOS Safari from zooming on focus */
+.input {
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 16px;
+  color: #1a202c;
+}
+
+.result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.evidence img {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 6px;
+  background: #1a202c;
+}
+
+.candidates {
+  margin: 0;
+  padding: 0;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.candidate {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+  color: #1a202c;
+  cursor: pointer;
+}
+
+.candidate input {
+  margin-top: 3px;
+}
+
+.reason {
+  display: block;
+  font-size: 12px;
+  color: #718096;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btn,
+.primaryBtn,
+.dangerBtn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #2b6cb0;
+}
+
+.primaryBtn {
+  border: none;
+  background: #3182ce;
+  color: #fff;
+  font-weight: 600;
+}
+
+.dangerBtn {
+  border: 1px solid #fed7d7;
+  background: #fff;
+  color: #e53e3e;
+}
+
+.btn:disabled,
+.primaryBtn:disabled,
+.dangerBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pending {
+  font-size: 13px;
+}
+
+.pending summary {
+  color: #3182ce;
+  cursor: pointer;
+}
+
+.pending ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.linkBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2d3748;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+@media (max-width: 768px) {
+  .card {
+    padding: 16px;
+  }
+
+  .actions button {
+    flex: 1;
+    padding: 12px;
+  }
+}
