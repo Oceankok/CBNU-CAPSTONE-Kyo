@@ -14,6 +14,7 @@ from backend.auth.service import require_admin
 from backend.db.event_repository import get_candidate_event_by_id, get_connection
 from backend.media.paths import WORK_ROOT
 from backend.media.service import decide_retention, delete_event_media, get_retention, ingest_file, reprocess_media
+from backend.runtime import require_local_processing
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_admin)], tags=["event media"])
 
@@ -117,6 +118,7 @@ def retry_deletion(event_id: str):
 
 @router.post("/media/{media_id}/redact")
 async def redact_existing(media_id: str, redaction_mode: Literal["enhanced", "scrfd"] = "scrfd"):
+    require_local_processing()
     try:
         return await run_in_threadpool(reprocess_media, media_id, redaction_mode)
     except ValueError as exc:
@@ -128,6 +130,7 @@ async def upload_media(event_id: str, request: Request, kind: Literal["image", "
                        camera_id: str | None = None, role: Literal["thumbnail", "clip", "reference"] = "reference",
                        redaction_mode: Literal["enhanced", "scrfd"] = "scrfd"):
     """Raw request body; originals are retained privately until the short retry TTL expires."""
+    require_local_processing()
     event = get_candidate_event_by_id(event_id)
     if not event:
         raise HTTPException(404, "Event not found")

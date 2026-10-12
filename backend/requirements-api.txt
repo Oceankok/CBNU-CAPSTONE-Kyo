@@ -1,0 +1,9 @@
+# API-only container: CUDA/Windows TTS run on the server/field hosts.
+fastapi
+uvicorn
+httpx
+PyJWT>=2.10,<3
+argon2-cffi>=23.1,<26
+pydantic>=2,<3
+opencv-python-headless>=4.8,<6
+imageio-ffmpeg>=0.6,<1
