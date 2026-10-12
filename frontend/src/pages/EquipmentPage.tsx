@@ -3,17 +3,13 @@ import {
   fetchEquipment,
   createEquipment,
   updateEquipment,
-  fetchCameras,
   fetchCameraEquipment,
   saveCameraEquipment,
   fetchPpePolicy,
 } from '../api/equipment';
-import type {
-  Camera,
-  Equipment,
-  EquipmentInput,
-  PpePolicy,
-} from '../api/equipment';
+import type { Equipment, EquipmentInput, PpePolicy } from '../api/equipment';
+import { fetchCameras } from '../api/cameras';
+import type { Camera } from '../api/cameras';
 import { fetchZones } from '../api/zones';
 import { ZONE_PPE, ppeInfo } from '../ppe';
 import type { ZonePpe } from '../types';
@@ -28,6 +24,7 @@ const ERRORS: Record<string, string> = {
     '카메라에 연결된 장비는 구역을 옮길 수 없습니다. 카메라 연결을 먼저 해제하세요.',
   equipment_zone_mismatch: '카메라와 같은 구역의 장비만 연결할 수 있습니다.',
   equipment_inactive: '비활성 장비는 연결할 수 없습니다.',
+  equipment_required_field_null: '장비 이름과 구역은 비워둘 수 없습니다.',
 };
 const msg = (e: unknown) => {
   const m = e instanceof Error ? e.message : String(e);

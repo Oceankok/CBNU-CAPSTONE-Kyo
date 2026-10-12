@@ -301,3 +301,24 @@ summary.blockTitle {
     flex: 1;
   }
 }
+
+/* ─── Camera links ─────────────────────────────── */
+.cameraList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cameraRow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid #f0f4f8;
+}
+
+.cameraInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
