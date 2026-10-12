@@ -2,6 +2,7 @@ import unittest
 
 from backend.db.event_repository import get_connection
 from backend.tests.support import isolated_api, login
+from backend.zones.membership import replace_user_zones
 
 
 class WorkerEducationTests(unittest.TestCase):
@@ -13,7 +14,7 @@ class WorkerEducationTests(unittest.TestCase):
             conn.execute("DELETE FROM education_recommendation")
             for quarter in ("2025-Q4", "2026-Q1", "2026-Q2"):
                 conn.execute("INSERT OR IGNORE INTO quarterly_summary(quarter,created_at) VALUES(?,datetime('now'))", (quarter,))
-            conn.execute("UPDATE app_user SET zone_name='프레스 구역' WHERE user_id='worker01'")
+            replace_user_zones(conn, "worker01", ["프레스 구역"])
             for rec_id, quarter, zone, rank in [
                 ("ED_OLD", "2025-Q4", "프레스 구역", 1),
                 ("ED_FIRST", "2026-Q1", "프레스 구역", 1),
@@ -48,11 +49,12 @@ class WorkerEducationTests(unittest.TestCase):
     def test_unassigned_and_empty_zones_do_not_fall_back_to_other_zones(self):
         headers = login(self.client,"worker01")
         with get_connection() as conn:
-            conn.execute("UPDATE app_user SET zone_name=NULL WHERE user_id='worker01'")
+            replace_user_zones(conn, "worker01", [])
         body = self.client.get("/api/worker/education",headers=headers).json()
-        self.assertEqual(body,{"quarter":None,"zone_name":None,"items":[],"empty_reason":"zone_unassigned"})
+        self.assertEqual(body,{"quarter":None,"zone_name":None,"items":[],"empty_reason":"zone_unassigned","groups":[]})
         with get_connection() as conn:
-            conn.execute("UPDATE app_user SET zone_name='추천 없는 구역' WHERE user_id='worker01'")
+            conn.execute("INSERT INTO zone_rule(zone_name) VALUES('추천 없는 구역')")
+            replace_user_zones(conn, "worker01", ["추천 없는 구역"])
         body = self.client.get("/api/worker/education",headers=headers).json()
         self.assertEqual(body["items"],[])
         self.assertIsNone(body["quarter"])

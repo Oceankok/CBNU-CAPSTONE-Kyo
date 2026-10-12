@@ -40,6 +40,8 @@ def create_user(user_id: str, password: str, display_name: str, role: str, zone_
             "INSERT INTO app_user(user_id,password_hash,display_name,role,zone_name) VALUES(?,?,?,?,?)",
             (user_id, PASSWORDS.hash(password), display_name, role, zone_name),
         )
+        if zone_name:
+            conn.execute("INSERT INTO user_zone(user_id,zone_name) VALUES(?,?)", (user_id, zone_name))
 
 
 def authenticate(user_id: str, password: str):
