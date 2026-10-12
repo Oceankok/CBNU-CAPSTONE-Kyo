@@ -1,3 +1,4 @@
+from backend.db.connection import begin_write
 import json
 from datetime import datetime, timezone
 from typing import Literal
@@ -123,7 +124,7 @@ def get_equipment(equipment_id: str):
 def create_equipment(body: EquipmentInput):
     equipment_id, timestamp = str(uuid4()), now()
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         check_zone(conn, body.zone_name)
         conn.execute("""INSERT INTO equipment(equipment_id,name,equipment_type,zone_name,
                      required_ppe,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)""",
@@ -138,7 +139,7 @@ def patch_equipment(equipment_id: str, body: EquipmentPatch):
     if any(value is None for key, value in changes.items() if key != "equipment_type"):
         raise HTTPException(422, "equipment_required_field_null")
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         previous = find_equipment(conn, equipment_id)
         if "zone_name" in changes:
             check_zone(conn, changes["zone_name"])
@@ -157,7 +158,7 @@ def patch_equipment(equipment_id: str, body: EquipmentPatch):
 @router.delete("/equipment/{equipment_id}")
 def deactivate_equipment(equipment_id: str):
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         row = find_equipment(conn, equipment_id)
         if row["status"] != "inactive":
             conn.execute("UPDATE equipment SET status='inactive',updated_at=? WHERE equipment_id=?", (now(),equipment_id))
@@ -201,7 +202,7 @@ class CameraEquipmentInput(BaseModel):
 @router.put("/cameras/{camera_id}/equipment")
 def set_camera_equipment(camera_id: str, body: CameraEquipmentInput):
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         camera = find_camera(conn, camera_id)
         for equipment_id in body.equipment_ids:
             equipment = find_equipment(conn, equipment_id)

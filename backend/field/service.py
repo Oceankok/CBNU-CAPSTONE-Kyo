@@ -1,3 +1,4 @@
+from backend.db.connection import begin_write
 """Small persistent command queue. No automatic replay of an uncertain broadcast."""
 import hashlib
 import json
@@ -42,7 +43,7 @@ def enqueue_event_broadcast(event_id):
     now = time.time()
     # Serialize duplicate/cooldown checks with insertion across concurrent requests.
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         node = conn.execute("""SELECT n.* FROM field_node n JOIN camera_node c ON c.output_node_id=n.node_id
                                WHERE c.camera_id=? AND n.is_active=1""", (event["camera_id"],)).fetchone()
         if not node:
@@ -72,7 +73,7 @@ def enqueue_event_broadcast(event_id):
 def claim_command(node_id):
     now = time.time()
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         conn.execute("UPDATE field_command SET status='expired' WHERE node_id=? AND status='pending' AND expires_at<=?", (node_id, now))
         conn.execute("UPDATE field_command SET status='unknown' WHERE node_id=? AND status='claimed' AND claimed_at<?", (node_id, now-1800))
         row = conn.execute("SELECT * FROM field_command WHERE node_id=? AND status='pending' ORDER BY created_at LIMIT 1", (node_id,)).fetchone()

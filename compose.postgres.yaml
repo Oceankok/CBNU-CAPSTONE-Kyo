@@ -1,0 +1,36 @@
+# docker compose -f compose.yaml -f compose.postgres.yaml ...
+# SQLite configuration stays usable without this override.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: kyo
+      POSTGRES_USER: kyo
+      POSTGRES_PASSWORD: ${PPE_POSTGRES_PASSWORD:?Set PPE_POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U kyo -d kyo"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  api:
+    environment:
+      PPE_DATABASE_URL: ${PPE_DATABASE_URL:?Set PPE_DATABASE_URL for the postgres service}
+    depends_on:
+      postgres:
+        condition: service_healthy
+  db-init:
+    environment:
+      PPE_DATABASE_URL: ${PPE_DATABASE_URL:?Set PPE_DATABASE_URL}
+      PPE_DB_SEED: ${PPE_DB_SEED:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+  maintenance:
+    environment:
+      PPE_DATABASE_URL: ${PPE_DATABASE_URL:?Set PPE_DATABASE_URL}
+
+volumes:
+  postgres_data:

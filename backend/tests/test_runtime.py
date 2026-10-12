@@ -19,7 +19,7 @@ class RuntimeTests(unittest.TestCase):
     def test_readiness_does_not_create_a_missing_database(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "missing.db"
-            with patch.dict(os.environ, {"PPE_DB_PATH": str(path), "PPE_JWT_SECRET": "x" * 32}):
+            with patch.dict(os.environ, {"PPE_DATABASE_URL": "", "PPE_DB_PATH": str(path), "PPE_JWT_SECRET": "x" * 32}):
                 with self.assertRaises(HTTPException) as error:
                     readiness()
                 self.assertEqual(error.exception.detail, "database_not_ready")

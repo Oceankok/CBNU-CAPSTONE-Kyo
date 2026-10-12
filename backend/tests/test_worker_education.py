@@ -13,7 +13,7 @@ class WorkerEducationTests(unittest.TestCase):
         with get_connection() as conn:
             conn.execute("DELETE FROM education_recommendation")
             for quarter in ("2025-Q4", "2026-Q1", "2026-Q2"):
-                conn.execute("INSERT OR IGNORE INTO quarterly_summary(quarter,created_at) VALUES(?,datetime('now'))", (quarter,))
+                conn.execute("INSERT INTO quarterly_summary(quarter,created_at) VALUES(?,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING", (quarter,))
             replace_user_zones(conn, "worker01", ["프레스 구역"])
             for rec_id, quarter, zone, rank in [
                 ("ED_OLD", "2025-Q4", "프레스 구역", 1),
@@ -24,7 +24,7 @@ class WorkerEducationTests(unittest.TestCase):
                 conn.execute("""INSERT INTO education_recommendation(
                     recommendation_id,quarter,recommendation_rank,ppe_type,zone_name,
                     education_topic,priority_score,confirmed_count,generated_at)
-                    VALUES(?,?,?,'helmet',?,'안전모 착용 교육',99,42,datetime('now'))""",
+                    VALUES(?,?,?,'helmet',?,'안전모 착용 교육',99,42,CURRENT_TIMESTAMP)""",
                     (rec_id,quarter,rank,zone))
 
     def test_authentication_and_role(self):

@@ -4,15 +4,38 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from uuid import uuid4
+from urllib.parse import urlsplit
 
 from fastapi.testclient import TestClient
 
 
 @contextmanager
+def database_environment(directory):
+    url = os.environ.get("PPE_TEST_POSTGRES_URL", "")
+    if not url:
+        with patch.dict(os.environ, {"PPE_DATABASE_URL": "", "PPE_DB_PATH": str(Path(directory) / "test.db")}):
+            yield
+        return
+    if not urlsplit(url).path.removeprefix('/').startswith('kyo_test'):
+        raise RuntimeError("PostgreSQL tests require a dedicated kyo_test database")
+    import psycopg
+    from psycopg import sql
+    schema = 'test_' + uuid4().hex
+    with psycopg.connect(url, autocommit=True) as admin:
+        admin.execute(sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(schema)))
+    try:
+        with patch.dict(os.environ, {"PPE_DATABASE_URL": url, "PPE_DB_SCHEMA": schema, "PPE_DB_SEED": "true"}):
+            yield
+    finally:
+        with psycopg.connect(url, autocommit=True) as admin:
+            admin.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(schema)))
+
+
+@contextmanager
 def isolated_api():
     with TemporaryDirectory(prefix="ppe-test-") as directory:
-        with patch.dict(os.environ, {"PPE_DB_PATH": str(Path(directory) / "test.db"),
-                                    "PPE_JWT_SECRET": "test-only-key-with-at-least-32-bytes"}):
+        with database_environment(directory), patch.dict(os.environ, {
+                "PPE_JWT_SECRET": "test-only-key-with-at-least-32-bytes"}):
             from backend.db.init_db import init_database
             from backend.auth.service import create_user
             from backend.api.main import app
@@ -41,7 +64,7 @@ def ready_media(event_id="EVT_0001"):
         file.write_bytes(b"synthetic-redacted-fixture")
         with get_connection() as conn:
             camera = conn.execute("SELECT camera_id FROM candidate_event WHERE event_id=?", (event_id,)).fetchone()[0]
-            conn.execute("INSERT INTO event_media(media_id,event_id,camera_id,kind,role,storage_path,status,redaction_status,created_at) VALUES(?,?,?,'image','reference',?,'ready','complete',datetime('now'))", (media_id,event_id,camera,key))
+            conn.execute("INSERT INTO event_media(media_id,event_id,camera_id,kind,role,storage_path,status,redaction_status,created_at) VALUES(?,?,?,'image','reference',?,'ready','complete',CURRENT_TIMESTAMP)", (media_id,event_id,camera,key))
         try:
             with patch("backend.media.service.owned_path", side_effect=lambda path: file if path == key else owned_path(path)):
                 yield media_id

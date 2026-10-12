@@ -66,7 +66,7 @@ class AuthenticationTests(unittest.TestCase):
                 conn.execute(
                     "INSERT INTO event_media(media_id,event_id,camera_id,kind,role,storage_path,status,"
                     "redaction_status,created_at) VALUES('M_TEST','EVT_0001','CAM_001','video','clip',?,"
-                    "'ready','complete',datetime('now'))",
+                    "'ready','complete',CURRENT_TIMESTAMP)",
                     (f"{root.name}/clip.mp4",),
                 )
             with patch("backend.api.main._STORAGE_DIR", root):

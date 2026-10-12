@@ -1,3 +1,4 @@
+from backend.db.connection import begin_write
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -53,7 +54,7 @@ def get_recognition(recognition_id: str):
 @router.get("/{recognition_id}/image")
 def get_evidence(recognition_id: str):
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")  # Serialize expiry cleanup against this read.
+        begin_write(conn)  # Serialize expiry cleanup against this read.
         row = recognition.find(conn, recognition_id)
         if not recognition.evidence_available(row):
             raise HTTPException(404, "evidence_unavailable")
@@ -77,7 +78,7 @@ def confirm_recognition(recognition_id: str, body: ConfirmRequest, user: dict = 
 @router.post("/{recognition_id}/dismiss")
 def dismiss_recognition(recognition_id: str, user: dict = Depends(require_admin)):
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         row = recognition.find(conn, recognition_id)
         if row["status"] == "confirmed":
             raise HTTPException(409, "recognition_already_confirmed")

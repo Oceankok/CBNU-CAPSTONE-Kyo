@@ -64,6 +64,8 @@ class UserZoneMembershipTests(unittest.TestCase):
         self.assertEqual(self.client.patch('/api/users/multi', headers=self.admin, json={'zone_names': None}).status_code, 422)
 
     def test_v6_migration_preserves_valid_assignment_and_is_idempotent(self):
+        if __import__("os").environ.get("PPE_TEST_POSTGRES_URL"):
+            self.skipTest("SQLite historical migration; PostgreSQL baseline tested separately")
         with get_connection() as conn:
             conn.execute('DROP TABLE user_zone')
             conn.execute("UPDATE app_user SET zone_name='A' WHERE user_id='worker01'")
@@ -80,10 +82,10 @@ class UserZoneMembershipTests(unittest.TestCase):
         with get_connection() as conn:
             conn.execute('DELETE FROM education_recommendation')
             for quarter in ('2026-Q1', '2026-Q2'):
-                conn.execute("INSERT OR IGNORE INTO quarterly_summary(quarter,created_at) VALUES(?,datetime('now'))", (quarter,))
+                conn.execute("INSERT INTO quarterly_summary(quarter,created_at) VALUES(?,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING", (quarter,))
             for ident, zone, quarter in [('a', 'A', '2026-Q1'), ('b', 'B', '2026-Q2'), ('other', '프레스 구역', '2026-Q2')]:
                 conn.execute("""INSERT INTO education_recommendation(recommendation_id,quarter,recommendation_rank,ppe_type,zone_name,education_topic,priority_score,confirmed_count,generated_at)
-                    VALUES(?,?,1,'helmet',?,'교육',99,42,datetime('now'))""", (ident, quarter, zone))
+                    VALUES(?,?,1,'helmet',?,'교육',99,42,CURRENT_TIMESTAMP)""", (ident, quarter, zone))
         response = self.client.get('/api/worker/education?zone_name=프레스 구역', headers=login(self.client, 'worker01'))
         body = response.json()
         self.assertEqual([(row['zone_name'], row['quarter']) for row in body['groups']], [('A', '2026-Q1'), ('B', '2026-Q2')])

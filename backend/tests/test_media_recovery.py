@@ -168,6 +168,8 @@ class MediaRecoveryTests(unittest.TestCase):
         self.assertEqual(summary["confirmed_count"],0)
 
     def test_v3_migration_preserves_media_and_adds_recovery_fields(self):
+        if __import__("os").environ.get("PPE_TEST_POSTGRES_URL"):
+            self.skipTest("SQLite historical migration; PostgreSQL baseline tested separately")
         from backend.db.migrations import apply_migrations
         media = self.ingest()
         with get_connection() as conn:

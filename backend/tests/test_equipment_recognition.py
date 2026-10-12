@@ -116,6 +116,8 @@ class EquipmentRecognitionTests(unittest.TestCase):
             self.assertEqual(self.client.post(url+"/dismiss",headers=self.admin).json()["status"],"dismissed")
 
     def test_v5_migration_preserves_equipment(self):
+        if __import__("os").environ.get("PPE_TEST_POSTGRES_URL"):
+            self.skipTest("SQLite historical migration; PostgreSQL baseline tested separately")
         from backend.db.migrations import apply_migrations, LATEST_VERSION
         self.client.post("/api/equipment",headers=self.admin,json={"name":"기존 장비","zone_name":"프레스 구역","required_ppe":[]}).raise_for_status()
         with get_connection() as conn:
