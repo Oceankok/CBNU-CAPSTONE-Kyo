@@ -10,7 +10,8 @@ import {
   fetchCommands,
   linkCamera,
 } from '../api/nodes';
-import { fetchEvents } from '../api/events';
+import { fetchCameras } from '../api/cameras';
+import type { Camera } from '../api/cameras';
 import type { FieldCommand, FieldNode, NodeVoices } from '../types';
 import styles from './FieldNodesPage.module.css';
 
@@ -71,7 +72,7 @@ function ago(unixSec: number | null): string {
 
 export default function FieldNodesPage() {
   const [nodes, setNodes] = useState<FieldNode[] | null>(null);
-  const [cameras, setCameras] = useState<string[]>([]);
+  const [cameras, setCameras] = useState<Camera[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [form, setForm] = useState({ node_id: '', name: '' });
@@ -92,12 +93,9 @@ export default function FieldNodesPage() {
     fetchNodes()
       .then(setNodes)
       .catch((e) => setError(msg(e)));
-    // ponytail: no camera list API yet — camera ids come from recorded events
-    fetchEvents()
-      .then(({ items }) =>
-        setCameras([...new Set(items.map((e) => e.camera_id))].sort()),
-      )
-      .catch(() => {});
+    fetchCameras()
+      .then(setCameras)
+      .catch((e) => setError(msg(e)));
     const timer = setInterval(load, POLL_MS);
     return () => clearInterval(timer);
   }, [load]);
@@ -190,7 +188,11 @@ export default function FieldNodesPage() {
       )}
 
       {nodes && nodes.length > 0 && (
-        <CameraLinks cameras={cameras} nodes={nodes} />
+        <CameraLinks
+          cameras={cameras}
+          nodes={nodes}
+          onSaved={() => fetchCameras().then(setCameras)}
+        />
       )}
 
       {nodes && (
@@ -456,69 +458,129 @@ function NodeDetail({
 function CameraLinks({
   cameras,
   nodes,
+  onSaved,
 }: {
-  cameras: string[];
+  cameras: Camera[];
   nodes: FieldNode[];
+  onSaved: () => Promise<unknown>;
 }) {
-  const [camera, setCamera] = useState('');
-  const [output, setOutput] = useState('');
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
-
-  const save = () => {
-    setNote(null);
-    // ponytail: source = output until camera streaming from a separate PC exists
-    linkCamera(camera, output, output)
-      .then(() =>
-        setNote({
-          ok: true,
-          text: `${camera} 경고 방송은 '${nodes.find((n) => n.node_id === output)?.name}'에서 출력됩니다.`,
-        }),
-      )
-      .catch((e) => setNote({ ok: false, text: msg(e) }));
-  };
+  const nodeName = (id: string | null) =>
+    id ? (nodes.find((n) => n.node_id === id)?.name ?? id) : '미연결';
 
   return (
     <section className={styles.card}>
-      <h3 className={styles.cardTitle}>카메라 → 방송 PC 연결</h3>
+      <h3 className={styles.cardTitle}>카메라 연결</h3>
       <p className={styles.hint}>
-        카메라에서 미착용이 감지되면 연결된 PC에서 경고 방송이 나옵니다.
+        영상 송출 PC는 카메라 영상을 서버로 보내고, 방송 PC는 미착용 감지 시
+        경고 방송을 냅니다. 한 PC가 둘 다 맡아도 됩니다.
       </p>
       {note && (
         <p className={note.ok ? styles.okMsg : styles.errorMsg}>{note.text}</p>
       )}
+      {cameras.length === 0 && (
+        <p className={styles.hint}>등록된 카메라가 없습니다.</p>
+      )}
+      <ul className={styles.cameraList}>
+        {cameras.map((c) => (
+          // key includes the saved links so the row resets to server values after saving
+          <CameraLinkRow
+            key={`${c.camera_id}:${c.source_node_id}:${c.output_node_id}`}
+            camera={c}
+            nodes={nodes}
+            nodeName={nodeName}
+            onDone={(n) => {
+              setNote(n);
+              if (n.ok) void onSaved();
+            }}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function CameraLinkRow({
+  camera,
+  nodes,
+  nodeName,
+  onDone,
+}: {
+  camera: Camera;
+  nodes: FieldNode[];
+  nodeName: (id: string | null) => string;
+  onDone: (note: { ok: boolean; text: string }) => void;
+}) {
+  const [output, setOutput] = useState(camera.output_node_id ?? '');
+  // '' = same PC as the broadcast PC
+  const [source, setSource] = useState(
+    camera.source_node_id && camera.source_node_id !== camera.output_node_id
+      ? camera.source_node_id
+      : '',
+  );
+  const sourceId = source || output;
+  const changed =
+    output !== (camera.output_node_id ?? '') ||
+    sourceId !== (camera.source_node_id ?? '');
+
+  const save = () =>
+    linkCamera(camera.camera_id, sourceId, output)
+      .then(() =>
+        onDone({
+          ok: true,
+          text: `${camera.camera_id}: 영상 송출 '${nodeName(sourceId)}' · 방송 '${nodeName(output)}'`,
+        }),
+      )
+      .catch((e) => onDone({ ok: false, text: msg(e) }));
+
+  return (
+    <li className={styles.cameraRow}>
+      <div className={styles.cameraInfo}>
+        <span className={styles.nodeName}>{camera.camera_id}</span>
+        <span className={styles.nodeMeta}>
+          {camera.zone_name ?? '구역 미지정'}
+          {camera.camera_location && ` · ${camera.camera_location}`}
+        </span>
+        <span className={styles.nodeMeta}>
+          현재: 송출 {nodeName(camera.source_node_id)} · 방송{' '}
+          {nodeName(camera.output_node_id)}
+        </span>
+      </div>
       <div className={styles.formRow}>
         <select
           className={styles.input}
-          value={camera}
-          onChange={(e) => setCamera(e.target.value)}
+          value={output}
+          onChange={(e) => setOutput(e.target.value)}
+          aria-label={`${camera.camera_id} 방송 PC`}
         >
-          <option value="">카메라 선택</option>
-          {cameras.map((c) => (
-            <option key={c} value={c}>
-              {c}
+          <option value="">방송 PC 선택</option>
+          {nodes.map((n) => (
+            <option key={n.node_id} value={n.node_id}>
+              방송: {n.name}
             </option>
           ))}
         </select>
         <select
           className={styles.input}
-          value={output}
-          onChange={(e) => setOutput(e.target.value)}
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          aria-label={`${camera.camera_id} 영상 송출 PC`}
         >
-          <option value="">방송 PC 선택</option>
+          <option value="">송출: 방송 PC와 같음</option>
           {nodes.map((n) => (
             <option key={n.node_id} value={n.node_id}>
-              {n.name}
+              송출: {n.name}
             </option>
           ))}
         </select>
         <button
           className={styles.primaryBtn}
-          disabled={!camera || !output}
+          disabled={!output || !changed}
           onClick={save}
         >
-          연결
+          저장
         </button>
       </div>
-    </section>
+    </li>
   );
 }

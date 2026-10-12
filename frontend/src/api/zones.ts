@@ -60,7 +60,10 @@ export async function deleteZone(zoneName: string): Promise<void> {
     if (e instanceof ApiError && e.status === 409) {
       throw new ApiError(
         409,
-        '이 구역에 배정된 작업자나 카메라가 있어 삭제할 수 없습니다.',
+        // zone_has_equipment (#122) also blocks on inactive equipment
+        e.message === 'zone_has_equipment'
+          ? '이 구역에 등록된 장비가 있어 삭제할 수 없습니다. 장비 관리에서 장비를 다른 구역으로 옮기세요.'
+          : '이 구역에 배정된 작업자나 카메라가 있어 삭제할 수 없습니다.',
       );
     }
     throw e;
