@@ -11,8 +11,9 @@ import type { Equipment, EquipmentInput, PpePolicy } from '../api/equipment';
 import { fetchCameras } from '../api/cameras';
 import type { Camera } from '../api/cameras';
 import { fetchZones } from '../api/zones';
-import { ZONE_PPE, ppeInfo } from '../ppe';
-import type { ZonePpe } from '../types';
+import { ppeInfo } from '../ppe';
+import PpeChips from '../components/PpeChips';
+import EquipmentRecognition from '../components/EquipmentRecognition';
 import styles from './EquipmentPage.module.css';
 
 // Business error codes from the equipment contract (#112)
@@ -42,46 +43,6 @@ const EMPTY: EquipmentInput = {
   zone_name: '',
   required_ppe: [],
 };
-
-function PpeChips({
-  value,
-  onToggle,
-}: {
-  value: ZonePpe[];
-  onToggle?: (p: ZonePpe) => void;
-}) {
-  if (!onToggle) {
-    return value.length ? (
-      <span className={styles.chips}>
-        {value.map((p) => (
-          <span key={p} className={styles.chip}>
-            {ppeInfo(p).icon} {ppeInfo(p).label}
-          </span>
-        ))}
-      </span>
-    ) : (
-      <span className={styles.muted}>추가 PPE 없음</span>
-    );
-  }
-  return (
-    <div className={styles.chips} role="group" aria-label="추가 PPE">
-      {ZONE_PPE.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          className={`${styles.toggle} ${value.includes(o.value) ? styles.toggleOn : ''}`}
-          aria-pressed={value.includes(o.value)}
-          onClick={() => onToggle(o.value)}
-        >
-          {o.icon} {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-const toggled = (list: ZonePpe[], p: ZonePpe) =>
-  list.includes(p) ? list.filter((x) => x !== p) : [...list, p];
 
 export default function EquipmentPage() {
   const [equipment, setEquipment] = useState<Equipment[] | null>(null);
@@ -207,9 +168,7 @@ export default function EquipmentPage() {
       </p>
       <PpeChips
         value={draft.required_ppe}
-        onToggle={(p) =>
-          setDraft({ ...draft, required_ppe: toggled(draft.required_ppe, p) })
-        }
+        onChange={(required_ppe) => setDraft({ ...draft, required_ppe })}
       />
       <div className={styles.actions}>
         <button className={styles.btn} onClick={() => setEditing(null)}>
@@ -250,6 +209,13 @@ export default function EquipmentPage() {
               </button>
             ))}
           </div>
+
+          <EquipmentRecognition
+            zones={zones}
+            cameras={cameras}
+            onRegistered={reloadEquipment}
+            onManual={() => startEdit(null)}
+          />
 
           <section className={styles.card}>
             <div className={styles.cardHeader}>

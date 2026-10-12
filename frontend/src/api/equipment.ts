@@ -150,21 +150,27 @@ export async function fetchEquipment(): Promise<Equipment[]> {
   return (await apiFetch<{ items: Equipment[] }>('/api/equipment')).items;
 }
 
+// Mock-mode insert, shared with recognition confirm
+export function mockAddEquipment(input: EquipmentInput): Equipment {
+  checkZone(input.zone_name);
+  const e: Equipment = {
+    name: input.name,
+    equipment_type: input.equipment_type,
+    zone_name: input.zone_name,
+    required_ppe: input.required_ppe,
+    equipment_id: `EQ_${++seq}`,
+    status: 'active',
+    created_at: now(),
+    updated_at: now(),
+  };
+  mockEquipment.push(e);
+  return structuredClone(e);
+}
+
 export async function createEquipment(
   input: EquipmentInput,
 ): Promise<Equipment> {
-  if (MOCK_AUTH) {
-    checkZone(input.zone_name);
-    const e: Equipment = {
-      ...input,
-      equipment_id: `EQ_${++seq}`,
-      status: 'active',
-      created_at: now(),
-      updated_at: now(),
-    };
-    mockEquipment.push(e);
-    return structuredClone(e);
-  }
+  if (MOCK_AUTH) return mockAddEquipment(input);
   return apiFetch<Equipment>('/api/equipment', json('POST', input));
 }
 

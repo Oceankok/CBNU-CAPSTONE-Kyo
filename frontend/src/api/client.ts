@@ -29,10 +29,7 @@ export function mediaUrl(relativePath: string | undefined | null): string {
 }
 
 // Thin wrapper around fetch that throws ApiError on non-2xx responses
-export async function apiFetch<T>(
-  path: string,
-  init?: RequestInit,
-): Promise<T> {
+async function request(path: string, init?: RequestInit): Promise<Response> {
   const token = getSession()?.access_token;
   // Spread init first so caller-supplied headers merge with (not replace) the defaults
   const res = await fetch(`${BASE_URL}${path}`, {
@@ -56,6 +53,17 @@ export async function apiFetch<T>(
       : body.detail;
     throw new ApiError(res.status, detail ?? res.statusText);
   }
+  return res;
+}
 
-  return res.json() as Promise<T>;
+export async function apiFetch<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  return (await request(path, init)).json() as Promise<T>;
+}
+
+// For files that need Bearer auth (an <img src> cannot send the header)
+export async function apiBlob(path: string): Promise<Blob> {
+  return (await request(path)).blob();
 }
