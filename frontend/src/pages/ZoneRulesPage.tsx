@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 import { fetchZones, saveZone, deleteZone } from '../api/zones';
-import type { ZonePpe, ZoneRule } from '../types';
+import { fetchUsers, updateUser } from '../api/users';
+import { fetchCameras } from '../api/cameras';
+import type { Camera } from '../api/cameras';
+import type { AppUser, ZonePpe, ZoneRule } from '../types';
 import { ZONE_PPE } from '../ppe';
+import ConfirmButton from '../components/ConfirmButton';
 import styles from './ZoneRulesPage.module.css';
 
 // Editable copy of a rule; rules are edited as one-per-line text
@@ -40,12 +44,35 @@ export default function ZoneRulesPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // zone currently saving/deleting
   const [newZone, setNewZone] = useState('');
+  const [workers, setWorkers] = useState<AppUser[]>([]);
+  const [cameras, setCameras] = useState<Camera[]>([]);
 
   useEffect(() => {
     fetchZones()
       .then((zones) => setDrafts(zones.map(toDraft)))
       .catch((e: Error) => setError(e.message));
+    // Members and cameras are context for each zone; the rule editor works without them
+    fetchUsers()
+      .then((users) => setWorkers(users.filter((u) => u.role === 'worker')))
+      .catch(() => {});
+    fetchCameras()
+      .then(setCameras)
+      .catch(() => {});
   }, []);
+
+  // ponytail: one zone per worker (app_user.zone_name) — adding moves them from their old zone
+  const assign = (u: AppUser, zone_name: string | null) => {
+    setError(null);
+    updateUser(u.user_id, { zone_name })
+      .then((saved) =>
+        setWorkers((prev) =>
+          prev.map((x) => (x.user_id === saved.user_id ? saved : x)),
+        ),
+      )
+      .catch((e: Error) =>
+        setError(`${u.display_name} 구역 변경 실패: ${e.message}`),
+      );
+  };
 
   const patch = (zone: string, p: Partial<Draft>) =>
     setDrafts(
@@ -79,7 +106,6 @@ export default function ZoneRulesPage() {
   };
 
   const handleDelete = (d: Draft) => {
-    if (!window.confirm(`'${d.zone_name}' 규칙을 삭제할까요?`)) return;
     const removeLocal = () =>
       setDrafts(
         (prev) => prev?.filter((x) => x.zone_name !== d.zone_name) ?? prev,
@@ -164,14 +190,23 @@ export default function ZoneRulesPage() {
             />
           </label>
 
+          <ZoneMembers
+            zone={d.zone_name}
+            saved={!d.isNew}
+            workers={workers}
+            cameras={cameras.filter((c) => c.zone_name === d.zone_name)}
+            onAssign={assign}
+          />
+
           <div className={styles.actions}>
-            <button
+            <ConfirmButton
               className={styles.deleteBtn}
-              onClick={() => handleDelete(d)}
+              label="삭제"
+              question={`'${d.zone_name}' 규칙을 삭제할까요?`}
+              confirmLabel="삭제"
+              onConfirm={() => handleDelete(d)}
               disabled={busy === d.zone_name}
-            >
-              삭제
-            </button>
+            />
             <button
               className={styles.saveBtn}
               onClick={() => handleSave(d)}
@@ -200,6 +235,97 @@ export default function ZoneRulesPage() {
           </button>
         </form>
       )}
+    </div>
+  );
+}
+
+// Workers assigned to the zone (add / remove) and the cameras installed there
+function ZoneMembers({
+  zone,
+  saved,
+  workers,
+  cameras,
+  onAssign,
+}: {
+  zone: string;
+  saved: boolean;
+  workers: AppUser[];
+  cameras: Camera[];
+  onAssign: (u: AppUser, zone: string | null) => void;
+}) {
+  const members = workers.filter((w) => w.zone_name === zone);
+  const others = workers.filter((w) => w.zone_name !== zone);
+
+  return (
+    <div className={styles.members}>
+      <div className={styles.memberBlock}>
+        <span className={styles.fieldLabel}>작업자 {members.length}명</span>
+        {!saved ? (
+          <p className={styles.ppeNote}>
+            구역을 저장한 뒤 작업자를 추가할 수 있습니다.
+          </p>
+        ) : (
+          <>
+            <div className={styles.memberList}>
+              {members.length === 0 && (
+                <span className={styles.ppeNote}>
+                  배정된 작업자가 없습니다.
+                </span>
+              )}
+              {members.map((w) => (
+                <span
+                  key={w.user_id}
+                  className={`${styles.member} ${w.is_active ? '' : styles.memberOff}`}
+                >
+                  {w.display_name}
+                  {!w.is_active && ' (정지)'}
+                  <button
+                    type="button"
+                    className={styles.memberRemove}
+                    aria-label={`${w.display_name} 구역에서 제외`}
+                    onClick={() => onAssign(w, null)}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+            {others.length > 0 && (
+              <select
+                className={styles.memberAdd}
+                value=""
+                onChange={(e) => {
+                  const w = others.find((x) => x.user_id === e.target.value);
+                  if (w) onAssign(w, zone);
+                }}
+                aria-label={`${zone}에 작업자 추가`}
+              >
+                <option value="">+ 작업자 추가</option>
+                {others.map((w) => (
+                  <option key={w.user_id} value={w.user_id}>
+                    {w.display_name} ({w.user_id})
+                    {w.zone_name ? ` — 현재 ${w.zone_name}` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+          </>
+        )}
+      </div>
+      <div className={styles.memberBlock}>
+        <span className={styles.fieldLabel}>카메라 {cameras.length}대</span>
+        <span className={styles.ppeNote}>
+          {cameras.length
+            ? cameras
+                .map(
+                  (c) =>
+                    c.camera_id +
+                    (c.camera_location ? ` (${c.camera_location})` : ''),
+                )
+                .join(', ')
+            : '설치된 카메라가 없습니다.'}
+        </span>
+      </div>
     </div>
   );
 }

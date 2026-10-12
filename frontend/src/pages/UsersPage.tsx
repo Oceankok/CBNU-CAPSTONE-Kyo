@@ -8,6 +8,7 @@ import {
 } from '../api/users';
 import { fetchZones } from '../api/zones';
 import type { AppUser, NewUser, UserRole } from '../types';
+import ConfirmButton from '../components/ConfirmButton';
 import styles from './UsersPage.module.css';
 
 const ROLE_LABEL: Record<UserRole, string> = {
@@ -32,6 +33,9 @@ export default function UsersPage() {
   const done = (text: string) => setMsg({ ok: true, text });
   const [busy, setBusy] = useState<string | null>(null); // user_id being updated
   const [form, setForm] = useState<NewUser>(EMPTY_FORM);
+  // Inline password reset (window.prompt is blocked in some embedded browsers)
+  const [resetFor, setResetFor] = useState<string | null>(null);
+  const [newPw, setNewPw] = useState('');
 
   useEffect(() => {
     Promise.all([fetchUsers(), fetchZones()])
@@ -58,17 +62,15 @@ export default function UsersPage() {
   };
 
   const handleReset = (u: AppUser) => {
-    const pw = window.prompt(
-      `${u.display_name}(${u.user_id})의 새 비밀번호 (8자 이상)`,
-    );
-    if (pw === null) return;
-    if (pw.length < 8) return fail('비밀번호는 8자 이상이어야 합니다.');
-    resetPassword(u.user_id, pw)
-      .then(() =>
+    if (newPw.length < 8) return fail('비밀번호는 8자 이상이어야 합니다.');
+    resetPassword(u.user_id, newPw)
+      .then(() => {
+        setResetFor(null);
+        setNewPw('');
         done(
           `${u.user_id} 비밀번호를 재설정했습니다. 기존 로그인은 해제됩니다.`,
-        ),
-      )
+        );
+      })
       .catch((e: Error) =>
         fail(`${u.user_id} 비밀번호 재설정 실패: ${e.message}`),
       );
@@ -119,8 +121,8 @@ export default function UsersPage() {
   return (
     <div className={styles.page}>
       <p className={styles.desc}>
-        작업자의 담당 구역을 지정하면 작업자 화면에 해당 구역의 안전 규칙이
-        표시됩니다.
+        계정 추가·정지와 비밀번호를 관리합니다. 담당 구역은 설정 → 구역 규칙에서
+        구역별로 지정합니다.
       </p>
 
       {msg && (
@@ -145,38 +147,81 @@ export default function UsersPage() {
                 </span>
               </div>
 
-              {u.role === 'worker' ? (
-                zoneSelect(
-                  u.zone_name,
-                  (zone_name) => update(u, { zone_name }),
-                  busy === u.user_id,
-                )
-              ) : (
-                <span className={styles.noZone}>—</span>
-              )}
+              {/* Zones are assigned from the zone screen; shown here for reference */}
+              <span className={styles.zone}>
+                {u.role === 'worker' ? (u.zone_name ?? '구역 미지정') : '—'}
+              </span>
 
               <div className={styles.rowActions}>
-                <label
-                  className={styles.activeToggle}
-                  title={
-                    u.user_id === me ? '본인 계정은 비활성화할 수 없습니다' : ''
-                  }
+                <span
+                  className={`${styles.state} ${u.is_active ? styles.stateOn : styles.stateOff}`}
                 >
-                  <input
-                    type="checkbox"
-                    checked={u.is_active}
-                    disabled={u.user_id === me || busy === u.user_id}
-                    onChange={(e) => update(u, { is_active: e.target.checked })}
-                  />
                   {u.is_active ? '사용 중' : '정지됨'}
-                </label>
+                </span>
+                {u.user_id === me ? (
+                  <span className={styles.self}>본인 계정</span>
+                ) : u.is_active ? (
+                  <ConfirmButton
+                    className={styles.dangerLink}
+                    disabled={busy === u.user_id}
+                    label="계정 정지"
+                    question={`${u.display_name} 계정을 정지할까요? 바로 로그아웃되고 다시 로그인할 수 없습니다.`}
+                    confirmLabel="정지"
+                    onConfirm={() => update(u, { is_active: false })}
+                  />
+                ) : (
+                  <button
+                    className={styles.linkBtn}
+                    disabled={busy === u.user_id}
+                    onClick={() => update(u, { is_active: true })}
+                  >
+                    정지 해제
+                  </button>
+                )}
                 <button
                   className={styles.linkBtn}
-                  onClick={() => handleReset(u)}
+                  onClick={() => {
+                    setResetFor(resetFor === u.user_id ? null : u.user_id);
+                    setNewPw('');
+                  }}
                 >
                   비밀번호 재설정
                 </button>
               </div>
+
+              {resetFor === u.user_id && (
+                <form
+                  className={styles.resetRow}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleReset(u);
+                  }}
+                >
+                  <input
+                    className={styles.input}
+                    type="password"
+                    placeholder="새 비밀번호 (8자 이상)"
+                    value={newPw}
+                    onChange={(e) => setNewPw(e.target.value)}
+                    autoComplete="new-password"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    className={styles.linkBtn}
+                    onClick={() => setResetFor(null)}
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="submit"
+                    className={styles.primaryBtn}
+                    disabled={newPw.length < 8}
+                  >
+                    변경
+                  </button>
+                </form>
+              )}
             </li>
           ))}
         </ul>

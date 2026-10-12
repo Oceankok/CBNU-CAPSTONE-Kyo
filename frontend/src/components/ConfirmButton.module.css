@@ -1,0 +1,43 @@
+.ask {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #fffaf0;
+  border: 1px solid #fbd38d;
+}
+
+.question {
+  font-size: 13px;
+  color: #744210;
+}
+
+.cancel,
+.danger,
+.ok {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cancel {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #4a5568;
+}
+
+.danger {
+  border: none;
+  background: #e53e3e;
+  color: #fff;
+}
+
+.ok {
+  border: none;
+  background: #3182ce;
+  color: #fff;
+}

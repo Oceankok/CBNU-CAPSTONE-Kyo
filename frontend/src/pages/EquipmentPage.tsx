@@ -14,6 +14,7 @@ import { fetchZones } from '../api/zones';
 import { ppeInfo } from '../ppe';
 import PpeChips from '../components/PpeChips';
 import EquipmentRecognition from '../components/EquipmentRecognition';
+import ConfirmButton from '../components/ConfirmButton';
 import styles from './EquipmentPage.module.css';
 
 // Business error codes from the equipment contract (#112)
@@ -113,16 +114,8 @@ export default function EquipmentPage() {
     if (ok) setEditing(null);
   };
 
-  const setStatus = (e: Equipment, status: Equipment['status']) => {
-    if (
-      status === 'active' &&
-      !window.confirm(
-        `'${e.name}'을(를) 다시 활성화하면 기존 카메라 연결에도 추가 PPE가 다시 적용됩니다. 계속할까요?`,
-      )
-    )
-      return;
+  const setStatus = (e: Equipment, status: Equipment['status']) =>
     void run(() => updateEquipment(e.equipment_id, { status }));
-  };
 
   const visible = (equipment ?? []).filter(
     (e) => !zoneFilter || e.zone_name === zoneFilter,
@@ -257,18 +250,25 @@ export default function EquipmentPage() {
                         >
                           수정
                         </button>
-                        <button
-                          className={styles.linkBtn}
-                          disabled={busy}
-                          onClick={() =>
-                            setStatus(
-                              e,
-                              e.status === 'active' ? 'inactive' : 'active',
-                            )
-                          }
-                        >
-                          {e.status === 'active' ? '비활성화' : '활성화'}
-                        </button>
+                        {e.status === 'active' ? (
+                          <button
+                            className={styles.linkBtn}
+                            disabled={busy}
+                            onClick={() => setStatus(e, 'inactive')}
+                          >
+                            비활성화
+                          </button>
+                        ) : (
+                          <ConfirmButton
+                            className={styles.linkBtn}
+                            disabled={busy}
+                            label="활성화"
+                            question={`'${e.name}'을(를) 다시 활성화하면 기존 카메라 연결에도 추가 PPE가 다시 적용됩니다. 계속할까요?`}
+                            confirmLabel="활성화"
+                            danger={false}
+                            onConfirm={() => setStatus(e, 'active')}
+                          />
+                        )}
                       </div>
                     </>
                   )}
