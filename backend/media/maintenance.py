@@ -62,6 +62,13 @@ def maintain_once(stale_after: int = 3600) -> dict:
     if PROCESSED_ROOT.exists():
         root = PROCESSED_ROOT.resolve()
         for file in PROCESSED_ROOT.iterdir():
+            if file.name.startswith('ppe_publish_') and file.suffix == '.tmp' and file.is_file() and not file.is_symlink() and file.resolve().parent == root and file.stat().st_mtime < cutoff:
+                try:
+                    file.unlink()
+                    cleaned += 1
+                except OSError:
+                    pass
+                continue
             if file.is_file() and not file.is_symlink() and file.resolve().is_relative_to(root) and file.suffix in {".jpg", ".mp4"} and file.stat().st_mtime < cutoff and storage_key(file) not in referenced:
                 try:
                     file.unlink()

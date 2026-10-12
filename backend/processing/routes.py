@@ -15,7 +15,7 @@ from backend.auth.service import require_admin
 from backend.db.connection import begin_write
 from backend.db.event_repository import get_connection
 from backend.field.routes import current_node
-from backend.media.paths import WORK_ROOT, PROCESSED_ROOT, private_source_path, storage_key
+from backend.media.paths import WORK_ROOT, PROCESSED_ROOT, private_source_path, storage_key, publish_file
 from backend.processing import service
 
 router = APIRouter(prefix='/api/processing', tags=['processing'])
@@ -152,7 +152,7 @@ def publish(job_id, node_id, token, path, meta):
             target = PROCESSED_ROOT / (row['media_id'] + path.suffix)
             if target.resolve().parent != PROCESSED_ROOT.resolve():
                 raise HTTPException(409, 'unsafe_result_path')
-            os.replace(path, target)
+            publish_file(path, target)
             moved = target
             conn.execute('''UPDATE event_media SET storage_path=?,status='ready',redaction_status='complete',
                 processing_started_at=NULL,error_code=NULL,faces_detected=?,processed_frames=?,redaction_mode=?,

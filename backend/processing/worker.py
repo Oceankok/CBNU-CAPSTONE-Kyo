@@ -107,11 +107,13 @@ class Worker:
             code = str(error) if isinstance(error, MediaError) else 'media_processing_failed'
             allowed = {'source_file_missing', 'source_expired', 'invalid_frame', 'video_decode_failed',
                        'incomplete_video_decode', 'scrfd_model_missing', 'face_model_missing', 'gpu_unavailable'}
-            try:
-                self.client.post(f'/api/processing/jobs/{ident}/failure', headers=headers,
-                                 json={'error_code': code if code in allowed else 'media_processing_failed'})
-            except httpx.HTTPError:
-                pass
+            for _ in range(2):
+                try:
+                    self.client.post(f'/api/processing/jobs/{ident}/failure', headers=headers,
+                                     json={'error_code': code if code in allowed else 'media_processing_failed'})
+                    break
+                except httpx.HTTPError:
+                    continue
             logger.warning('Media processing failed: %s', ident)
         finally:
             done.set()

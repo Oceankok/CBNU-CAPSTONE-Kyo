@@ -1,4 +1,6 @@
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -6,6 +8,19 @@ STORAGE_ROOT = PROJECT_ROOT / "storage"
 PROCESSED_ROOT = STORAGE_ROOT / "candidate_events" / "processed"
 WORK_ROOT = PROJECT_ROOT / ".private_media"
 SOURCE_ROOT = WORK_ROOT / "originals"
+
+
+def publish_file(source: Path, target: Path) -> None:
+    """Stage on the destination filesystem before an atomic rename across volumes."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix='ppe_publish_', suffix='.tmp', dir=target.parent)
+    os.close(descriptor)
+    stage = Path(name)
+    try:
+        shutil.copyfile(source, stage)
+        os.replace(stage, target)
+    finally:
+        stage.unlink(missing_ok=True)
 
 
 def private_source_path(key: str) -> Path:

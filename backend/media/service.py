@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from backend.db.event_repository import get_connection
-from backend.media.paths import PROCESSED_ROOT, WORK_ROOT, SOURCE_ROOT, private_source_path, owned_path, storage_key
+from backend.media.paths import PROCESSED_ROOT, WORK_ROOT, SOURCE_ROOT, private_source_path, owned_path, storage_key, publish_file
 from backend.media.redaction import MediaError, redact_image, redact_video
 
 
@@ -218,7 +218,7 @@ def _publish(media_id: str, output: Path, details: dict):
             retention = conn.execute("SELECT decision FROM event_retention WHERE event_id=?", (row["event_id"],)).fetchone()
             if row["status"] != "processing" or retention["decision"] == "delete":
                 return
-            os.replace(output, target)
+            publish_file(output, target)
             moved = True
             conn.execute("""UPDATE event_media SET storage_path=?,status='ready',redaction_status='complete',
                 error_code=NULL,faces_detected=?,processed_frames=?,redaction_mode=?,inference_backend=?,processing_seconds=? WHERE media_id=?""",

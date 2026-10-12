@@ -168,3 +168,19 @@ class ProcessingTests(unittest.TestCase):
             row = conn.execute('SELECT status,storage_path FROM event_media').fetchone()
             self.assertEqual(row['status'], 'processing')
             self.assertEqual(row['storage_path'], '')
+
+    def test_publish_stages_on_destination_filesystem(self):
+        import errno
+        from backend.media.paths import publish_file
+        source = Path(self.temp.name) / 'private.jpg'
+        target = Path(self.temp.name) / 'processed' / 'result.jpg'
+        source.write_bytes(self.image)
+        original = os.replace
+        def rename(before, after):
+            if Path(before).parent != Path(after).parent:
+                raise OSError(errno.EXDEV, 'Invalid cross-device link')
+            return original(before, after)
+        with patch('backend.media.paths.os.replace', side_effect=rename):
+            publish_file(source, target)
+        self.assertEqual(target.read_bytes(), self.image)
+        self.assertEqual(list(target.parent.iterdir()), [target])
