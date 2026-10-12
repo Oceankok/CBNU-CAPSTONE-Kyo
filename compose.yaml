@@ -1,0 +1,51 @@
+name: kyo
+
+x-api: &api
+  image: kyo-api:${PPE_IMAGE_TAG:-local}
+  build:
+    context: .
+    dockerfile: deploy/api.Dockerfile
+  volumes:
+    - sqlite_data:/app/runtime-db
+    - media_data:/app/storage
+    - private_media:/app/.private_media
+  environment: &environment
+    PPE_DB_PATH: /app/runtime-db/ppe_system.db
+    PPE_JWT_SECRET: ${PPE_JWT_SECRET:?Set PPE_JWT_SECRET in .env (at least 32 bytes)}
+    PPE_LOCAL_PROCESSING: "false"
+    PPE_EQUIPMENT_PROVIDER: ""
+    PPE_CORS_ORIGINS: ${PPE_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+    PPE_COOKIE_SECURE: ${PPE_COOKIE_SECURE:-false}
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  init: true
+
+services:
+  api:
+    <<: *api
+    restart: unless-stopped
+    ports:
+      # Frontend reverse proxy will be added by the frontend owner.
+      - "127.0.0.1:${PPE_API_PORT:-8000}:8000"
+  db-init:
+    <<: *api
+    profiles: [tools]
+    command: [python, -m, backend.db.init_db]
+    healthcheck:
+      disable: true
+  maintenance:
+    <<: *api
+    command: [python, -m, backend.media.maintenance, --interval, "60"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+volumes:
+  sqlite_data:
+  media_data:
+  private_media:

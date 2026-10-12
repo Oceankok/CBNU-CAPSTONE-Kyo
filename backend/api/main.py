@@ -49,6 +49,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.get("/health/ready", tags=["deployment"])
+def readiness():
+    from backend.db.event_repository import get_connection
+    from backend.db.migrations import LATEST_VERSION
+    from backend.runtime import local_processing_enabled
+    import sqlite3
+
+    if len(os.environ.get("PPE_JWT_SECRET", "").encode()) < 32:
+        raise HTTPException(503, "authentication_not_ready")
+
+    # Do not create an empty SQLite file as a side effect of a readiness probe.
+    db_path = Path(os.environ.get("PPE_DB_PATH", str(Path(__file__).resolve().parents[1] / "db" / "ppe_system.db")))
+    if not db_path.is_file():
+        raise HTTPException(503, "database_not_ready")
+    try:
+        with get_connection() as conn:
+            if conn.execute("PRAGMA user_version").fetchone()[0] != LATEST_VERSION:
+                raise HTTPException(503, "database_schema_not_ready")
+            conn.execute("SELECT 1 FROM app_user LIMIT 1").fetchone()
+    except sqlite3.Error:
+        raise HTTPException(503, "database_not_ready")
+    return {"status": "ready", "local_processing": local_processing_enabled()}
+
 # Serve generated event media files
 _STORAGE_DIR = Path(__file__).resolve().parents[2] / "storage"
 _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
