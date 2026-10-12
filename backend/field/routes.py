@@ -4,7 +4,7 @@ import sqlite3
 import time
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 
@@ -51,6 +51,28 @@ def list_nodes():
 class CameraLink(BaseModel):
     source_node_id: str
     output_node_id: str
+
+
+@admin.get("/cameras")
+def list_cameras(zone_name: str | None = Query(default=None, max_length=100)):
+    """List registered cameras and current input/output nodes independently of events."""
+    query = """SELECT c.camera_id,c.camera_location,c.zone_name,c.status,
+                      n.source_node_id,n.output_node_id
+               FROM camera_info c LEFT JOIN camera_node n ON n.camera_id=c.camera_id"""
+    parameters = ()
+    if zone_name is not None:
+        query += " WHERE c.zone_name=?"
+        parameters = (zone_name,)
+    query += " ORDER BY c.camera_id"
+    with get_connection() as conn:
+        rows = conn.execute(query, parameters).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        if item["status"] not in {"active", "inactive"}:
+            item["status"] = "unknown"
+        items.append(item)
+    return {"items": items}
 
 
 @admin.put("/cameras/{camera_id}/node")

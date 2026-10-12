@@ -457,3 +457,6 @@ app.include_router(field_router)
 
 from backend.media.routes import router as media_router
 app.include_router(media_router)
+
+from backend.equipment.routes import router as equipment_router
+app.include_router(equipment_router)

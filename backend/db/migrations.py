@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-LATEST_VERSION = 4
+LATEST_VERSION = 5
 
 
 def _now() -> str:
@@ -128,6 +128,34 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
             if "unreviewable_count" not in {row[1] for row in conn.execute("PRAGMA table_info(quarterly_summary)")}:
                 conn.execute("ALTER TABLE quarterly_summary ADD COLUMN unreviewable_count INTEGER NOT NULL DEFAULT 0")
             conn.execute("PRAGMA user_version = 4")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 5:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("""CREATE TABLE IF NOT EXISTS equipment (
+                equipment_id TEXT PRIMARY KEY, name TEXT NOT NULL, equipment_type TEXT,
+                zone_name TEXT NOT NULL REFERENCES zone_rule(zone_name),
+                required_ppe TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','inactive')),
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            )""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_equipment_zone ON equipment(zone_name,status)")
+            conn.execute("""CREATE TABLE IF NOT EXISTS camera_equipment_config (
+                camera_id TEXT PRIMARY KEY REFERENCES camera_info(camera_id) ON DELETE CASCADE,
+                updated_at TEXT NOT NULL
+            )""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS camera_equipment (
+                camera_id TEXT NOT NULL REFERENCES camera_info(camera_id) ON DELETE CASCADE,
+                equipment_id TEXT NOT NULL REFERENCES equipment(equipment_id),
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(camera_id,equipment_id)
+            )""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_camera_equipment_equipment ON camera_equipment(equipment_id)")
+            conn.execute("PRAGMA user_version = 5")
             conn.commit()
         except Exception:
             conn.rollback()

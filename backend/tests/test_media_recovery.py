@@ -181,4 +181,5 @@ class MediaRecoveryTests(unittest.TestCase):
             self.assertEqual(row["status"],"ready")
             self.assertEqual(row["source_path"],"")
             self.assertIsNone(row["source_expires_at"])
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0],4)
+            from backend.db.migrations import LATEST_VERSION
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0],LATEST_VERSION)
