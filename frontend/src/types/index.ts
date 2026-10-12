@@ -262,6 +262,8 @@ export interface AppUser {
   user_id: string;
   display_name: string;
   role: UserRole;
+  // A worker can be assigned to several zones (#127); zone_name is the first one, kept for compatibility
+  zone_names: string[];
   zone_name: string | null;
   is_active: boolean;
 }
@@ -270,7 +272,7 @@ export interface NewUser {
   user_id: string;
   display_name: string;
   role: UserRole;
-  zone_name: string | null;
+  zone_names: string[];
   password: string;
 }
 
@@ -312,7 +314,7 @@ export interface FieldCommand {
 
 // --- Worker education (GET /api/worker/education, #111) ---
 
-export interface WorkerEducation {
+export interface EducationGroup {
   quarter: string | null;
   zone_name: string | null;
   items: {
@@ -323,4 +325,9 @@ export interface WorkerEducation {
     material: string | null; // AI-generated, admin-approved text (not generated yet)
   }[];
   empty_reason: 'zone_unassigned' | 'recommendations_unavailable' | null;
+}
+
+// One group per assigned zone (each uses that zone's latest quarter); top-level fields mirror the first group
+export interface WorkerEducation extends EducationGroup {
+  groups: EducationGroup[];
 }

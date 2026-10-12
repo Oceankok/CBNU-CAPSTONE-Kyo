@@ -6,7 +6,6 @@ import {
   updateUser,
   resetPassword,
 } from '../api/users';
-import { fetchZones } from '../api/zones';
 import type { AppUser, NewUser, UserRole } from '../types';
 import ConfirmButton from '../components/ConfirmButton';
 import styles from './UsersPage.module.css';
@@ -19,14 +18,13 @@ const EMPTY_FORM: NewUser = {
   user_id: '',
   display_name: '',
   role: 'worker',
-  zone_name: null,
+  zone_names: [],
   password: '',
 };
 
 export default function UsersPage() {
   const me = getSession()?.user_id;
   const [users, setUsers] = useState<AppUser[] | null>(null);
-  const [zones, setZones] = useState<string[]>([]);
   // One message at a time: a new success clears the last error and vice versa
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const fail = (text: string) => setMsg({ ok: false, text });
@@ -38,11 +36,8 @@ export default function UsersPage() {
   const [newPw, setNewPw] = useState('');
 
   useEffect(() => {
-    Promise.all([fetchUsers(), fetchZones()])
-      .then(([u, z]) => {
-        setUsers(u);
-        setZones(z.map((x) => x.zone_name));
-      })
+    fetchUsers()
+      .then(setUsers)
       .catch((e: Error) => fail(e.message));
   }, []);
 
@@ -86,8 +81,6 @@ export default function UsersPage() {
       user_id: form.user_id.trim(),
       display_name: form.display_name.trim(),
     };
-    // Admins have no work zone
-    if (body.role === 'admin') body.zone_name = null;
     createUser(body)
       .then((created) => {
         setUsers((prev) => [...(prev ?? []), created]);
@@ -96,27 +89,6 @@ export default function UsersPage() {
       })
       .catch((err: Error) => fail(`계정 생성 실패: ${err.message}`));
   };
-
-  const zoneSelect = (
-    value: string | null,
-    onChange: (v: string | null) => void,
-    disabled = false,
-  ) => (
-    <select
-      className={styles.select}
-      value={value ?? ''}
-      onChange={(e) => onChange(e.target.value || null)}
-      disabled={disabled}
-    >
-      <option value="">구역 미지정</option>
-      {/* Keep a zone that no longer has rules selectable so the current value still shows */}
-      {[...new Set([...zones, ...(value ? [value] : [])])].map((z) => (
-        <option key={z} value={z}>
-          {z}
-        </option>
-      ))}
-    </select>
-  );
 
   return (
     <div className={styles.page}>
@@ -149,7 +121,11 @@ export default function UsersPage() {
 
               {/* Zones are assigned from the zone screen; shown here for reference */}
               <span className={styles.zone}>
-                {u.role === 'worker' ? (u.zone_name ?? '구역 미지정') : '—'}
+                {u.role === 'worker'
+                  ? u.zone_names.length
+                    ? u.zone_names.join(', ')
+                    : '구역 미지정'
+                  : '—'}
               </span>
 
               <div className={styles.rowActions}>
@@ -258,11 +234,6 @@ export default function UsersPage() {
               <option value="worker">작업자</option>
               <option value="admin">관리자</option>
             </select>
-            {zoneSelect(
-              form.zone_name,
-              (zone_name) => setForm({ ...form, zone_name }),
-              form.role === 'admin',
-            )}
             <input
               className={styles.input}
               type="password"

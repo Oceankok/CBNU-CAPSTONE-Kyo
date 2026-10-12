@@ -2,9 +2,7 @@ import { apiFetch, ApiError } from './client';
 import { MOCK_AUTH } from './auth';
 import type { AppUser, NewUser } from '../types';
 
-type UserPatch = Partial<
-  Pick<AppUser, 'display_name' | 'zone_name' | 'is_active'>
->;
+type UserPatch = Partial<Pick<AppUser, 'display_name' | 'is_active'>>;
 
 // ponytail: in-memory mock for VITE_AUTH_MOCK=true until the #104 API exists; resets on reload
 const mockUsers: AppUser[] = [
@@ -12,6 +10,7 @@ const mockUsers: AppUser[] = [
     user_id: 'admin01',
     display_name: '관리자',
     role: 'admin',
+    zone_names: [],
     zone_name: null,
     is_active: true,
   },
@@ -19,6 +18,7 @@ const mockUsers: AppUser[] = [
     user_id: 'worker01',
     display_name: '작업자',
     role: 'worker',
+    zone_names: ['프레스 구역'],
     zone_name: '프레스 구역',
     is_active: true,
   },
@@ -26,6 +26,7 @@ const mockUsers: AppUser[] = [
     user_id: 'worker02',
     display_name: '작업자2',
     role: 'worker',
+    zone_names: ['자재 이동 구역'],
     zone_name: '자재 이동 구역',
     is_active: true,
   },
@@ -33,14 +34,15 @@ const mockUsers: AppUser[] = [
     user_id: 'worker03',
     display_name: '작업자3',
     role: 'worker',
+    zone_names: [],
     zone_name: null,
     is_active: true,
   },
 ];
 
-// Mock-mode lookup used by the worker zone screen
-export const mockZoneOf = (userId: string) =>
-  mockUsers.find((u) => u.user_id === userId)?.zone_name ?? null;
+// Mock-mode lookup used by the worker screens
+export const mockZonesOf = (userId: string): string[] =>
+  mockUsers.find((u) => u.user_id === userId)?.zone_names ?? [];
 
 export async function fetchUsers(): Promise<AppUser[]> {
   if (MOCK_AUTH) return structuredClone(mockUsers);
@@ -56,7 +58,8 @@ export async function createUser(user: NewUser): Promise<AppUser> {
       user_id: user.user_id,
       display_name: user.display_name,
       role: user.role,
-      zone_name: user.zone_name,
+      zone_names: user.zone_names,
+      zone_name: user.zone_names[0] ?? null,
       is_active: true,
     };
     mockUsers.push(created);
@@ -98,5 +101,27 @@ export async function resetPassword(
   await apiFetch(`/api/users/${encodeURIComponent(userId)}/password`, {
     method: 'POST',
     body: JSON.stringify({ password }),
+  });
+}
+
+// Replace one zone's worker list; other zones' assignments stay (PUT /api/zones/{zone}/members)
+export async function setZoneMembers(
+  zone: string,
+  userIds: string[],
+): Promise<{ zone_name: string; user_ids: string[] }> {
+  if (MOCK_AUTH) {
+    for (const u of mockUsers) {
+      if (u.role !== 'worker') continue;
+      const names = u.zone_names.filter((z) => z !== zone);
+      if (userIds.includes(u.user_id)) names.push(zone);
+      names.sort();
+      u.zone_names = names;
+      u.zone_name = names[0] ?? null;
+    }
+    return { zone_name: zone, user_ids: userIds };
+  }
+  return apiFetch(`/api/zones/${encodeURIComponent(zone)}/members`, {
+    method: 'PUT',
+    body: JSON.stringify({ user_ids: userIds }),
   });
 }
