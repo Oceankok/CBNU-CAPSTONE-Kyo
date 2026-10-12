@@ -188,3 +188,68 @@
   font-size: 12px;
   color: #a0aec0;
 }
+
+/* ─── Zone members (workers / cameras) ─────────────── */
+.members {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f4f8;
+}
+
+.memberBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memberList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.member {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 10px;
+  border-radius: 999px;
+  background: #edf2f7;
+  font-size: 13px;
+  color: #2d3748;
+}
+
+.memberOff {
+  color: #a0aec0;
+}
+
+.memberRemove {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #718096;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.memberRemove:hover {
+  background: #e2e8f0;
+  color: #c53030;
+}
+
+/* 16px keeps iOS Safari from zooming on focus */
+.memberAdd {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px dashed #3182ce;
+  border-radius: 6px;
+  background: #fff;
+  color: #2b6cb0;
+  font-size: 16px;
+}

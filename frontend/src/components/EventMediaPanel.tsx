@@ -13,6 +13,7 @@ import type {
   RedactionMode,
   ReviewAvailability,
 } from '../types';
+import ConfirmButton from './ConfirmButton';
 import styles from './EventMediaPanel.module.css';
 
 const STATUS: Record<EventMedia['status'], string> = {
@@ -134,7 +135,10 @@ export default function EventMediaPanel({
     },
     [onAvailability],
   );
-  const reload = useCallback(() => fetchEventMedia(eventId).then(apply), [eventId, apply]);
+  const reload = useCallback(
+    () => fetchEventMedia(eventId).then(apply),
+    [eventId, apply],
+  );
 
   useEffect(() => {
     fetchEventMedia(eventId)
@@ -179,13 +183,6 @@ export default function EventMediaPanel({
 
   function decide(decision: 'retain' | 'delete') {
     if (!retention) return;
-    if (
-      decision === 'delete' &&
-      !window.confirm(
-        '이 이벤트에 연결된 모든 이미지·영상을 삭제합니다. 복구할 수 없습니다. 계속할까요?',
-      )
-    )
-      return;
     void act(() =>
       saveEventRetention(eventId, {
         decision,
@@ -369,13 +366,14 @@ export default function EventMediaPanel({
               </>
             )}
             <div className={styles.actions}>
-              <button
+              <ConfirmButton
                 className={styles.dangerBtn}
                 disabled={busy || !retention}
-                onClick={() => decide('delete')}
-              >
-                동의 없음 · 파일 삭제
-              </button>
+                label="동의 없음 · 파일 삭제"
+                question="이 이벤트에 연결된 모든 이미지·영상을 삭제합니다. 복구할 수 없습니다. 계속할까요?"
+                confirmLabel="삭제"
+                onConfirm={() => decide('delete')}
+              />
               {!unreviewable && (
                 <button
                   className={styles.primaryBtn}

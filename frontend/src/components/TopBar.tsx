@@ -1,4 +1,5 @@
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
+import { SETTINGS_ITEMS } from '../nav';
 import { recentQuarters } from '../quarters';
 import { logout } from '../api/auth';
 import styles from './TopBar.module.css';
@@ -35,7 +36,19 @@ export default function TopBar({ quarter, onQuarterChange }: TopBarProps) {
 
   return (
     <header className={styles.topbar}>
-      <h1 className={styles.title}>{title}</h1>
+      <div className={styles.titleRow}>
+        {/* Settings sub-pages have no tab of their own; give them a way back */}
+        {SETTINGS_ITEMS.some((i) => i.to === pathname) && (
+          <Link
+            to="/settings"
+            className={styles.back}
+            aria-label="설정으로 돌아가기"
+          >
+            ← 설정
+          </Link>
+        )}
+        <h1 className={styles.title}>{title}</h1>
+      </div>
       <div className={styles.actions}>
         {QUARTER_PAGES.includes(pathname) && (
           <select

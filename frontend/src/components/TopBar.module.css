@@ -63,3 +63,23 @@
     display: block;
   }
 }
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.back {
+  padding: 6px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #4a5568;
+  white-space: nowrap;
+}
+
+.back:hover {
+  background: #f7fafc;
+}
