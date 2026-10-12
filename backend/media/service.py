@@ -72,6 +72,10 @@ def public_media(row: dict, decision: str = "pending") -> dict:
     result["can_reprocess"] = reason is None
     result["reprocess_unavailable_reason"] = reason
     result["failure_category"] = failure_category(row.get("error_code"))
+    with get_connection() as conn:
+        job = conn.execute('SELECT job_id,status FROM processing_job WHERE media_id=? ORDER BY created_at DESC LIMIT 1', (row['media_id'],)).fetchone()
+    result['job_id'] = job['job_id'] if job else None
+    result['processing_state'] = job['status'] if job else None
     return result
 
 
@@ -323,6 +327,9 @@ def delete_event_media(event_id: str) -> dict:
     for row in rows:
         if row["processing_started_at"] is not None:
             continue
+        with get_connection() as conn:
+            if conn.execute("SELECT 1 FROM processing_job WHERE media_id=? AND local_cleanup_status='pending'", (row['media_id'],)).fetchone():
+                continue
         try:
             if row["storage_path"]:
                 owned_path(row["storage_path"]).unlink(missing_ok=True)
@@ -343,6 +350,11 @@ def delete_event_media(event_id: str) -> dict:
 
 
 def _request_delete(conn, event_id: str, actor: str):
+    conn.execute("""UPDATE event_media SET processing_started_at=NULL WHERE event_id=? AND EXISTS
+        (SELECT 1 FROM processing_job j WHERE j.media_id=event_media.media_id
+         AND j.generation=event_media.processing_generation AND j.status IN ('queued','running'))""", (event_id,))
+    conn.execute("""UPDATE processing_job SET status='cancelled',finished_at=?,updated_at=? WHERE media_id IN
+        (SELECT media_id FROM event_media WHERE event_id=?) AND status IN ('queued','running')""", (time.time(), time.time(), event_id))
     conn.execute("""UPDATE event_retention SET decision='delete',consent_confirmed=0,
         decided_by=?,decided_at=?,version=version+1 WHERE event_id=?""", (actor, now(), event_id))
     conn.execute("UPDATE event_media SET status='delete_pending' WHERE event_id=? AND status!='deleted'", (event_id,))

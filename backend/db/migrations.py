@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-LATEST_VERSION = 7
+LATEST_VERSION = 8
 
 
 def _now() -> str:
@@ -199,6 +199,22 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
             conn.execute("""UPDATE app_user SET zone_name=(SELECT MIN(zone_name) FROM user_zone
                 WHERE user_zone.user_id=app_user.user_id)""")
             conn.execute("PRAGMA user_version = 7")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 8:
+        from pathlib import Path
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if 'processing_generation' not in {row[1] for row in conn.execute('PRAGMA table_info(event_media)')}:
+                conn.execute('ALTER TABLE event_media ADD COLUMN processing_generation INTEGER NOT NULL DEFAULT 0')
+            script = (Path(__file__).resolve().parents[1] / 'processing' / 'schema.sql').read_text(encoding='utf-8')
+            for statement in script.split(';'):
+                if statement.strip():
+                    conn.execute(statement)
+            conn.execute('PRAGMA user_version=8')
             conn.commit()
         except Exception:
             conn.rollback()

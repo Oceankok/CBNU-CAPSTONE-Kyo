@@ -11,6 +11,8 @@ from backend.media.service import _request_delete, delete_event_media
 
 
 def maintain_once(stale_after: int = 3600) -> dict:
+    from backend.processing.service import expire_jobs
+    expire_jobs()
     cutoff = time.time() - stale_after
     with get_connection() as conn:
         begin_write(conn)
@@ -46,7 +48,8 @@ def maintain_once(stale_after: int = 3600) -> dict:
                 except OSError:
                     pass  # Open files on Windows are retried on the next pass.
     with get_connection() as conn:
-        stale = conn.execute("SELECT media_id,status FROM event_media WHERE processing_started_at<?", (cutoff,)).fetchall()
+        stale = conn.execute("""SELECT media_id,status FROM event_media WHERE processing_started_at<? AND NOT EXISTS
+            (SELECT 1 FROM processing_job j WHERE j.media_id=event_media.media_id AND j.status='running')""", (cutoff,)).fetchall()
         for row in stale:
             if any(WORK_ROOT.glob(f"ppe_{row['media_id']}_*")):
                 continue  # A private directory could not be removed yet.
