@@ -206,7 +206,7 @@ export interface FilterState {
 
 // --- Warning Broadcast Settings ---
 
-export type BroadcastLanguage = 'ko' | 'en';
+export type BroadcastLanguage = 'ko' | 'en' | 'ja' | 'zh' | 'de' | 'fr' | 'es';
 
 // Per-PPE-type message template with optional zone override
 export interface BroadcastTemplate {
