@@ -30,6 +30,27 @@ services:
     ports:
       # Frontend reverse proxy will be added by the frontend owner.
       - "127.0.0.1:${PPE_API_PORT:-8000}:8000"
+  web:
+    # Same-origin front door (static app + /api and /storage proxy); build uses the frontend sources
+    image: kyo-web:${PPE_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: deploy/web.Dockerfile
+    restart: unless-stopped
+    ports:
+      # Localhost by default; set PPE_WEB_BIND=0.0.0.0 to reach it from a phone on the same Wi-Fi
+      - "${PPE_WEB_BIND:-127.0.0.1}:${PPE_WEB_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    init: true
   db-init:
     <<: *api
     profiles: [tools]
