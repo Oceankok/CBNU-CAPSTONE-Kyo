@@ -1,0 +1,5 @@
+# Enable only after DNS and inbound TCP 80/443 reach the server.
+# nginx continues serving the existing web app and protected media routes.
+{$PPE_PUBLIC_HOST} {
+    reverse_proxy web:8080
+}
