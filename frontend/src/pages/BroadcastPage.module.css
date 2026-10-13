@@ -293,3 +293,14 @@
     width: 100%;
   }
 }
+
+.addLang {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.addBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
