@@ -1,0 +1,18 @@
+# Allow only reviewed application source into the build context.
+*
+!backend/
+!backend/**/
+!backend/**/*.py
+!backend/**/*.sql
+!backend/*.txt
+!deploy/
+!deploy/api.Dockerfile
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/**/*.db
+backend/**/*.db-*
+backend/**/.env*
+backend/tests/
+backend/**/.private_media/
+backend/**/*.onnx
+backend/**/*.pt
