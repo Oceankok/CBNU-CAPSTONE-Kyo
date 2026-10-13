@@ -1,0 +1,94 @@
+# Standalone release stack. Never builds source on the server.
+name: kyo-server
+x-api: &api
+  image: ${PPE_API_IMAGE:?Set a published API digest}
+  environment: &environment
+    PPE_DATABASE_URL: ${PPE_DATABASE_URL:?Set PostgreSQL URL for postgres service}
+    PPE_JWT_SECRET: ${PPE_JWT_SECRET:?Set a 32+ byte secret}
+    PPE_LOCAL_PROCESSING: "false"
+    PPE_PROCESSING_MODE: ${PPE_PROCESSING_MODE:-disabled}
+    PPE_EQUIPMENT_PROVIDER: ""
+    PPE_COOKIE_SECURE: ${PPE_COOKIE_SECURE:-false}
+    PPE_CORS_ORIGINS: ${PPE_CORS_ORIGINS:-}
+  volumes:
+    - media_data:/app/storage
+    - private_media:/app/.private_media
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  init: true
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: kyo
+      POSTGRES_USER: kyo
+      POSTGRES_PASSWORD: ${PPE_POSTGRES_PASSWORD:?Set PostgreSQL password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U kyo -d kyo"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  api:
+    <<: *api
+    ports: ["127.0.0.1:${PPE_API_PORT:-8000}:8000"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+  web:
+    image: ${PPE_WEB_IMAGE:?Set a published web digest}
+    ports: ["127.0.0.1:${PPE_WEB_PORT:-8080}:8080"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
+    init: true
+  maintenance:
+    <<: *api
+    command: [python, -m, backend.media.maintenance, --interval, "60"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+  db-init:
+    <<: *api
+    profiles: [tools]
+    environment:
+      <<: *environment
+      PPE_DB_SEED: "false"
+    command: [python, -m, backend.db.init_db]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+  gateway:
+    image: caddy:2-alpine
+    profiles: [https]
+    environment:
+      PPE_PUBLIC_HOST: ${PPE_PUBLIC_HOST:-}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+    security_opt: [no-new-privileges:true]
+volumes:
+  postgres_data:
+  media_data:
+  private_media:
+  caddy_data:
+  caddy_config:
