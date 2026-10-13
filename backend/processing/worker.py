@@ -80,6 +80,21 @@ class Worker:
 
         thread = threading.Thread(target=renew, daemon=True)
         thread.start()
+        last_check = [0.0]
+        def yield_for_inference():
+            if lost.is_set() or time.time() >= job['lease_until'] + 1800:
+                raise MediaError('media_processing_failed')
+            if time.monotonic() - last_check[0] < 0.25:
+                return
+            while True:
+                response = self.client.get('/api/processing/inference-load')
+                response.raise_for_status()
+                last_check[0] = time.monotonic()
+                if not response.json()['busy']:
+                    return
+                if lost.is_set():
+                    raise MediaError('media_processing_failed')
+                time.sleep(0.1)
         try:
             source = folder / ('source.jpg' if job['kind'] == 'image' else 'source.mp4')
             size = 0
@@ -92,8 +107,10 @@ class Worker:
                             raise MediaError('media_processing_failed')
                         file.write(chunk)
             output = folder / ('output.jpg' if job['kind'] == 'image' else 'output.mp4')
-            details = redact_image(source, output, job['redaction_mode']) if job['kind'] == 'image' else \
-                redact_video(source, output, folder, job['redaction_mode'])
+            from backend.processing.priority import inference_guard
+            with inference_guard(yield_for_inference):
+                details = redact_image(source, output, job['redaction_mode']) if job['kind'] == 'image' else \
+                    redact_video(source, output, folder, job['redaction_mode'])
             if lost.is_set():
                 raise MediaError('media_processing_failed')
             metadata = {key: details[key] for key in ('faces_detected', 'processed_frames', 'redaction_mode', 'inference_backend', 'processing_seconds')}

@@ -36,6 +36,7 @@ class PostgresIntegrationTests(unittest.TestCase):
 
     def test_v7_processing_upgrade_preserves_account(self):
         with connect() as conn:
+            conn.execute('DROP TABLE processing_inference_load')
             conn.execute('DROP TABLE processing_job')
             conn.execute('DROP TABLE processing_worker')
             conn.execute('ALTER TABLE event_media DROP COLUMN processing_generation')

@@ -33,6 +33,29 @@ class WorkerSettings(BaseModel):
     enabled: bool
 
 
+class InferenceLoad(BaseModel):
+    busy: bool
+    ttl_seconds: int = Field(default=10, ge=1, le=30)
+
+
+@router.put('/inference-load')
+def set_inference_load(body: InferenceLoad, node: dict = Depends(processor)):
+    until = time.time() + body.ttl_seconds if body.busy else 0
+    with get_connection() as conn:
+        begin_write(conn)
+        conn.execute('''INSERT INTO processing_inference_load(node_id,busy_until,updated_at) VALUES(?,?,?)
+            ON CONFLICT(node_id) DO UPDATE SET busy_until=excluded.busy_until,updated_at=excluded.updated_at''',
+                     (node['node_id'], until, time.time()))
+    return {'busy_until': until}
+
+
+@router.get('/inference-load')
+def get_inference_load(node: dict = Depends(processor)):
+    with get_connection() as conn:
+        row = conn.execute('SELECT MAX(busy_until) FROM processing_inference_load').fetchone()
+    return {'busy': bool(row and row[0] and row[0] > time.time()), 'busy_until': row[0] or 0}
+
+
 @router.put('/workers/{node_id}', dependencies=[Depends(require_admin)])
 def configure_worker(node_id: str, body: WorkerSettings):
     with get_connection() as conn:
@@ -61,6 +84,25 @@ def read_job(job_id: str):
 @router.post('/claim')
 def claim(node: dict = Depends(processor)):
     return service.claim(node['node_id'])
+
+
+class ClipRequestInput(BaseModel):
+    camera_id: str = Field(min_length=1, max_length=100)
+
+
+@router.post('/events/{event_id}/clip-requests', status_code=201)
+def create_clip_request(event_id: str, body: ClipRequestInput, node: dict = Depends(processor)):
+    from backend.media.routes import register_clip_request, ClipRequestRegistration
+    return register_clip_request(event_id, ClipRequestRegistration(camera_id=body.camera_id))
+
+
+@router.post('/events/{event_id}/clip', status_code=201)
+async def upload_clip(event_id: str, request: Request, request_id: str,
+                      camera_id: str | None = None, node: dict = Depends(processor),
+                      redaction_mode: Literal['enhanced','scrfd'] = 'scrfd'):
+    from backend.media.routes import upload_media
+    return await upload_media(event_id, request, kind='video', camera_id=camera_id, role='clip',
+                              request_id=request_id, redaction_mode=redaction_mode)
 
 
 @router.post('/jobs/{job_id}/lease')

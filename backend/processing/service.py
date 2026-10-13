@@ -65,6 +65,9 @@ def claim(node_id):
     with get_connection() as conn:
         begin_write(conn)
         conn.execute('UPDATE field_node SET last_seen_at=? WHERE node_id=?', (time.time(), node_id))
+        load = conn.execute('SELECT MAX(busy_until) FROM processing_inference_load').fetchone()
+        if load and load[0] and load[0] > time.time():
+            return {'job': None}
         if conn.execute("SELECT 1 FROM processing_job WHERE worker_node_id=? AND local_cleanup_status='pending'", (node_id,)).fetchone():
             return {'job': None}
         if conn.execute("SELECT 1 FROM processing_job WHERE worker_node_id=? AND status='running' AND lease_until>?", (node_id, time.time())).fetchone():
@@ -73,6 +76,10 @@ def claim(node_id):
         for candidate in rows:
             media = conn.execute('SELECT * FROM event_media WHERE media_id=?', (candidate['media_id'],)).fetchone()
             if media:
+                if media['request_id']:
+                    clip = conn.execute('SELECT status FROM event_clip_request WHERE request_id=?', (media['request_id'],)).fetchone()
+                    if not clip or clip[0] != 'received':
+                        continue
                 retention = conn.execute('SELECT decision FROM event_retention WHERE event_id=?', (media['event_id'],)).fetchone()
                 if retention and retention[0] == 'delete':
                     conn.execute("UPDATE processing_job SET status='cancelled',updated_at=? WHERE job_id=?", (time.time(), candidate['job_id']))
@@ -146,7 +153,7 @@ def expire_jobs():
             conn.execute("UPDATE event_media SET status='failed',redaction_status='failed',error_code='source_expired' WHERE media_id=? AND status='processing'", (row['media_id'],))
 
 
-def ingest(event_id, camera_id, kind, role, source, mode):
+def ingest(event_id, camera_id, kind, role, source, mode, request_id=None):
     import cv2
     if kind == 'image':
         frame = cv2.imread(str(source))
@@ -158,11 +165,25 @@ def ingest(event_id, camera_id, kind, role, source, mode):
         if len(signature) < 12 or signature[4:8] != b'ftyp':
             raise ValueError('invalid_video_source')
     from backend.media.service import register_media, _preserve_source, get_media, _fail, _finish_processing
-    ident = register_media(event_id, camera_id, kind, role, mode)
+    ident = register_media(event_id, camera_id, kind, role, mode, request_id)
     try:
         _preserve_source(ident, source=source, consume_source=True)
         enqueue(ident)
+        if request_id:
+            with get_connection() as conn:
+                begin_write(conn)
+                decision = conn.execute('SELECT decision FROM event_retention WHERE event_id=?', (event_id,)).fetchone()[0]
+                if decision == 'delete':
+                    raise ValueError('event_media_deleted')
+                changed = conn.execute("UPDATE event_clip_request SET status='received',updated_at=? WHERE request_id=? AND status='pending'", (time.time(), request_id))
+                if changed.rowcount != 1:
+                    raise ValueError('clip_request_already_finished')
     except Exception as error:
+        with get_connection() as conn:
+            begin_write(conn)
+            conn.execute("UPDATE processing_job SET status='failed',error_code='clip_ingest_failed',finished_at=?,updated_at=? WHERE media_id=? AND status='queued'", (time.time(), time.time(), ident))
+            if request_id:
+                conn.execute("UPDATE event_clip_request SET status='failed',error_code='clip_ingest_failed',updated_at=? WHERE request_id=? AND status='pending'", (time.time(), request_id))
         _fail(ident, error)
         _finish_processing(ident)
         raise

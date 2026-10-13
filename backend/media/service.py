@@ -60,6 +60,7 @@ def public_media(row: dict, decision: str = "pending") -> dict:
     path = result.pop("storage_path", "")
     result.pop("source_node_id", None)
     result.pop("request_id", None)
+    result['clip_request_id'] = row.get('request_id')
     result.pop("processing_started_at", None)
     result.pop("source_path", None)
     safe = False
@@ -175,7 +176,7 @@ def get_media(media_id: str) -> dict:
     return public_media(dict(row), retention["decision"] if retention else "pending")
 
 
-def register_media(event_id: str, camera_id: str, kind: str, role: str, mode: str = "scrfd") -> str:
+def register_media(event_id: str, camera_id: str, kind: str, role: str, mode: str = "scrfd", request_id: str | None = None) -> str:
     if mode not in {"enhanced", "scrfd"}:
         raise ValueError("invalid_redaction_mode")
     if kind not in {"image", "video"} or role not in {"thumbnail", "clip", "reference"}:
@@ -193,10 +194,21 @@ def register_media(event_id: str, camera_id: str, kind: str, role: str, mode: st
         conn.execute("INSERT INTO event_retention(event_id) VALUES(?) ON CONFLICT DO NOTHING", (event_id,))
         if conn.execute("SELECT decision FROM event_retention WHERE event_id=?", (event_id,)).fetchone()[0] == "delete":
             raise ValueError("event_media_deleted")
+        if request_id:
+            request = conn.execute('SELECT * FROM event_clip_request WHERE request_id=? AND event_id=? AND camera_id=?',
+                                   (request_id, event_id, camera_id)).fetchone()
+            if not request:
+                raise ValueError('clip_request_not_found')
+            if request['status'] != 'pending':
+                raise ValueError('clip_request_already_finished')
+            if kind != 'video' or role != 'clip':
+                raise ValueError('invalid_clip_request_media')
+            if conn.execute('SELECT 1 FROM event_media WHERE request_id=?', (request_id,)).fetchone():
+                raise ValueError('clip_request_upload_in_progress')
         conn.execute("""INSERT INTO event_media (
-            media_id,event_id,camera_id,kind,role,status,redaction_status,created_at,processing_started_at,capture_start_at,capture_end_at,redaction_mode)
-            VALUES (?,?,?,?,?,'processing','unprocessed',?,?,?,?,?)""",
-            (media_id, event_id, camera_id, kind, role, now(), time.time(), event["timestamp_start"], event["timestamp_end"], mode))
+            media_id,event_id,camera_id,kind,role,status,redaction_status,created_at,processing_started_at,capture_start_at,capture_end_at,redaction_mode,request_id)
+            VALUES (?,?,?,?,?,'processing','unprocessed',?,?,?,?,?,?)""",
+            (media_id, event_id, camera_id, kind, role, now(), time.time(), event["timestamp_start"], event["timestamp_end"], mode, request_id))
     return media_id
 
 

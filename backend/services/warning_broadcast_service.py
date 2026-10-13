@@ -65,14 +65,18 @@ def _select_broadcast_message(
     if zone_name != "":
         candidate_zones.append("")
 
+    normalized = language.strip().replace('_', '-').lower()
+    candidate_languages = list(dict.fromkeys([normalized, normalized.split('-')[0]]))
+
     for target_zone in candidate_zones:
-        for template in templates:
-            if (
-                template["ppe_type"] == ppe_type
-                and template["zone_name"] == target_zone
-                and template["language"] == language
-            ):
-                return str(template["message"])
+        for target_language in candidate_languages:
+            for template in templates:
+                if (
+                    template["ppe_type"] == ppe_type
+                    and template["zone_name"] == target_zone
+                    and template["language"].strip().replace('_', '-').lower() == target_language
+                ):
+                    return str(template["message"])
 
     return None
 

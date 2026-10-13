@@ -133,9 +133,12 @@ async def redact_existing(media_id: str, redaction_mode: Literal["enhanced", "sc
 @router.post("/events/{event_id}/media", status_code=201)
 async def upload_media(event_id: str, request: Request, kind: Literal["image", "video"],
                        camera_id: str | None = None, role: Literal["thumbnail", "clip", "reference"] = "reference",
+                       request_id: str | None = None,
                        redaction_mode: Literal["enhanced", "scrfd"] = "scrfd"):
     """Raw request body; originals are retained privately until the short retry TTL expires."""
     require_media_processing()
+    if request_id and processing_mode() != 'remote':
+        raise HTTPException(409, 'clip_request_requires_remote_processing')
     event = get_candidate_event_by_id(event_id)
     if not event:
         raise HTTPException(404, "Event not found")
@@ -159,7 +162,7 @@ async def upload_media(event_id: str, request: Request, kind: Literal["image", "
         try:
             if processing_mode() == 'remote':
                 from backend.processing.service import ingest
-                return await run_in_threadpool(ingest, event_id, camera_id or event['camera_id'], kind, role, source, redaction_mode)
+                return await run_in_threadpool(ingest, event_id, camera_id or event['camera_id'], kind, role, source, redaction_mode, request_id)
             return await run_in_threadpool(ingest_file, event_id, camera_id or event["camera_id"], kind, role, source, True, redaction_mode)
         except ValueError as exc:
             state_error(exc)

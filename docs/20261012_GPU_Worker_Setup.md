@@ -4,13 +4,13 @@
 
 컨테이너 API는 원본·미디어·작업·보관/삭제 상태를 관리하고, 서버 PC의 네이티브 worker는 인증된 HTTP로 원본을 받아 기존 YuNet/SCRFD 비식별화 함수를 실행합니다. DB·Docker volume을 공유하지 않습니다. 이벤트 이미지·클립이 대상이며, PPE 영상 송신·추론·이벤트 생성은 통합 담당 범위입니다.
 
-SQLite·PostgreSQL v8에 processing_worker·processing_job과 미디어 generation을 추가했습니다. PostgreSQL의 v7→v8 업그레이드를 지원합니다. 실제 개발 DB 업그레이드는 아직 수행하지 않았습니다.
+SQLite·PostgreSQL v9에 processing_worker·processing_job과 미디어 generation, 추론 우선 신호를 추가했습니다. PostgreSQL의 v7/v8→v9 업그레이드를 지원합니다. 실제 개발 DB 업그레이드는 아직 수행하지 않았습니다. 추론 신호와 클립 접수 연동은 [연동 보완 문서](20261013_Backend_Integration_Followups.md)를 참고합니다.
 
 ## 설정 — 실행은 승인 후
 
 컨테이너 .env에서 `PPE_PROCESSING_MODE=remote`를 설정합니다. 기존 disabled 모드는 503 차단을 유지하고 기본 네이티브 local 모드는 기존 처리를 유지합니다. 장비 후보 VLM 분석은 별도 연결 전까지 컨테이너에서 503입니다.
 
-1. DB 백업 후 기존 초기화/마이그레이션 절차로 v8을 반영합니다. SQLite seed 재삽입이 필요한지 확인하고 기존 DB에는 apply_migrations 경로를 사용합니다.
+1. DB 백업 후 기존 초기화/마이그레이션 절차로 v9를 반영합니다. SQLite seed 재삽입이 필요한지 확인하고 기존 DB에는 apply_migrations 경로를 사용합니다.
 2. 관리자 인증으로 기존 `POST /api/nodes`에서 처리 PC node를 등록하고 반환 token을 안전하게 저장합니다.
 3. `PUT /api/processing/workers/{node_id}`에 `{ "enabled": true }`를 보내 처리 권한을 부여합니다. 일반 영상·방송 node에는 부여하지 않습니다.
 4. 서버 PC 시스템 Python에 기존 GPU 의존성과 얼굴 모델을 준비합니다. 서버 PC의 프로그램은 컨테이너의 Python 환경과 별개입니다.

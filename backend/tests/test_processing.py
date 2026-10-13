@@ -184,3 +184,37 @@ class ProcessingTests(unittest.TestCase):
             publish_file(source, target)
         self.assertEqual(target.read_bytes(), self.image)
         self.assertEqual(list(target.parent.iterdir()), [target])
+
+    def test_inference_busy_defers_claim_and_expires(self):
+        self.upload()
+        response = self.client.put('/api/processing/inference-load', headers=self.node, json={'busy':True,'ttl_seconds':10})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(self.client.post('/api/processing/claim', headers=self.node).json()['job'])
+        self.assertEqual(self.client.put('/api/processing/inference-load', headers=self.admin, json={'busy':True}).status_code, 401)
+        with get_connection() as conn:
+            conn.execute('UPDATE processing_inference_load SET busy_until=?', (time.time()-1,))
+        self.assertIsNotNone(self.client.post('/api/processing/claim', headers=self.node).json()['job'])
+
+    def test_cooperative_guard_is_scoped(self):
+        from backend.processing.priority import inference_guard, yield_to_inference
+        calls = []
+        with inference_guard(lambda: calls.append(True)):
+            yield_to_inference()
+        yield_to_inference()
+        self.assertEqual(calls, [True])
+
+    def test_server_clip_upload_links_delivery_and_processing(self):
+        response = self.client.post('/api/processing/events/EVT_0001/clip-requests', headers=self.node, json={'camera_id':'CAM_001'})
+        self.assertEqual(response.status_code, 201)
+        ident = response.json()['request_id']
+        from backend.db.seed_demo import ASSETS
+        path = '/api/processing/events/EVT_0001/clip?request_id=' + ident
+        response = self.client.post(path, headers=self.node, content=(ASSETS/'sample.mp4').read_bytes())
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()['clip_request_id'], ident)
+        self.assertEqual(response.json()['processing_state'], 'queued')
+        self.assertEqual(self.client.post(path, headers=self.node, content=(ASSETS/'sample.mp4').read_bytes()).status_code, 409)
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT status FROM event_clip_request WHERE request_id=?',(ident,)).fetchone()[0], 'received')
+        job, _ = self.claim()
+        self.assertEqual(job['kind'], 'video')
