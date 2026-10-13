@@ -34,6 +34,19 @@ class PostgresIntegrationTests(unittest.TestCase):
             self.assertEqual(schema_version(conn), LATEST_VERSION)
         self.assertEqual(self.client.get('/api/auth/me', headers=login(self.client)).status_code, 200)
 
+    def test_v7_processing_upgrade_preserves_account(self):
+        with connect() as conn:
+            conn.execute('DROP TABLE processing_inference_load')
+            conn.execute('DROP TABLE processing_job')
+            conn.execute('DROP TABLE processing_worker')
+            conn.execute('ALTER TABLE event_media DROP COLUMN processing_generation')
+            conn.execute('UPDATE app_schema_version SET version=7 WHERE singleton=1')
+        initialize()
+        with connect() as conn:
+            self.assertEqual(schema_version(conn), LATEST_VERSION)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM processing_job').fetchone()[0], 0)
+        self.assertEqual(self.client.get('/api/auth/me', headers=login(self.client)).status_code, 200)
+
     def test_week_numbers_match_sqlite_at_year_boundaries(self):
         dates = ['2023-01-01', '2023-01-02', '2023-12-31', '2024-01-01', '2024-02-29', '2024-12-31']
         with sqlite3.connect(':memory:') as sqlite, connect() as postgres:

@@ -5,6 +5,9 @@
 !backend/**/*.py
 !backend/**/*.sql
 !backend/*.txt
+!backend/db/demo_assets/*.jpg
+!backend/db/demo_assets/*.mp4
+!backend/db/demo_assets/README.md
 !deploy/
 !deploy/api.Dockerfile
 !deploy/web.Dockerfile

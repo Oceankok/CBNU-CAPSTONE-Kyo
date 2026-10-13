@@ -13,6 +13,7 @@ x-api: &api
     PPE_DB_PATH: /app/runtime-db/ppe_system.db
     PPE_JWT_SECRET: ${PPE_JWT_SECRET:?Set PPE_JWT_SECRET in .env (at least 32 bytes)}
     PPE_LOCAL_PROCESSING: "false"
+    PPE_PROCESSING_MODE: ${PPE_PROCESSING_MODE:-disabled}
     PPE_EQUIPMENT_PROVIDER: ""
     PPE_CORS_ORIGINS: ${PPE_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
     PPE_COOKIE_SECURE: ${PPE_COOKIE_SECURE:-false}

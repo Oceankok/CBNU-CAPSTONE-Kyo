@@ -49,11 +49,15 @@ class FaceRedactor:
         if hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash:
             raise MediaError("face_model_checksum_mismatch")
         from backend.media.enhanced import get_cuda_detector
+        from backend.processing.priority import yield_to_inference
+        yield_to_inference()
         self.detector, self.cache_reused = get_cuda_detector(path, "scrfd" if mode == "scrfd" else "yunet")
         self.backend = "onnxruntime-cuda"
         self.metrics["model_init_seconds"] = time.perf_counter() - started
 
     def detect_faces(self, frame, rotated=True):
+        from backend.processing.priority import yield_to_inference
+        yield_to_inference()
         if frame is None or frame.ndim != 3 or frame.shape[2] != 3:
             raise MediaError("invalid_frame")
         height, width = frame.shape[:2]
@@ -232,6 +236,8 @@ def redact_video(source: Path, output: Path, work_dir: Path, mode="scrfd") -> di
                 break
             if frames >= max_frames:
                 raise MediaError("video_too_long")
+            from backend.processing.priority import yield_to_inference
+            yield_to_inference()
             redacted, count = processor.redact(frame)
             stage_started = time.perf_counter()
             if writer is None:

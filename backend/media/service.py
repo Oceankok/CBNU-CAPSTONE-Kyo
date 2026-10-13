@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from backend.db.event_repository import get_connection
-from backend.media.paths import PROCESSED_ROOT, WORK_ROOT, SOURCE_ROOT, private_source_path, owned_path, storage_key
+from backend.media.paths import PROCESSED_ROOT, WORK_ROOT, SOURCE_ROOT, private_source_path, owned_path, storage_key, publish_file
 from backend.media.redaction import MediaError, redact_image, redact_video
 
 
@@ -60,6 +60,7 @@ def public_media(row: dict, decision: str = "pending") -> dict:
     path = result.pop("storage_path", "")
     result.pop("source_node_id", None)
     result.pop("request_id", None)
+    result['clip_request_id'] = row.get('request_id')
     result.pop("processing_started_at", None)
     result.pop("source_path", None)
     safe = False
@@ -72,6 +73,10 @@ def public_media(row: dict, decision: str = "pending") -> dict:
     result["can_reprocess"] = reason is None
     result["reprocess_unavailable_reason"] = reason
     result["failure_category"] = failure_category(row.get("error_code"))
+    with get_connection() as conn:
+        job = conn.execute('SELECT job_id,status FROM processing_job WHERE media_id=? ORDER BY created_at DESC LIMIT 1', (row['media_id'],)).fetchone()
+    result['job_id'] = job['job_id'] if job else None
+    result['processing_state'] = job['status'] if job else None
     return result
 
 
@@ -171,7 +176,7 @@ def get_media(media_id: str) -> dict:
     return public_media(dict(row), retention["decision"] if retention else "pending")
 
 
-def register_media(event_id: str, camera_id: str, kind: str, role: str, mode: str = "scrfd") -> str:
+def register_media(event_id: str, camera_id: str, kind: str, role: str, mode: str = "scrfd", request_id: str | None = None) -> str:
     if mode not in {"enhanced", "scrfd"}:
         raise ValueError("invalid_redaction_mode")
     if kind not in {"image", "video"} or role not in {"thumbnail", "clip", "reference"}:
@@ -189,10 +194,21 @@ def register_media(event_id: str, camera_id: str, kind: str, role: str, mode: st
         conn.execute("INSERT INTO event_retention(event_id) VALUES(?) ON CONFLICT DO NOTHING", (event_id,))
         if conn.execute("SELECT decision FROM event_retention WHERE event_id=?", (event_id,)).fetchone()[0] == "delete":
             raise ValueError("event_media_deleted")
+        if request_id:
+            request = conn.execute('SELECT * FROM event_clip_request WHERE request_id=? AND event_id=? AND camera_id=?',
+                                   (request_id, event_id, camera_id)).fetchone()
+            if not request:
+                raise ValueError('clip_request_not_found')
+            if request['status'] != 'pending':
+                raise ValueError('clip_request_already_finished')
+            if kind != 'video' or role != 'clip':
+                raise ValueError('invalid_clip_request_media')
+            if conn.execute('SELECT 1 FROM event_media WHERE request_id=?', (request_id,)).fetchone():
+                raise ValueError('clip_request_upload_in_progress')
         conn.execute("""INSERT INTO event_media (
-            media_id,event_id,camera_id,kind,role,status,redaction_status,created_at,processing_started_at,capture_start_at,capture_end_at,redaction_mode)
-            VALUES (?,?,?,?,?,'processing','unprocessed',?,?,?,?,?)""",
-            (media_id, event_id, camera_id, kind, role, now(), time.time(), event["timestamp_start"], event["timestamp_end"], mode))
+            media_id,event_id,camera_id,kind,role,status,redaction_status,created_at,processing_started_at,capture_start_at,capture_end_at,redaction_mode,request_id)
+            VALUES (?,?,?,?,?,'processing','unprocessed',?,?,?,?,?,?)""",
+            (media_id, event_id, camera_id, kind, role, now(), time.time(), event["timestamp_start"], event["timestamp_end"], mode, request_id))
     return media_id
 
 
@@ -214,7 +230,7 @@ def _publish(media_id: str, output: Path, details: dict):
             retention = conn.execute("SELECT decision FROM event_retention WHERE event_id=?", (row["event_id"],)).fetchone()
             if row["status"] != "processing" or retention["decision"] == "delete":
                 return
-            os.replace(output, target)
+            publish_file(output, target)
             moved = True
             conn.execute("""UPDATE event_media SET storage_path=?,status='ready',redaction_status='complete',
                 error_code=NULL,faces_detected=?,processed_frames=?,redaction_mode=?,inference_backend=?,processing_seconds=? WHERE media_id=?""",
@@ -323,6 +339,9 @@ def delete_event_media(event_id: str) -> dict:
     for row in rows:
         if row["processing_started_at"] is not None:
             continue
+        with get_connection() as conn:
+            if conn.execute("SELECT 1 FROM processing_job WHERE media_id=? AND local_cleanup_status='pending'", (row['media_id'],)).fetchone():
+                continue
         try:
             if row["storage_path"]:
                 owned_path(row["storage_path"]).unlink(missing_ok=True)
@@ -343,6 +362,11 @@ def delete_event_media(event_id: str) -> dict:
 
 
 def _request_delete(conn, event_id: str, actor: str):
+    conn.execute("""UPDATE event_media SET processing_started_at=NULL WHERE event_id=? AND EXISTS
+        (SELECT 1 FROM processing_job j WHERE j.media_id=event_media.media_id
+         AND j.generation=event_media.processing_generation AND j.status IN ('queued','running'))""", (event_id,))
+    conn.execute("""UPDATE processing_job SET status='cancelled',finished_at=?,updated_at=? WHERE media_id IN
+        (SELECT media_id FROM event_media WHERE event_id=?) AND status IN ('queued','running')""", (time.time(), time.time(), event_id))
     conn.execute("""UPDATE event_retention SET decision='delete',consent_confirmed=0,
         decided_by=?,decided_at=?,version=version+1 WHERE event_id=?""", (actor, now(), event_id))
     conn.execute("UPDATE event_media SET status='delete_pending' WHERE event_id=? AND status!='deleted'", (event_id,))
