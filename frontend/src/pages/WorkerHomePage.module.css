@@ -103,7 +103,7 @@
 }
 
 .rules {
-  margin: 0;
+  margin: 0 0 18px;
   padding-left: 20px;
   display: flex;
   flex-direction: column;
