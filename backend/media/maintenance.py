@@ -1,3 +1,4 @@
+from backend.db.connection import begin_write
 """Explicit housekeeping worker: expired retention, deletion retries and stale jobs."""
 
 import argparse
@@ -12,7 +13,7 @@ from backend.media.service import _request_delete, delete_event_media
 def maintain_once(stale_after: int = 3600) -> dict:
     cutoff = time.time() - stale_after
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         originals = conn.execute("SELECT media_id,source_path FROM event_media WHERE source_path!='' AND source_expires_at<=? AND processing_started_at IS NULL AND status!='processing'", (time.time(),)).fetchall()
         for original in originals:
             try:

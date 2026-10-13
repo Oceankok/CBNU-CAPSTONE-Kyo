@@ -1,3 +1,4 @@
+from backend.db.connection import begin_write
 import os
 import tempfile
 from pathlib import Path
@@ -44,7 +45,7 @@ class ClipRequestRegistration(BaseModel):
 def register_clip_request(event_id: str, body: ClipRequestRegistration):
     """Record delivery progress; transport dispatch is owned by the field integration."""
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         if not conn.execute("SELECT 1 FROM candidate_event WHERE event_id=?", (event_id,)).fetchone():
             raise HTTPException(404, "event_not_found")
         if not conn.execute("SELECT 1 FROM camera_info WHERE camera_id=?", (body.camera_id,)).fetchone():
@@ -69,7 +70,7 @@ class ClipRequestResult(BaseModel):
 @router.put("/events/{event_id}/clip-requests/{request_id}")
 def report_clip_request(event_id: str, request_id: str, body: ClipRequestResult):
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         row = conn.execute("SELECT * FROM event_clip_request WHERE request_id=? AND event_id=?", (request_id,event_id)).fetchone()
         if not row:
             raise HTTPException(404, "clip_request_not_found")

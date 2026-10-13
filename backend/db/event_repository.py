@@ -1,3 +1,5 @@
+from backend.db.connection import week_expression
+from backend.db.connection import begin_write
 import os
 """
 event_repository.py
@@ -54,10 +56,8 @@ def get_connection() -> sqlite3.Connection:
         - SQLite는 기본적으로 외래키 제약 조건이 비활성화되어 있으므로
           PRAGMA foreign_keys = ON을 실행한다.
     """
-    conn = sqlite3.connect(os.environ.get("PPE_DB_PATH", str(DB_PATH)), factory=ClosingConnection)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    return conn
+    from backend.db.connection import connect
+    return connect()
 
 
 def row_to_dict(row: Optional[sqlite3.Row]) -> Optional[dict[str, Any]]:
@@ -461,7 +461,7 @@ def insert_event_review(review: dict[str, Any]) -> None:
     """
 
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         from backend.media.service import validate_review
         validate_review(conn, review)
         if review["review_result"] == "false_positive":
@@ -540,7 +540,7 @@ def update_event_review(review: dict[str, Any]) -> None:
     """
 
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         from backend.media.service import validate_review
         validate_review(conn, review)
         existing_review = conn.execute(
@@ -973,11 +973,11 @@ def generate_quarterly_stats(quarter: str) -> dict:
         )
 
         ppe_rows = conn.execute(
-            """
+            f"""
             SELECT
                 ppe_type,
                 COUNT(*) AS confirmed_count,
-                COUNT(DISTINCT strftime('%W', timestamp_start)) AS repeat_weeks
+                COUNT(DISTINCT {week_expression("timestamp_start")}) AS repeat_weeks
             FROM candidate_event
             WHERE timestamp_start >= ?
               AND timestamp_start < ?
@@ -1022,11 +1022,11 @@ def generate_quarterly_stats(quarter: str) -> dict:
             )
 
         zone_rows = conn.execute(
-            """
+            f"""
             SELECT
                 ci.zone_name,
                 COUNT(*) AS confirmed_count,
-                COUNT(DISTINCT strftime('%W', ce.timestamp_start)) AS repeat_weeks
+                COUNT(DISTINCT {week_expression("ce.timestamp_start")}) AS repeat_weeks
             FROM candidate_event ce
             LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
             WHERE ce.timestamp_start >= ?
@@ -1158,12 +1158,12 @@ def generate_education_recommendations(quarter: str) -> dict:
         ).fetchone()["count"]
 
         rows = conn.execute(
-            """
+            f"""
             SELECT
                 ce.ppe_type,
                 ci.zone_name,
                 COUNT(*) AS confirmed_count,
-                COUNT(DISTINCT strftime('%W', ce.timestamp_start)) AS repeat_weeks
+                COUNT(DISTINCT {week_expression("ce.timestamp_start")}) AS repeat_weeks
             FROM candidate_event ce
             LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
             WHERE ce.timestamp_start >= ?

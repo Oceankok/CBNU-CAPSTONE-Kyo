@@ -1,3 +1,4 @@
+from backend.db.connection import begin_write
 import json
 from datetime import datetime, timezone
 
@@ -51,7 +52,7 @@ def replace_zone_members(zone_name: str, body: ZoneMembersRequest):
     if any(not user_id or len(user_id) > 100 for user_id in user_ids) or len(set(user_ids)) != len(user_ids):
         raise HTTPException(422, "user_ids must contain distinct nonblank IDs")
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         if not _find(conn, zone_name):
             raise HTTPException(404, "Zone rule not found")
         for user_id in user_ids:
@@ -95,7 +96,7 @@ def save_zone_rule(zone_name: str, body: ZoneRuleRequest, user: dict = Depends(r
 def remove_zone_rule(zone_name: str):
     zone_name = zone_name.strip()
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         if not _find(conn, zone_name):
             raise HTTPException(404, "Zone rule not found")
         users = conn.execute("SELECT COUNT(*) FROM user_zone WHERE zone_name=?", (zone_name,)).fetchone()[0]

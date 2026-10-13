@@ -26,6 +26,11 @@ def run_sql_file(cursor: sqlite3.Cursor, file_path: Path) -> None:
 
 def init_database() -> None:
     """SQLite DB 파일을 생성하고 초기 테이블 및 더미 데이터를 삽입한다."""
+    from backend.db.connection import is_postgres
+    if is_postgres():
+        from backend.db.postgres import initialize
+        initialize(seed=os.environ.get("PPE_DB_SEED", "false").lower() == "true")
+        return
     db_path = os.environ.get("PPE_DB_PATH", str(DB_PATH))
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row

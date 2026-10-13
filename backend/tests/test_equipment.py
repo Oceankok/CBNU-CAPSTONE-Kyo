@@ -136,6 +136,8 @@ class EquipmentApiTests(unittest.TestCase):
         self.assertIn("zone_rule_missing",self.policy("CAM_NO_RULE")["configuration_issues"])
 
     def test_v4_migration_preserves_existing_records_and_is_repeatable(self):
+        if __import__("os").environ.get("PPE_TEST_POSTGRES_URL"):
+            self.skipTest("SQLite historical migration; PostgreSQL baseline tested separately")
         from backend.db.migrations import apply_migrations, LATEST_VERSION
         with get_connection() as conn:
             before=[dict(row) for row in conn.execute("SELECT * FROM candidate_event ORDER BY event_id")]

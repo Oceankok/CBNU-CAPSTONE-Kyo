@@ -1,3 +1,4 @@
+from backend.db.connection import begin_write
 """Private evidence lifecycle and atomic administrator confirmation."""
 
 import json
@@ -129,7 +130,7 @@ def analyze(data: bytes, content_type: str, camera_id: str | None, actor: str):
 
 def confirm(recognition_id, body, actor):
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         row = find(conn, recognition_id)
         if row["status"] == "confirmed":
             raise HTTPException(409, "recognition_already_confirmed")
@@ -152,7 +153,7 @@ def cleanup(stale_after=3600):
     import shutil
     cleaned = 0
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         for row in conn.execute("SELECT recognition_id,evidence_path FROM equipment_recognition WHERE evidence_path!='' AND evidence_expires_at<=?", (time.time(),)).fetchall():
             try:
                 evidence_path(row["evidence_path"]).unlink(missing_ok=True)

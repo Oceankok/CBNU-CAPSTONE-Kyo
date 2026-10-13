@@ -1,3 +1,4 @@
+from backend.db.connection import begin_write
 """Media publication and deletion use the same DB lock as retention decisions."""
 
 import os
@@ -133,7 +134,7 @@ def _preserve_source(media_id: str, source=None, frame=None, consume_source: boo
         raise ValueError("invalid_source_ttl")
     try:
         with get_connection() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             row = conn.execute("SELECT m.status,r.decision FROM event_media m LEFT JOIN event_retention r ON r.event_id=m.event_id WHERE media_id=?", (media_id,)).fetchone()
             if not row or row["status"] != "processing" or row["decision"] == "delete":
                 raise ValueError("event_media_deleted")
@@ -179,13 +180,13 @@ def register_media(event_id: str, camera_id: str, kind: str, role: str, mode: st
         raise ValueError("invalid_media_role")
     media_id = str(uuid4())
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         event = conn.execute("SELECT timestamp_start,timestamp_end FROM candidate_event WHERE event_id=?", (event_id,)).fetchone()
         if not event:
             raise ValueError("event_not_found")
         if not conn.execute("SELECT 1 FROM camera_info WHERE camera_id=?", (camera_id,)).fetchone():
             raise ValueError("camera_not_found")
-        conn.execute("INSERT OR IGNORE INTO event_retention(event_id) VALUES(?)", (event_id,))
+        conn.execute("INSERT INTO event_retention(event_id) VALUES(?) ON CONFLICT DO NOTHING", (event_id,))
         if conn.execute("SELECT decision FROM event_retention WHERE event_id=?", (event_id,)).fetchone()[0] == "delete":
             raise ValueError("event_media_deleted")
         conn.execute("""INSERT INTO event_media (
@@ -208,7 +209,7 @@ def _publish(media_id: str, output: Path, details: dict):
     moved = False
     try:
         with get_connection() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             row = conn.execute("SELECT * FROM event_media WHERE media_id=?", (media_id,)).fetchone()
             retention = conn.execute("SELECT decision FROM event_retention WHERE event_id=?", (row["event_id"],)).fetchone()
             if row["status"] != "processing" or retention["decision"] == "delete":
@@ -278,7 +279,7 @@ def reprocess_media(media_id: str, mode: str = "scrfd") -> dict:
         raise ValueError("invalid_redaction_mode")
     # Only app-owned legacy material is moved. Arbitrary user input is never removed.
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         row = conn.execute("SELECT * FROM event_media WHERE media_id=?", (media_id,)).fetchone()
         if not row:
             raise ValueError("media_not_found")
@@ -358,7 +359,7 @@ def decide_retention(event_id: str, decision: str, actor: str, expected_version:
     if retain_until is not None and retain_until <= time.time():
         raise ValueError("retention_expiry_must_be_future")
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         event = conn.execute("SELECT event_status FROM candidate_event WHERE event_id=?", (event_id,)).fetchone()
         if not event:
             raise ValueError("event_not_found")
@@ -367,7 +368,7 @@ def decide_retention(event_id: str, decision: str, actor: str, expected_version:
             raise ValueError("final_review_required")
         if decision == "retain" and review["review_result"] == "unreviewable":
             raise ValueError("unreviewable_media_cannot_be_retained")
-        conn.execute("INSERT OR IGNORE INTO event_retention(event_id) VALUES(?)", (event_id,))
+        conn.execute("INSERT INTO event_retention(event_id) VALUES(?) ON CONFLICT DO NOTHING", (event_id,))
         current = conn.execute("SELECT * FROM event_retention WHERE event_id=?", (event_id,)).fetchone()
         if current["version"] != expected_version:
             raise ValueError("retention_version_conflict")

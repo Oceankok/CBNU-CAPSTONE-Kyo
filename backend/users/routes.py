@@ -1,3 +1,5 @@
+from backend.db.connection import IntegrityError
+from backend.db.connection import begin_write
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import sqlite3
@@ -66,7 +68,7 @@ def add_user(body: UserCreate):
     if "zone_names" in body.model_fields_set and body.zone_names is None:
         raise HTTPException(422, "zone_names must be an array")
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         if not _zone_exists(conn, zone_name):
             raise HTTPException(422, "zone_name must refer to an existing zone rule")
         try:
@@ -74,7 +76,7 @@ def add_user(body: UserCreate):
                 "INSERT INTO app_user(user_id,password_hash,display_name,role,zone_name) VALUES(?,?,?,?,?)",
                 (user_id, PASSWORDS.hash(body.password), display_name, body.role, zone_name),
             )
-        except sqlite3.IntegrityError as exc:
+        except IntegrityError as exc:
             raise HTTPException(409, "user_id already exists") from exc
         replace_user_zones(conn, user_id, body.zone_names if body.zone_names is not None else ([zone_name] if zone_name else []))
         row = conn.execute(
@@ -102,7 +104,7 @@ def edit_user(user_id: str, body: UserPatch, actor: dict = Depends(current_user)
         changes["zone_name"] = changes["zone_name"].strip() or None
 
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         row = conn.execute("SELECT * FROM app_user WHERE user_id=?", (user_id,)).fetchone()
         if not row:
             raise HTTPException(404, "User not found")

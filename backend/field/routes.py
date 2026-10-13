@@ -1,3 +1,5 @@
+from backend.db.connection import IntegrityError
+from backend.db.connection import begin_write
 import hashlib
 import json
 import sqlite3
@@ -37,7 +39,7 @@ class NodeRequest(BaseModel):
 def create_node(body: NodeRequest):
     try:
         return register_node(body.node_id, body.name)
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         raise HTTPException(409, "Node ID already exists")
 
 
@@ -82,7 +84,7 @@ def link_camera(camera_id: str, body: CameraLink):
             conn.execute("""INSERT INTO camera_node(camera_id,source_node_id,output_node_id) VALUES(?,?,?)
                             ON CONFLICT(camera_id) DO UPDATE SET source_node_id=excluded.source_node_id,output_node_id=excluded.output_node_id""",
                          (camera_id, body.source_node_id, body.output_node_id))
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         raise HTTPException(404, "Camera or node not found")
     return {"camera_id": camera_id, **body.model_dump()}
 
@@ -123,7 +125,7 @@ def report(command_id: str, body: CommandResult, node: dict = Depends(current_no
     if len(encoded)>65536:
         raise HTTPException(413, "Result too large")
     with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write(conn)
         row = conn.execute("SELECT * FROM field_command WHERE command_id=? AND node_id=?", (command_id, node["node_id"])).fetchone()
         if not row:
             raise HTTPException(404, "Command not found")
