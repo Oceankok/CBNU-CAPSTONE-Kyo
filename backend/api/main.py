@@ -488,3 +488,14 @@ app.include_router(recognition_router)  # Static /recognitions must precede /{eq
 app.include_router(equipment_router)
 from backend.processing.routes import router as processing_router
 app.include_router(processing_router)
+from backend.cameras.routes import router as cameras_router
+from backend.cameras.service import CameraStateError
+from fastapi.responses import JSONResponse
+app.include_router(cameras_router)
+from backend.video.routes import router as video_router
+app.include_router(video_router)
+
+
+@app.exception_handler(CameraStateError)
+async def camera_state_error(request: Request, error: CameraStateError):
+    return JSONResponse(status_code=error.status_code, content={'detail': str(error)})

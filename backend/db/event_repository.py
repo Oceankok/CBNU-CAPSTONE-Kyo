@@ -286,6 +286,9 @@ def insert_candidate_event(event: dict[str, Any]) -> None:
     """
 
     with get_connection() as conn:
+        from backend.cameras.service import require_camera
+        begin_write(conn)
+        require_camera(conn, event['camera_id'], active=True)
         conn.execute(query, event)
         conn.execute("INSERT INTO event_retention(event_id) VALUES(?)", (event["event_id"],))
         created_at = datetime.now().astimezone().isoformat(timespec="seconds")
