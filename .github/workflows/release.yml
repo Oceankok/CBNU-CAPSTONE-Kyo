@@ -15,6 +15,10 @@ on:
         description: Enable public HTTPS (domain and inbound ports must be ready)
         type: boolean
         default: false
+      lan:
+        description: Open the web port to a trusted LAN for HTTP demo access (not with HTTPS)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -45,6 +49,8 @@ jobs:
             const commit = context.eventName === 'workflow_run' ? context.payload.workflow_run.head_sha : context.sha;
             if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('Invalid release commit');
             if (context.eventName === 'workflow_dispatch') {
+              const enabled = value => value === true || value === 'true';
+              if (enabled(context.payload.inputs.lan) && enabled(context.payload.inputs.https)) throw new Error('Choose LAN HTTP or HTTPS, not both');
               const runs = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id:'ci.yml', branch:'main', event:'push', head_sha:commit, status:'success'});
               if (!runs.data.workflow_runs.some(r => r.head_sha === commit)) throw new Error('Successful main CI required');
               if (context.payload.inputs.deploy === true || context.payload.inputs.deploy === 'true') {
@@ -133,6 +139,7 @@ jobs:
       WEB_IMAGE: ${{ needs.gate.outputs.images }}-web@${{ needs.publish.outputs.web }}
       RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       RELEASE_HTTPS: ${{ inputs.https }}
+      RELEASE_LAN: ${{ inputs.lan }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -156,7 +163,7 @@ jobs:
       - name: Apply approved release
         shell: pwsh
         run: |
-          ./deploy/Release.ps1 -DeploymentRoot $env:DEPLOYMENT_ROOT -Commit $env:RELEASE_COMMIT -ApiImage $env:API_IMAGE -WebImage $env:WEB_IMAGE -Https:($env:RELEASE_HTTPS -eq 'true')
+          ./deploy/Release.ps1 -DeploymentRoot $env:DEPLOYMENT_ROOT -Commit $env:RELEASE_COMMIT -ApiImage $env:API_IMAGE -WebImage $env:WEB_IMAGE -Https:($env:RELEASE_HTTPS -eq 'true') -Lan:($env:RELEASE_LAN -eq 'true')
       - name: Remove temporary registry credentials
         if: always()
         shell: pwsh
