@@ -66,3 +66,7 @@ backend/db/*.db-*
 models/privacy/
 storage/candidate_events/processed/*
 !storage/candidate_events/processed/.gitkeep
+
+# Video sender
+/video_sender/output/
+/video_sender/received/
