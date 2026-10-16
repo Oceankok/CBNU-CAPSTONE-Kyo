@@ -11,6 +11,8 @@ from backend.media.service import _request_delete, delete_event_media
 
 
 def maintain_once(stale_after: int = 3600) -> dict:
+    from backend.video.service import cleanup as cleanup_video
+    cleaned_video = cleanup_video()
     from backend.processing.service import expire_jobs
     expire_jobs()
     cutoff = time.time() - stale_after
@@ -28,7 +30,7 @@ def maintain_once(stale_after: int = 3600) -> dict:
             _request_delete(conn, row["event_id"], "system:retention_expired")
         referenced = {row[0] for row in conn.execute("SELECT storage_path FROM event_media WHERE storage_path!=''")}
         referenced_sources = {row[0] for row in conn.execute("SELECT source_path FROM event_media WHERE source_path!=''")}
-    cleaned = 0
+    cleaned = cleaned_video
     if SOURCE_ROOT.exists():
         for source in SOURCE_ROOT.iterdir():
             if source.is_file() and not source.is_symlink() and source.name not in referenced_sources and source.stat().st_mtime < cutoff:

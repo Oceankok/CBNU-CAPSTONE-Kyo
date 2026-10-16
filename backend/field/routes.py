@@ -58,7 +58,7 @@ class CameraLink(BaseModel):
 @admin.get("/cameras")
 def list_cameras(zone_name: str | None = Query(default=None, max_length=100)):
     """List registered cameras and current input/output nodes independently of events."""
-    query = """SELECT c.camera_id,c.camera_location,c.zone_name,c.status,
+    query = """SELECT c.camera_id,c.camera_location,c.zone_name,c.process_type,c.camera_angle_type,c.status,
                       n.source_node_id,n.output_node_id
                FROM camera_info c LEFT JOIN camera_node n ON n.camera_id=c.camera_id"""
     parameters = ()
