@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^ghcr\.io/[a-z0-9_./-]+@sha256:[0-9a-f]{64}$')][string]$WebImage,
     [ValidatePattern('^[a-z][a-z0-9-]{2,40}$')][string]$Project = 'kyo-server',
     [switch]$Https,
+    [switch]$Lan,
     [switch]$InitializeDatabase
 )
 $ErrorActionPreference = 'Stop'
@@ -24,6 +25,7 @@ $settings = @{}
 foreach ($line in Get-Content -LiteralPath $secretFile) {
     if ($line -match '^([A-Z_]+)=(.*)$') { $settings[$Matches[1]] = $Matches[2].Trim() }
 }
+if ($Lan -and $Https) { throw 'Choose LAN HTTP or public HTTPS, not both' }
 if (-not $settings.ContainsKey('PPE_JWT_SECRET') -or [Text.Encoding]::UTF8.GetByteCount($settings['PPE_JWT_SECRET']) -lt 32) { throw 'PPE_JWT_SECRET must contain at least 32 bytes' }
 if (-not $settings.ContainsKey('PPE_DATABASE_URL') -or $settings['PPE_DATABASE_URL'] -notmatch '^postgresql://[^/]+@postgres:5432/kyo$' -or $settings['PPE_DATABASE_URL'] -match 'CHANGE_ME') { throw 'Set PostgreSQL URL for the internal postgres service' }
 if ($Https -and (-not $settings.ContainsKey('PPE_PUBLIC_HOST') -or $settings['PPE_PUBLIC_HOST'] -notmatch '^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$' -or $settings['PPE_COOKIE_SECURE'] -ne 'true')) { throw 'HTTPS requires a public hostname and secure cookies' }
@@ -41,6 +43,8 @@ $releasePath = Join-Path (Join-Path $deploymentPath 'releases') $Commit
 $manifestPath = Join-Path $deploymentPath 'current-release.json'
 $previous = $null
 if (Test-Path -LiteralPath $manifestPath) { $previous = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json }
+$previousLan = $false
+if ($previous -and $previous.PSObject.Properties['lan']) { $previousLan = [bool]$previous.lan }
 if ($previous -and $InitializeDatabase) { throw 'InitializeDatabase is only for the first release; migrations require a separate backup/compatibility plan' }
 if (-not $previous -and -not $InitializeDatabase) { throw 'First release requires an explicit manual InitializeDatabase run' }
 if ($previous -and $previous.project -ne $Project) { throw 'Changing the persistent Compose project is not allowed' }
@@ -55,8 +59,12 @@ if (Test-Path -LiteralPath $releaseRecord) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Caddyfile') -Destination (Join-Path $releasePath 'deploy')
     @{commit=$Commit;api_image=$ApiImage;web_image=$WebImage} | ConvertTo-Json | Set-Content -LiteralPath $releaseRecord -Encoding utf8
 }
+if ($Lan -and -not (Get-Content -LiteralPath (Join-Path $releasePath 'compose.release.yaml') -Raw).Contains('${PPE_WEB_BIND')) {
+    throw 'This release predates LAN binding support; choose a newer release'
+}
 $oldApi = $env:PPE_API_IMAGE
 $oldWeb = $env:PPE_WEB_IMAGE
+$oldBind = $env:PPE_WEB_BIND
 $lockPath = Join-Path $deploymentPath 'release.lock'
 $deploymentLock = [IO.File]::Open($lockPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
 $lockBytes = [Text.Encoding]::UTF8.GetBytes([string]$PID)
@@ -64,6 +72,7 @@ $deploymentLock.Write($lockBytes, 0, $lockBytes.Length)
 $deploymentLock.Flush()
 $env:PPE_API_IMAGE = $ApiImage
 $env:PPE_WEB_IMAGE = $WebImage
+$env:PPE_WEB_BIND = if ($Lan) { '0.0.0.0' } else { '127.0.0.1' }
 function Compose-Arguments([string]$Release) {
     $arguments = @('compose','--project-name',$Project,'--env-file',$secretFile,'-f',(Join-Path $Release 'compose.release.yaml'))
     if ($Https) { $arguments += @('--profile','https') }
@@ -103,8 +112,8 @@ try {
         $response = Invoke-WebRequest -Uri ('https://' + $settings['PPE_PUBLIC_HOST'] + '/health/ready') -TimeoutSec 15
         if ($response.StatusCode -ne 200) { throw 'HTTPS readiness failed' }
     }
-    $record = @{commit=$Commit;api_image=$ApiImage;web_image=$WebImage;project=$Project;https=[bool]$Https}
-    if ($previous -and $previous.commit -ne $Commit) {
+    $record = @{commit=$Commit;api_image=$ApiImage;web_image=$WebImage;project=$Project;https=[bool]$Https;lan=[bool]$Lan}
+    if ($previous -and ($previous.commit -ne $Commit -or $previousLan -ne [bool]$Lan)) {
         $previous | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $deploymentPath 'previous-release.json') -Encoding utf8
     }
     $temporary = $manifestPath + '.tmp'
@@ -117,6 +126,7 @@ try {
         Write-Warning 'Deployment failed; restoring previous application images. Database is not restored automatically.'
         $env:PPE_API_IMAGE = $previous.api_image
         $env:PPE_WEB_IMAGE = $previous.web_image
+        $env:PPE_WEB_BIND = if ($previousLan) { '0.0.0.0' } else { '127.0.0.1' }
         $previousPath = Join-Path (Join-Path $deploymentPath 'releases') $previous.commit
         $restoreServices = @('api','web','maintenance')
         if ($Https) { $restoreServices += 'gateway' }
@@ -127,6 +137,7 @@ try {
 } finally {
     $env:PPE_API_IMAGE = $oldApi
     $env:PPE_WEB_IMAGE = $oldWeb
+    $env:PPE_WEB_BIND = $oldBind
     $deploymentLock.Dispose()
     Remove-Item -LiteralPath $lockPath -Force
 }

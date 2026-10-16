@@ -40,7 +40,8 @@ services:
         condition: service_healthy
   web:
     image: ${PPE_WEB_IMAGE:?Set a published web digest}
-    ports: ["127.0.0.1:${PPE_WEB_PORT:-8080}:8080"]
+    # Explicit demo opt-in through Release.ps1 -Lan; default stays localhost.
+    ports: ["${PPE_WEB_BIND:-127.0.0.1}:${PPE_WEB_PORT:-8080}:8080"]
     restart: unless-stopped
     depends_on:
       api:

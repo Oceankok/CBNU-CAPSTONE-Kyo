@@ -2,7 +2,7 @@
 
 관련 이슈: #129
 
-API·PostgreSQL·웹은 Docker에서 실행하고 GPU worker와 현장 Windows TTS는 기존 네이티브 프로그램을 유지합니다. 기존 웹 화면과 nginx 설정은 변경하지 않습니다. 도메인·네트워크가 아직 미정이므로 외부 공개나 인증서 발급은 실행하지 않습니다.
+API·PostgreSQL·웹은 Docker에서 실행하고 GPU worker와 현장 Windows TTS는 기존 네이티브 프로그램을 유지합니다. 기존 웹 화면과 nginx 설정은 변경하지 않습니다. 도메인·네트워크가 아직 미정이므로 외부 공개나 인증서 발급은 실행하지 않습니다. 같은 LAN 시연용 HTTP 접속은 [LAN 접속 문서](20261016_Release_LAN_Access.md)의 명시적 옵션으로 설정합니다.
 
 ## 빌드 및 승인 경계
 
@@ -69,7 +69,7 @@ docker compose --project-name kyo-server --env-file (Join-Path $deploymentRoot '
 
 ```powershell
 $previousRelease = Get-Content (Join-Path $deploymentRoot 'previous-release.json') -Raw | ConvertFrom-Json
-./deploy/Release.ps1 -DeploymentRoot $deploymentRoot -Commit $previousRelease.commit -ApiImage $previousRelease.api_image -WebImage $previousRelease.web_image -Https:([bool]$previousRelease.https)
+./deploy/Release.ps1 -DeploymentRoot $deploymentRoot -Commit $previousRelease.commit -ApiImage $previousRelease.api_image -WebImage $previousRelease.web_image -Https:([bool]$previousRelease.https) -Lan:([bool]$previousRelease.lan)
 ```
 
 DB 스키마 변경은 자동 배포 명령에서 수행하지 않습니다. 별도로 백업·이전 이미지와의 호환성·마이그레이션·복구 절차를 검토한 뒤 진행합니다. 이전 코드와 호환되지 않는 DB는 이미지 rollback만으로 복구할 수 없습니다. pg_dump는 DB 백업이며 미디어 volume까지 같은 시점으로 복사하는 백업은 별도 절차가 필요합니다.
@@ -82,7 +82,7 @@ DB 스키마 변경은 자동 배포 명령에서 수행하지 않습니다. 별
 
 Caddy → 기존 nginx → API 경로를 사용합니다. 원본 저장소·PostgreSQL은 공개하지 않습니다. HTTPS 배포는 실제 도메인 주소로 인증서 검증을 포함한 readiness 확인을 수행하며 서버 자체에서도 도메인으로 접근할 수 있어야 합니다. 공인 접속 전 실제 로그인·미디어 쿠키·모바일 연결을 확인합니다.
 
-도메인이 없는 동안에는 기존 개발 Compose의 같은 Wi-Fi 접속 방식을 사용할 수 있습니다. release HTTP 스택을 외부에 그대로 공개하지 않습니다.
+도메인이 없는 동안에는 release 스택의 `-Lan` 또는 기존 개발 Compose의 같은 Wi-Fi 접속 방식을 사용할 수 있습니다. 신뢰하는 시연 네트워크에서만 사용하고 HTTP 포트를 인터넷에 포트포워딩하지 않습니다.
 
 ## 검증
 

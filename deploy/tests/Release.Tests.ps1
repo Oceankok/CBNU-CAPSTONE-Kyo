@@ -7,12 +7,13 @@ $originalLog = $env:KYO_FAKE_LOG
 $originalFail = $env:KYO_FAKE_FAIL
 $originalApi = $env:PPE_API_IMAGE
 $originalWeb = $env:PPE_WEB_IMAGE
+$originalBind = $env:PPE_WEB_BIND
 $expectedPath = [IO.Path]::GetFullPath($sandbox)
 New-Item -ItemType Directory -Path $sandbox | Out-Null
 try {
     $fake = Join-Path $sandbox 'docker.ps1'
     @'
-$entry = @{args=@($args);api=$env:PPE_API_IMAGE;web=$env:PPE_WEB_IMAGE} | ConvertTo-Json -Compress
+$entry = @{args=@($args);api=$env:PPE_API_IMAGE;web=$env:PPE_WEB_IMAGE;bind=$env:PPE_WEB_BIND} | ConvertTo-Json -Compress
 Add-Content -LiteralPath $env:KYO_FAKE_LOG -Value $entry
 $global:LASTEXITCODE = 0
 if ($args -contains 'cp') { [IO.File]::WriteAllText($args[-1], 'fake-binary-dump') }
@@ -59,18 +60,47 @@ PPE_COOKIE_SECURE=false
     if ((Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).commit -ne $second) { throw 'Successful update not recorded' }
     if ((Get-Content -LiteralPath (Join-Path $target 'previous-release.json') -Raw | ConvertFrom-Json).commit -ne $first) { throw 'Previous release record missing' }
     if ($env:PPE_API_IMAGE -ne $originalApi -or $env:PPE_WEB_IMAGE -ne $originalWeb) { throw 'Image environment leaked' }
+    # Existing pre-LAN manifests have no lan property and must remain readable.
+    $legacyRecord = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+    $legacyRecord.PSObject.Properties.Remove('lan')
+    $legacyRecord | ConvertTo-Json | Set-Content -LiteralPath $manifest -Encoding utf8
+    $composeFile = Join-Path $target "releases/$second/compose.release.yaml"
+    $savedCompose = Get-Content -LiteralPath $composeFile -Raw
+    $savedCompose.Replace('${PPE_WEB_BIND:-127.0.0.1}', '127.0.0.1') | Set-Content -LiteralPath $composeFile
+    Expect-Rejection { & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web -Lan }
+    $savedCompose | Set-Content -LiteralPath $composeFile
+    Expect-Rejection { & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web -Https -Lan }
+    # A failed opt-in must restore localhost, not leave the web port exposed.
+    $env:KYO_FAKE_FAIL = 'true'
+    Expect-Rejection { & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web -Lan }
+    if ((Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).lan) { throw 'Failed LAN update replaced manifest' }
+    $commands = Get-Content -LiteralPath $env:KYO_FAKE_LOG | ForEach-Object { $_ | ConvertFrom-Json }
+    $lastUp = @($commands | Where-Object { $_.args -contains 'up' })[-1]
+    if ($lastUp.bind -ne '127.0.0.1') { throw 'Failed LAN update did not restore localhost' }
+    & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web -Lan
+    if (-not (Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).lan) { throw 'LAN opt-in not recorded' }
+    # A failed return to localhost must preserve the preceding LAN mode.
+    $env:KYO_FAKE_FAIL = 'true'
+    Expect-Rejection { & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web }
+    $commands = Get-Content -LiteralPath $env:KYO_FAKE_LOG | ForEach-Object { $_ | ConvertFrom-Json }
+    $lastUp = @($commands | Where-Object { $_.args -contains 'up' })[-1]
+    if ($lastUp.bind -ne '0.0.0.0') { throw 'Failed localhost update did not restore LAN' }
+    & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web
+    if ((Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).lan) { throw 'Localhost opt-out not recorded' }
+    if ($env:PPE_WEB_BIND -ne $originalBind) { throw 'Web binding environment leaked' }
     $lock = Join-Path $target 'release.lock'
     if (Test-Path -LiteralPath $lock) { throw 'Deployment lock leaked' }
     Set-Content -LiteralPath $lock -Value 'another-deployment'
     Expect-Rejection { & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web }
     if ((Get-Content -LiteralPath $lock -Raw).Trim() -ne 'another-deployment') { throw 'Another deployment lock was modified' }
-    Write-Output 'PASS: first-release guard, explicit initialization, HTTPS guard, migration guard, backup, failed update rollback, successful update, environment restoration, concurrent deployment lock'
+    Write-Output 'PASS: initialization, HTTPS/LAN guards, backup, image and binding rollback, LAN opt-in/out, environment restoration, concurrent deployment lock'
 } finally {
     $env:PATH = $originalPath
     $env:KYO_FAKE_LOG = $originalLog
     $env:KYO_FAKE_FAIL = $originalFail
     $env:PPE_API_IMAGE = $originalApi
     $env:PPE_WEB_IMAGE = $originalWeb
+    $env:PPE_WEB_BIND = $originalBind
     if ([IO.Path]::GetFullPath($sandbox) -ne $expectedPath -or -not (Split-Path $expectedPath -Leaf).StartsWith('kyo-release-test-')) { throw 'Unsafe cleanup path' }
     Remove-Item -LiteralPath $expectedPath -Recurse -Force
 }
