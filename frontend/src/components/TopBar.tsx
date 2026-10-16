@@ -14,6 +14,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/users': '작업자 관리',
   '/nodes': '현장 PC 관리',
   '/equipment': '장비 관리',
+  '/cameras': '카메라 관리',
   '/settings': '설정',
 };
 
