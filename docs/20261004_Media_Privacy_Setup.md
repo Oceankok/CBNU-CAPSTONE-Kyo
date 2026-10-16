@@ -43,7 +43,7 @@ python -m backend.media.setup_model
 ```powershell
 python -m pip install -r backend/requirements.txt
 python -m backend.media.setup_model
-python backend/db/init_db.py
+python -m backend.db.init_db
 ```
 
 첫 명령은 의존성을 설치하거나 변경한다. 둘째는 OpenCV YuNet ONNX 모델과 라이선스를 `models/privacy/`에 다운로드하며 모델 SHA-256을 확인한다. 앱 시작 시 자동 다운로드하지 않는다. 셋째는 기본 DB를 생성하거나 기존 DB에 버전 3 마이그레이션과 누락된 seed 행을 적용한다. 기존 DB를 유지하려면 서버를 종료한 상태에서 먼저 백업한다. `PPE_DB_PATH` 환경변수로 별도 DB 경로를 지정할 수 있다.
@@ -126,7 +126,7 @@ python -m backend.media.maintenance --interval 60
 
 ```powershell
 python -m pip install -r backend/requirements-media-gpu.txt
-python backend/db/init_db.py
+python -m backend.db.init_db
 ```
 
 첫 명령은 추가 GPU 런타임 및 필요한 의존성을 설치한다. 둘째는 기존 DB에 처리 방식·실행 backend·처리 시간 컬럼을 추가하는 버전 3 마이그레이션을 적용한다. 이번 코딩 작업에서는 두 명령을 실행하지 않았다. 기존 결과물에는 방식과 시간이 없으므로 임의로 추정해 채우지 않는다.

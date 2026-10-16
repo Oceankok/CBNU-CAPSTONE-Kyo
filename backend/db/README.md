@@ -42,14 +42,14 @@ backend/db/*.db
 프로젝트 루트에서 아래 순서로 실행함.
 
 ```bash
-python backend/db/init_db.py
+python -m backend.db.init_db
 python backend/db/check_db.py
 ```
 
 Windows 환경에서 `python` 명령어가 동작하지 않을 경우:
 
 ```bash
-py backend/db/init_db.py
+py -m backend.db.init_db
 py backend/db/check_db.py
 ```
 
@@ -450,7 +450,7 @@ broadcast_setting.enabled
 ## 1. DB 초기화
 
 ```bash
-python backend/db/init_db.py
+python -m backend.db.init_db
 ```
 
 정상 실행 시 SQLite DB 파일이 생성됨.
