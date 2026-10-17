@@ -59,6 +59,8 @@ docker compose --project-name kyo-server --env-file (Join-Path $deploymentRoot '
 
 ## 후속 배포 및 복구
 
+DB와 동의된 보관 미디어를 함께 백업하고 별도 PostgreSQL에서 복원을 확인하는 수동 도구는 [백업·복원 리허설 안내](20261017_Backup_Restore_Rehearsal.md)를 따릅니다. 아래 배포 전 DB 단독 백업과는 구분합니다.
+
 첫 배포 이후에는 `InitializeDatabase` 없이 같은 명령을 실행하거나 Actions에서 Release를 수동 실행합니다. 배포 전 PostgreSQL `pg_dump`를 서버의 `backups` 폴더에 복사하고, 게시된 이미지를 pull한 뒤 컨테이너 상태와 nginx를 경유한 API readiness를 확인합니다. 정상 완료한 커밋·digest는 `current-release.json`, 이전 값은 `previous-release.json`에 기록합니다. release 폴더의 Compose 설정은 해당 release와 함께 유지합니다.
 
 애플리케이션 배포 실패 시 이전 이미지와 Compose 설정으로 복구하고 readiness를 확인합니다. DB는 자동으로 되돌리지 않습니다. 서버 설정 파일이나 프로젝트 이름을 배포 도중 변경하지 않습니다. 첫 배포 실패에는 이전 release가 없으므로 원인을 해결한 뒤 같은 release를 다시 실행합니다. volume을 지우는 `down -v`는 사용하지 않습니다.
