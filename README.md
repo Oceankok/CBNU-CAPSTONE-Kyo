@@ -48,7 +48,7 @@
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r backend/requirements.txt
 
-python backend/db/init_db.py                                   # 테이블·시드 생성 (기존 데이터 유지)
+python -m backend.db.init_db                                   # 테이블·시드 생성 (기존 데이터 유지)
 python -m backend.auth.manage_users admin01 --role admin --name 관리자
 python -m backend.auth.manage_users worker01 --role worker --name 작업자 --zone "프레스 구역"
 

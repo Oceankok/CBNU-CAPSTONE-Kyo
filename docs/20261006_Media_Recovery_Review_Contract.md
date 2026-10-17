@@ -11,7 +11,7 @@
 서버를 종료하고 저장소 루트에서 다음 명령으로 기존 DB를 버전 4로 갱신합니다. 기존 이벤트·검토 데이터를 삭제하지 않습니다.
 
 ```powershell
-python backend/db/init_db.py
+python -m backend.db.init_db
 ```
 
 `event_media`에 `source_path`, `source_expires_at`을 추가하고, `event_clip_request`를 생성합니다. `quarterly_summary`에는 `unreviewable_count`를 추가합니다. 기존 상태 CHECK 값은 유지하고, 실패 원인은 `error_code`와 응답의 `failure_category`로 구분합니다. 이벤트·검토 결과는 기존 TEXT 필드에 `unreviewable`을 저장합니다.

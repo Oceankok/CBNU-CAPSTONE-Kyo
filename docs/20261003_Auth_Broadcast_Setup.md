@@ -6,7 +6,7 @@ Python 3.12에서 `python -m pip install -r backend/requirements.txt`로 의존�
 SQLite는 계속 사용한다. `init_db.py`는 기존 테이블/행을 삭제하지 않고 사용자 테이블을 추가한다.
 
 ```powershell
-python backend/db/init_db.py
+python -m backend.db.init_db
 python -m backend.auth.manage_users admin01 --role admin --name 관리자
 python -m backend.auth.manage_users worker01 --role worker --name 작업자
 $env:PPE_JWT_SECRET = python -c "import secrets; print(secrets.token_urlsafe(48))"
@@ -16,7 +16,7 @@ python -m uvicorn backend.api.main:app --reload
 macOS / Linux (저장소 루트, zsh·bash):
 
 ```bash
-python3 backend/db/init_db.py
+python3 -m backend.db.init_db
 python3 -m backend.auth.manage_users admin01 --role admin --name 관리자
 python3 -m backend.auth.manage_users worker01 --role worker --name 작업자
 export PPE_JWT_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
