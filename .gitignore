@@ -73,3 +73,4 @@ storage/candidate_events/processed/*
 /video_sender/output_cam002/
 /video_sender/fixtures/
 /video_sender/output_cam002/
+/.private_media/

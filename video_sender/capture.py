@@ -3,6 +3,7 @@ import cv2
 import subprocess
 from pathlib import Path
 import time
+from datetime import datetime,timezone
 
 CAMERA_INDEX = 0
 FPS = 15
@@ -56,6 +57,8 @@ try:
     frame_interval = 1.0 / FPS
     next_frame_time = time.perf_counter()
 
+    frame_count = 0
+
     while True:
         success, frame = cap.read()
 
@@ -72,7 +75,20 @@ try:
             frame = cv2.resize(frame, (width, height))
 
         try:
+            if frame_count % (FPS * SEGMENT_SECONDS) == 0:
+                sequence = frame_count // (FPS *SEGMENT_SECONDS)
+
+                capture_start = datetime.now(timezone.utc)
+                timestamp_file = OUTPUT_DIR / f"chunk_{sequence:05d}.txt"
+
+                timestamp_file.write_text(
+                    capture_start.isoformat(timespec="milliseconds").replace("+00:00","Z"),
+                    encoding="utf-8"
+                )
+
             process.stdin.write(frame.tobytes())
+            frame_count += 1
+
         except BrokenPipeError:
             print("FFmpeg 프로세스가 종료되었습니다.")
             break
