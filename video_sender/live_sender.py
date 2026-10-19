@@ -12,7 +12,9 @@ NODE_TOKEN = os.getenv("VIDEO_NODE_TOKEN", "")
 CAMERA_ID = os.getenv("VIDEO_CAMERA_ID", "CAM_001")
 
 # MP4 조각 저장 폴더
-OUTPUT_DIR = Path("video_sender/output")
+OUTPUT_DIR = Path(
+    os.getenv("VIDEO_OUTPUT_DIR", "video_sender/output")
+)
 
 # 파일명 예시: chunk_00000.mp4
 CHUNK_PATTERN = re.compile(r"chunk_(\d+)\.mp4")
