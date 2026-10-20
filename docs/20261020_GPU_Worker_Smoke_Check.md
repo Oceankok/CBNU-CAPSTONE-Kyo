@@ -40,7 +40,7 @@ python deploy/tests/validate_gpu_worker.py --api-image $release.api_image
 
 ## 이후 남은 작업
 
-- 실제 배포 서버에 처리 node 등록 및 네이티브 worker 운영 실행, `PPE_PROCESSING_MODE=remote` 전환
+- 재부팅 후 worker 재시작 및 로그온 자동 실행 설정 정리
 - AI 담당의 PPE 추론·이벤트 생성·전후 클립 생성과 연결
 - 실제 현장 PC·다중 카메라·방송 및 관리자 검토 화면까지 통합 검증
 - 실제 인물 자료의 얼굴 비식별화 품질 검토와 동시 부하·지연 측정
@@ -48,3 +48,13 @@ python deploy/tests/validate_gpu_worker.py --api-image $release.api_image
 이 검증 통과만으로 위 항목 전체를 완료 처리하지 않습니다.
 
 2026년 10월 20일 서버 PC에서 4개 조합을 실제 CUDA로 실행해 모두 통과했습니다. 영상 클립 요청·접수, 추론 우선 보류, worker 원본 접근 제한, 게시 영상 프레임 보존과 로컬 cleanup 확인을 포함하며 테스트 컨테이너·volume은 정리했습니다.
+
+## 실제 서버 연결 상태 — 2026년 10월 20일
+
+관리자 인증으로 `server-gpu` node와 처리 권한을 등록하고 네이티브 worker를 백그라운드에서 실행했습니다. node token은 배포 폴더에 현재 Windows 계정으로 암호화하여 저장하고 process 환경을 통해 전달합니다. 다른 계정·PC로 파일을 복사하는 방식으로 자격 증명을 공유하지 않습니다.
+
+기존 서버의 `PPE_PROCESSING_MODE`를 `remote`로 전환하고 API·웹·maintenance를 재생성했습니다. 처리 node 권한·새 heartbeat·readiness와 중복 실행 방지를 확인했습니다. 기존 계정과 PostgreSQL 데이터는 유지했습니다. 존재하지 않는 이벤트의 클립 접수 요청이 처리 모드 차단 503 대신 404로 응답하는 것을 확인했으며 실제 사건을 생성하지 않았습니다.
+
+로컬 시작 파일은 배포 폴더의 `Start-Worker.ps1`입니다. 현재는 백그라운드 프로세스이며 Windows 서비스·재부팅 후 자동 시작은 설정하지 않았습니다. 강제 종료나 재부팅 후 `worker.lock`이 남으면 기존 프로세스가 종료됐는지 확인한 뒤 재시작해야 합니다.
+
+실제 배포 서버에서 사건 미디어 작업을 끝까지 수행하는 검증은 별도 자료·이벤트를 준비한 뒤 진행합니다. 위의 4개 CUDA 사례는 운영 서버와 분리된 환경의 검증 결과입니다.
