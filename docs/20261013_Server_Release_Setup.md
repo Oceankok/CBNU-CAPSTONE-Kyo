@@ -18,7 +18,9 @@ GitHub에서 먼저 설정합니다.
 4. 서버 PC의 별도 배포 계정에 Windows X64 runner를 등록하고 `kyo-deploy` label을 추가합니다. PowerShell 7과 Linux Docker 엔진 접근이 필요합니다.
 5. 공개 저장소 runner가 다른 workflow의 임의 작업을 받을 수 있으므로 runner 등록 전에 모든 self-hosted workflow와 저장소 접근 권한을 확인합니다. GitHub의 [self-hosted runner 보안 지침](https://docs.github.com/en/actions/reference/security/secure-use)을 따릅니다. 개인 ChatGPT/OAuth 자격 증명을 배포 계정과 공유하지 않습니다.
 
-현재 구현은 runner 등록·environment 설정·실제 이미지 게시·운영 배포를 자동 실행하지 않습니다. 해당 준비는 별도 확인 후 진행합니다. environment 승인은 [GitHub 공식 배포 승인 문서](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments)를 참고합니다.
+runner 등록·environment 설정은 별도로 진행합니다. 이미지 게시는 main CI 성공 후 실행하며 실제 Actions 배포는 수동 요청과 environment 승인을 거칩니다. environment 승인은 [GitHub 공식 배포 승인 문서](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments)를 참고합니다.
+
+Windows 사용자 경로에 설치한 Docker Desktop은 개인 Docker 설정의 플러그인 경로에 의존할 수 있습니다. 배포 job은 `deploy/Prepare-Docker.ps1`로 새 `RUNNER_TEMP/kyo-release-docker` 설정을 만들고 실제 Docker 실행 파일에 인접한 `cli-plugins` 경로를 추가한 뒤 Compose 탐색을 검사합니다. 개인 설정을 복사하지 않으며 이후 registry 로그인도 해당 임시 설정만 사용합니다. 이전 작업의 설정 폴더가 남아 있으면 덮어쓰지 않고 중단합니다. runner 계정에는 PowerShell 7·Docker 실행 파일·Linux 엔진·배포 폴더 접근 권한이 별도로 필요합니다.
 
 ## 첫 배포 — 수동 초기화
 
@@ -98,3 +100,11 @@ Caddy → 기존 nginx → API 경로를 사용합니다. 원본 저장소·Post
 - Caddy 설정을 네트워크 없는 컨테이너에서 검증했습니다. 실제 DNS·포트 연결·인증서 발급 검증은 아닙니다.
 - actionlint로 workflow 문법을 검증했습니다. 테스트 컨테이너와 volume은 정리했으며 실제 개발 DB·GPU·방송·외부 VLM은 사용하지 않았습니다.
 - GHCR 실제 게시·GitHub 승인 environment 및 runner 연동·외부 HTTPS·운영 복구는 설정 후 별도 검증 대상입니다.
+
+2026년 10월 20일 추가 검증 결과:
+
+- 최신 게시 API·웹 이미지의 익명 pull과 localhost 첫 수동 배포를 완료했습니다. PostgreSQL v10을 더미 이벤트 없이 초기화하고 첫 관리자 계정 생성·웹 로그인·로그아웃을 확인했습니다.
+- 실제 서버 스냅샷을 별도 PostgreSQL DB·volume에 복원하여 관리자 계정 데이터 포함을 확인했습니다. 격리 복원 자원은 정리하며 실제 서버의 인증 정보나 DB를 복원본으로 교체하지 않습니다.
+- 실제 PostgreSQL·API·웹·maintenance 컨테이너 재생성 후 관리자 계정·이벤트 건수가 유지됐으며 웹 readiness 200과 미인증 카메라 API 401을 다시 확인했습니다.
+- `Prepare-Docker.Tests.ps1`로 플러그인 경로·개인 설정 분리·job 환경 전달·기존 설정 덮어쓰기 거부·실패 시 환경 복원을 확인했습니다. 기존 `Release.Tests.ps1`과 actionlint도 통과했습니다.
+- runner 패키지 준비 이후 실제 등록·전용 계정 권한·GitHub Actions 승인 배포는 아직 검증하지 않았습니다. 외부 HTTPS·GPU 추론·현장 방송은 이번 검증 범위에 포함하지 않았습니다.
