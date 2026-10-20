@@ -4,6 +4,7 @@ $sandbox = Join-Path ([IO.Path]::GetTempPath()) ('kyo-docker-config-test-' + [gu
 $expectedPath = [IO.Path]::GetFullPath($sandbox)
 $oldConfig = $env:DOCKER_CONFIG
 $oldFailure = $env:KYO_COMPOSE_FAIL
+$oldExitCode = $global:LASTEXITCODE ?? 0
 New-Item -ItemType Directory -Path (Join-Path $sandbox 'resources/bin') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $sandbox 'resources/cli-plugins') | Out-Null
 try {
@@ -39,4 +40,6 @@ if ($env:KYO_COMPOSE_FAIL) { $global:LASTEXITCODE = 19 } else { $global:LASTEXIT
     $env:KYO_COMPOSE_FAIL = $oldFailure
     if ([IO.Path]::GetFullPath($sandbox) -ne $expectedPath -or -not (Split-Path $expectedPath -Leaf).StartsWith('kyo-docker-config-test-')) { throw 'Unsafe test cleanup path' }
     Remove-Item -LiteralPath $expectedPath -Recurse -Force
+    # The expected fake Compose failure must not become the CI shell's exit code.
+    $global:LASTEXITCODE = $oldExitCode
 }
