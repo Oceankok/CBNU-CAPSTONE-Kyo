@@ -145,16 +145,11 @@ jobs:
         with:
           ref: ${{ needs.gate.outputs.commit }}
           persist-credentials: false
-      - name: Docker path
+      - name: Prepare isolated Docker configuration
         shell: pwsh
         run: |
           if (-not $env:DEPLOYMENT_ROOT) { throw 'Set production KYO_DEPLOY_ROOT variable' }
-          $credentialPath = Join-Path $env:RUNNER_TEMP 'kyo-release-docker'
-          "DOCKER_CONFIG=$credentialPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-            $binaryPath = Join-Path $env:LOCALAPPDATA 'Programs/DockerDesktop/resources/bin'
-            $binaryPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          }
+          ./deploy/Prepare-Docker.ps1
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
