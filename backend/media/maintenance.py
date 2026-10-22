@@ -79,6 +79,8 @@ def maintain_once(stale_after: int = 3600) -> dict:
                     pass
     from backend.equipment.recognition import cleanup as cleanup_recognitions
     cleaned += cleanup_recognitions(stale_after)
+    from backend.consents.service import cleanup as cleanup_consents
+    cleaned += cleanup_consents(stale_after)
     return {"expired_events": len(expired), "retried_events": len(pending), "cleaned_paths": cleaned}
 
 

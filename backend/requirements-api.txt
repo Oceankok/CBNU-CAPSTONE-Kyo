@@ -2,6 +2,8 @@
 fastapi
 uvicorn
 httpx
+python-multipart>=0.0.32,<1
+pypdf>=6.21.2,<7
 PyJWT>=2.10,<3
 argon2-cffi>=23.1,<26
 pydantic>=2,<3
