@@ -1,0 +1,2 @@
+# HTTP sender dependency; camera capture uses the project's existing OpenCV setup.
+requests>=2.32,<3
