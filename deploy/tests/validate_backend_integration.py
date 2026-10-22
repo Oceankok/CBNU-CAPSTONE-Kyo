@@ -10,7 +10,8 @@ import secrets
 import socket
 import sys
 import tempfile
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -134,7 +135,7 @@ with connect() as c:
                 with patch.object(live_sender, 'SERVER_URL', origin), patch.object(live_sender, 'NODE_TOKEN', token), \
                         patch.object(live_sender, 'CAMERA_ID', 'INTEGRATION_A'), patch.object(live_sender, 'OUTPUT_DIR', out), \
                         patch.object(live_sender, 'create_stream', side_effect=open_stream), \
-                        patch.object(live_sender.time, 'sleep', side_effect=KeyboardInterrupt):
+                        patch.object(live_sender, 'time', SimpleNamespace(sleep=Mock(side_effect=KeyboardInterrupt))):
                     live_sender.watch_and_send()
                 assert len(created) == 1 and not chunk.exists() and not chunk.with_suffix('.txt').exists() and writing.exists()
                 return created[0]

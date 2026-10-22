@@ -2,7 +2,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import requests
 
@@ -42,7 +43,7 @@ class VideoSenderDeliveryTests(unittest.TestCase):
         self.enterContext(patch.object(live_sender.requests, 'post', side_effect=post))
         self.enterContext(patch.object(live_sender, 'get_video_duration_ms', return_value=1000))
         # End after one pass (or the first reconnect wait); no camera/FFmpeg process starts.
-        self.enterContext(patch.object(live_sender.time, 'sleep', side_effect=KeyboardInterrupt))
+        self.enterContext(patch.object(live_sender, 'time', SimpleNamespace(sleep=Mock(side_effect=KeyboardInterrupt))))
 
     def test_fresh_chunk_reaches_real_receiver_before_local_cleanup(self):
         live_sender.watch_and_send()
