@@ -95,6 +95,8 @@ def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, An
     for row in rows:
         by_event[row["event_id"]].append(public_media(dict(row), retention.get(row["event_id"], {}).get("decision", "pending")))
     for event in events:
+        from backend.event_merge.service import metadata
+        event.update(metadata(conn, event['event_id']))
         event["media"] = by_event[event["event_id"]]
         requests = [dict(row) for row in conn.execute("SELECT * FROM event_clip_request WHERE event_id=? ORDER BY created_at", (event["event_id"],))]
         event["clip_requests"] = requests
@@ -142,6 +144,7 @@ def get_all_candidate_events() -> list[dict[str, Any]]:
         FROM candidate_event ce
         LEFT JOIN camera_info ci
             ON ce.camera_id = ci.camera_id
+        WHERE ce.event_status != 'merged'
         ORDER BY ce.timestamp_start DESC;
     """
 
@@ -891,7 +894,8 @@ def generate_quarterly_stats(quarter: str) -> dict:
             SELECT COUNT(*) AS count
             FROM candidate_event
             WHERE timestamp_start >= ?
-              AND timestamp_start < ?;
+              AND timestamp_start < ?
+              AND event_status != 'merged';
             """,
             (start_date, end_date),
         ).fetchone()["count"]

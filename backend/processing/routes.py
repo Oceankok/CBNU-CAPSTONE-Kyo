@@ -99,6 +99,9 @@ def create_clip_request(event_id: str, body: ClipRequestInput, node: dict = Depe
 @router.get('/events/{event_id}/clip-requests')
 def read_clip_requests(event_id: str, node: dict = Depends(processor)):
     with get_connection() as conn:
+        merged = conn.execute('SELECT target_event_id FROM event_merge WHERE source_event_id=?', (event_id,)).fetchone()
+        if merged:
+            raise HTTPException(409, {'code': 'event_merged', 'merged_into_event_id': merged[0]})
         event = conn.execute('SELECT timestamp_start,timestamp_end FROM candidate_event WHERE event_id=?', (event_id,)).fetchone()
         if not event:
             raise HTTPException(404, 'event_not_found')

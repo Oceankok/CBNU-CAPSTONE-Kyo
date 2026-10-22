@@ -503,6 +503,8 @@ from backend.cameras.service import CameraStateError
 app.include_router(cameras_router)
 from backend.camera_groups.routes import router as camera_groups_router
 app.include_router(camera_groups_router)
+from backend.event_merge.routes import router as event_merge_router
+app.include_router(event_merge_router)
 from backend.video.routes import router as video_router
 app.include_router(video_router)
 

@@ -49,6 +49,11 @@ def register_clip_request(event_id: str, body: ClipRequestRegistration):
     """Record delivery progress; transport dispatch is owned by the field integration."""
     with get_connection() as conn:
         begin_write(conn)
+        from backend.event_merge.service import require_unmerged
+        try:
+            require_unmerged(conn, event_id)
+        except ValueError as exc:
+            state_error(exc)
         if not conn.execute("SELECT 1 FROM candidate_event WHERE event_id=?", (event_id,)).fetchone():
             raise HTTPException(404, "event_not_found")
         if not conn.execute("SELECT 1 FROM camera_info WHERE camera_id=?", (body.camera_id,)).fetchone():
