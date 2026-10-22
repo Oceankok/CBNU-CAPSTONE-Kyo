@@ -81,7 +81,11 @@ jobs:
           cache-dependency-path: backend/requirements-api.txt
       - run: pip install -r backend/requirements-api.txt -r video_sender/requirements.txt
       - name: Sender media probe dependency
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ffmpeg
+        run: |
+          if ! command -v ffprobe >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
       - name: Disposable Docker API/web/PostgreSQL integration
         run: python deploy/tests/validate_backend_integration.py
       - uses: actions/upload-artifact@v4

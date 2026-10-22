@@ -100,8 +100,13 @@ $upgradeState = Join-Path $releasePath 'upgrade-state.json'
 $services = @('postgres','api','web','maintenance')
 if ($Https) { $services += 'gateway' }
 $writers = @($services | Where-Object { $_ -ne 'postgres' })
-function Write-UpgradeState([string]$Phase) {
-    @{phase=$Phase;from_version=$ExpectedSchemaVersion;target_version=$TargetSchemaVersion;backup_file=$backupFile;backup_sha256=$backupHash;updated_utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json | Set-Content -LiteralPath $upgradeState -Encoding utf8
+function Write-UpgradeState([string]$Phase, [switch]$BestEffort) {
+    try {
+        @{phase=$Phase;from_version=$ExpectedSchemaVersion;target_version=$TargetSchemaVersion;backup_file=$backupFile;backup_sha256=$backupHash;updated_utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json | Set-Content -LiteralPath $upgradeState -Encoding utf8
+    } catch {
+        if (-not $BestEffort) { throw }
+        Write-Warning "Could not record upgrade phase: $Phase"
+    }
 }
 function Stop-Writers {
     Invoke-Docker ($arguments + @('stop','--timeout','30') + $writers)
@@ -169,20 +174,20 @@ try {
 } catch {
     $failure = $_
     if ($migrationCommitted) {
-        Write-UpgradeState 'ready_maintenance_failed'
+        Write-UpgradeState 'ready_maintenance_failed' -BestEffort
         Write-Warning 'The new schema and release are committed; retry maintenance startup. Do not restore an old database over new writes.'
     } elseif ($changed -and $previous) {
         if ($migrationStarted) {
             Write-Warning 'Upgrade failed; stopping application writers and restoring the pre-upgrade database.'
-            Write-UpgradeState 'rollback_started'
             Stop-Writers
+            Write-UpgradeState 'rollback_started' -BestEffort
             if ((Get-FileHash -LiteralPath $backupFile -Algorithm SHA256).Hash -ne $backupHash) { throw 'Backup checksum mismatch; services remain stopped for manual recovery' }
             Invoke-Docker ($arguments + @('cp',$backupFile,'postgres:/tmp/release-rollback.dump'))
             Invoke-Docker ($arguments + @('exec','-T','postgres','dropdb','-U','kyo','--force','kyo'))
             Invoke-Docker ($arguments + @('exec','-T','postgres','createdb','-U','kyo','kyo'))
             Invoke-Docker ($arguments + @('exec','-T','postgres','pg_restore','-U','kyo','-d','kyo','--no-owner','--no-privileges','--exit-on-error','/tmp/release-rollback.dump'))
             Invoke-Docker ($arguments + @('exec','-T','postgres','rm','-f','/tmp/release-rollback.dump'))
-            Write-UpgradeState 'database_restored'
+            Write-UpgradeState 'database_restored' -BestEffort
         }
         Write-Warning 'Deployment failed; restoring previous application images.'
         $env:PPE_API_IMAGE = $previous.api_image
@@ -193,7 +198,7 @@ try {
         if ($Https) { $restoreServices += 'gateway' }
         Invoke-Docker ((Compose-Arguments $previousPath) + @('up','-d','--no-build','--wait','--wait-timeout','180') + $restoreServices)
         Confirm-Ready $previousPath
-        if ($MigrateDatabase) { Write-UpgradeState 'rolled_back' }
+        if ($MigrateDatabase) { Write-UpgradeState 'rolled_back' -BestEffort }
     }
     throw $failure
 } finally {

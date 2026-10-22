@@ -101,6 +101,8 @@ PPE_COOKIE_SECURE=false
         if (Test-Path -LiteralPath (Join-Path $target 'release.lock')) { throw 'Upgrade lock leaked' }
     }
     Write-Output 'PASS: upgrade guards, pause/backup/apply order, DB+image rollback, checksum, failed recovery stop, post-commit maintenance failure'
+    # Expected native failures must not become the Actions shell's final exit code.
+    $global:LASTEXITCODE = 0
 } finally {
     foreach ($name in $variables) { [Environment]::SetEnvironmentVariable($name,$saved[$name]) }
     $resolved=[IO.Path]::GetFullPath($sandbox)
