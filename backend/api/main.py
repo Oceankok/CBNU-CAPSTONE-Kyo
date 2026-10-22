@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, APIRouter, Depends, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 import os
 from backend.auth.service import require_admin, decode_user
 from backend.auth.routes import router as auth_router
@@ -481,6 +481,14 @@ app.include_router(field_router)
 
 from backend.media.routes import router as media_router
 app.include_router(media_router)
+from backend.consents.routes import router as consents_router
+from backend.consents.service import ConsentError
+app.include_router(consents_router)
+
+
+@app.exception_handler(ConsentError)
+async def consent_state_error(request: Request, error: ConsentError):
+    return JSONResponse(status_code=error.status, content={'detail': str(error)})
 
 from backend.equipment.routes import router as equipment_router
 from backend.equipment.recognition_routes import router as recognition_router
@@ -490,7 +498,6 @@ from backend.processing.routes import router as processing_router
 app.include_router(processing_router)
 from backend.cameras.routes import router as cameras_router
 from backend.cameras.service import CameraStateError
-from fastapi.responses import JSONResponse
 app.include_router(cameras_router)
 from backend.video.routes import router as video_router
 app.include_router(video_router)

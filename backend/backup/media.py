@@ -1,4 +1,4 @@
-"""Explicit retained-media snapshots; never archive private originals or credentials."""
+"""Retained media and consent evidence; never archive camera originals or credentials."""
 import argparse
 import hashlib
 import json
@@ -15,6 +15,7 @@ from backend.db.connection import begin_write, schema_version
 from backend.db.event_repository import get_connection
 from backend.db.migrations import LATEST_VERSION
 from backend.media.paths import PROCESSED_ROOT, owned_path
+from backend.consents import service as consents
 
 MAX_FILES = 1000
 MAX_TOTAL = 2 * 1024**3
@@ -38,7 +39,7 @@ def export_media(directory):
     if archive.exists() or manifest.exists():
         raise ValueError('Snapshot output already exists')
     timestamp = time.time()
-    records, total, paths = [], 0, set()
+    records, documents, total, paths = [], [], 0, set()
     try:
         with get_connection() as conn, tarfile.open(archive, 'x') as tar:
             begin_write(conn)
@@ -48,7 +49,8 @@ def export_media(directory):
                 JOIN event_retention r ON r.event_id=m.event_id
                 WHERE m.status='ready' AND m.redaction_status='complete' AND r.decision='retain'
                 AND r.consent_confirmed=1 AND r.retain_until>? ORDER BY m.media_id''', (timestamp,)).fetchall()
-            if len(rows) > MAX_FILES:
+            consent_rows = conn.execute('SELECT * FROM consent_record ORDER BY record_id').fetchall()
+            if len(rows) + len(consent_rows) > MAX_FILES:
                 raise ValueError('Snapshot file count limit exceeded')
             for row in rows:
                 if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', row['media_id']):
@@ -70,11 +72,23 @@ def export_media(directory):
                 with source.open('rb') as file:
                     tar.addfile(info, file)
                 records.append(record)
+            for row in consent_rows:
+                source = consents.verified_file(row)
+                size = row['byte_size']
+                total += size
+                if not 0 < size <= consents.MAX_BYTES or total > MAX_TOTAL:
+                    raise ValueError('Snapshot byte limit exceeded')
+                entry = 'consents/' + row['record_id']
+                info = tarfile.TarInfo(entry)
+                info.size, info.mode = size, 0o600
+                with source.open('rb') as file:
+                    tar.addfile(info, file)
+                documents.append(dict(record_id=row['record_id'], file_key=row['file_key'], entry=entry, size=size, sha256=row['sha256']))
         result = {'format':1, 'schema_version':LATEST_VERSION, 'created_at':timestamp,
                   'expires_at':min([timestamp+86400, *[r['retain_until'] for r in records]]),
-                  'files':records, 'archive_sha256':digest(archive)}
+                  'files':records, 'consents':documents, 'archive_sha256':digest(archive)}
         manifest.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
-        return {'archived_media':len(records), 'bytes':total, 'expires_at':result['expires_at']}
+        return {'archived_media':len(records), 'archived_consents':len(documents), 'bytes':total, 'expires_at':result['expires_at']}
     except Exception:
         archive.unlink(missing_ok=True)
         manifest.unlink(missing_ok=True)
@@ -92,7 +106,7 @@ def verified_manifest(directory):
     archive = directory / 'media.tar'
     if archive.is_symlink() or archive.stat().st_size > MAX_TOTAL + 2*1024**2 or digest(archive) != body['archive_sha256']:
         raise ValueError('Media archive checksum mismatch')
-    if len(body['files']) > MAX_FILES:
+    if len(body['files']) + len(body.get('consents', [])) > MAX_FILES:
         raise ValueError('Snapshot file count limit exceeded')
     expected, paths = {}, set()
     for item in body['files']:
@@ -103,6 +117,16 @@ def verified_manifest(directory):
         target = owned_path(item['storage_path'])
         if not target.is_relative_to(PROCESSED_ROOT.resolve()) or target in paths:
             raise ValueError('Unsafe restored media path')
+        paths.add(target)
+        expected[item['entry']] = item
+    for item in body.get('consents', []):
+        if not re.fullmatch(r'CONSENT_[0-9a-f]{32}', item['record_id']) or item['file_key'] != item['record_id']+'.pdf' or item['entry'] != 'consents/'+item['record_id']:
+            raise ValueError('Unsafe consent archive entry')
+        if item['entry'] in expected or not isinstance(item['size'], int) or not 0 < item['size'] <= consents.MAX_BYTES:
+            raise ValueError('Duplicate or oversized consent archive entry')
+        target = consents.document_path(item['file_key'])
+        if target in paths:
+            raise ValueError('Duplicate restored consent path')
         paths.add(target)
         expected[item['entry']] = item
     if sum(item['size'] for item in expected.values()) > MAX_TOTAL:
@@ -130,6 +154,9 @@ def restore_media(directory, *, test_fixture=False):
     if PROCESSED_ROOT.exists() and any(PROCESSED_ROOT.iterdir()):
         raise ValueError('Restore requires empty processed storage')
     files = {item['media_id']:item for item in body['files']}
+    documents = {item['record_id']:item for item in body.get('consents', [])}
+    if documents and consents.CONSENT_ROOT.exists() and any(consents.CONSENT_ROOT.iterdir()):
+        raise ValueError('Restore requires empty consent storage')
     written = []
     try:
         with get_connection() as conn:
@@ -141,11 +168,21 @@ def restore_media(directory, *, test_fixture=False):
                     JOIN event_retention r ON r.event_id=m.event_id WHERE m.media_id=?''', (ident,)).fetchone()
                 if not row or row['storage_path'] != item['storage_path'] or row['status'] != 'ready' or row['redaction_status'] != 'complete' or row['decision'] != 'retain' or not row['consent_confirmed'] or not row['retain_until'] or row['retain_until'] <= time.time():
                     raise ValueError('Restored DB does not match retained media')
+            for ident, item in documents.items():
+                row = conn.execute('SELECT file_key,sha256,byte_size FROM consent_record WHERE record_id=?', (ident,)).fetchone()
+                if not row or row['file_key'] != item['file_key'] or row['sha256'] != item['sha256'] or row['byte_size'] != item['size']:
+                    raise ValueError('Restored DB does not match consent documents')
+            if conn.execute('SELECT COUNT(*) FROM consent_record').fetchone()[0] != len(documents):
+                raise ValueError('Consent documents missing from snapshot')
             # Copy verified regular members, never use tar.extract/extractall.
             with tarfile.open(Path(directory)/'media.tar', 'r:') as tar:
                 for member in tar:
-                    item = files[member.name.removeprefix('files/')]
-                    target = owned_path(item['storage_path'])
+                    if member.name.startswith('files/'):
+                        item = files[member.name.removeprefix('files/')]
+                        target = owned_path(item['storage_path'])
+                    else:
+                        item = documents[member.name.removeprefix('consents/')]
+                        target = consents.document_path(item['file_key'])
                     target.parent.mkdir(parents=True, exist_ok=True)
                     with tar.extractfile(member) as source, target.open('xb') as destination:
                         written.append(target)

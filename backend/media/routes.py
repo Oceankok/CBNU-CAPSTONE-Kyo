@@ -21,6 +21,9 @@ router = APIRouter(prefix="/api", dependencies=[Depends(require_admin)], tags=["
 
 
 def state_error(exc: ValueError):
+    from backend.consents.service import ConsentError
+    if isinstance(exc, ConsentError):
+        raise HTTPException(exc.status, str(exc)) from exc
     code = str(exc)
     status = 404 if code.endswith("not_found") or code == "source_file_missing" else 409
     if code.startswith("invalid_") or code == "consent_confirmation_required" or code == "unsafe_storage_path" or code == "retention_expiry_must_be_future":
@@ -94,6 +97,7 @@ class RetentionRequest(BaseModel):
     expected_version: int = Field(ge=0)
     consent_confirmed: bool = False
     consent_reference: str = Field(default="", max_length=500)
+    consent_record_id: str | None = Field(default=None, max_length=100)
     retain_until: datetime | None = None
 
 
@@ -104,7 +108,8 @@ def save_retention(event_id: str, body: RetentionRequest, user: dict = Depends(r
     try:
         return decide_retention(event_id, body.decision, user["user_id"], body.expected_version,
                                 body.consent_confirmed, body.consent_reference,
-                                body.retain_until.timestamp() if body.retain_until else None)
+                                body.retain_until.timestamp() if body.retain_until else None,
+                                body.consent_record_id)
     except ValueError as exc:
         state_error(exc)
 
