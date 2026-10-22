@@ -107,6 +107,8 @@ def review_availability(media: list[dict], requests: list[dict]) -> dict:
 
 def validate_review(conn, review: dict):
     """Called inside the review write transaction, not only in the UI."""
+    from backend.event_merge.service import require_unmerged
+    require_unmerged(conn, review['event_id'])
     result = review["review_result"]
     if result not in {"confirmed", "false_positive", "hold", "unreviewable"}:
         raise ValueError("invalid_review_result")
@@ -190,6 +192,8 @@ def register_media(event_id: str, camera_id: str, kind: str, role: str, mode: st
     media_id = str(uuid4())
     with get_connection() as conn:
         begin_write(conn)
+        from backend.event_merge.service import require_unmerged
+        require_unmerged(conn, event_id)
         event = conn.execute("SELECT timestamp_start,timestamp_end FROM candidate_event WHERE event_id=?", (event_id,)).fetchone()
         if not event:
             raise ValueError("event_not_found")

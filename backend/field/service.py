@@ -44,6 +44,8 @@ def enqueue_event_broadcast(event_id):
     # Serialize duplicate/cooldown checks with insertion across concurrent requests.
     with get_connection() as conn:
         begin_write(conn)
+        if conn.execute('SELECT 1 FROM event_merge WHERE source_event_id=?', (event_id,)).fetchone():
+            return {'queued': False, 'reason': 'event_merged'}
         node = conn.execute("""SELECT n.* FROM field_node n JOIN camera_node c ON c.output_node_id=n.node_id
                                WHERE c.camera_id=? AND n.is_active=1""", (event["camera_id"],)).fetchone()
         if not node:
