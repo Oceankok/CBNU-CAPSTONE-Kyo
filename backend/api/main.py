@@ -484,6 +484,8 @@ app.include_router(media_router)
 from backend.consents.routes import router as consents_router
 from backend.consents.service import ConsentError
 app.include_router(consents_router)
+from backend.education.routes import router as education_router
+app.include_router(education_router)
 
 
 @app.exception_handler(ConsentError)
