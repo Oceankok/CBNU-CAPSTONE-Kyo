@@ -122,6 +122,19 @@ async def upload_clip(event_id: str, request: Request, request_id: str,
                               request_id=request_id, redaction_mode=redaction_mode)
 
 
+class ClipDeliveryFailure(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    status: Literal['failed', 'unavailable']
+    error_code: str = Field(min_length=1, max_length=200)
+
+
+@router.put('/events/{event_id}/clip-requests/{request_id}')
+def report_clip_failure(event_id: str, request_id: str, body: ClipDeliveryFailure,
+                        node: dict = Depends(processor)):
+    from backend.media.routes import ClipRequestResult, report_clip_request
+    return report_clip_request(event_id, request_id, ClipRequestResult(**body.model_dump()))
+
+
 @router.post('/jobs/{job_id}/lease')
 def renew(job_id: str, node: dict = Depends(processor), x_processing_lease: str = Header(default='')):
     return service.renew(job_id, node['node_id'], x_processing_lease)

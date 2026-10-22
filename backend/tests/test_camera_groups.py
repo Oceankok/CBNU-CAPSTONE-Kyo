@@ -111,6 +111,40 @@ class CameraGroupTests(unittest.TestCase):
             self.assertEqual(row['role'], 'reference')
             self.assertEqual(row['camera_id'], 'CAM_002')
 
+    def test_processor_reports_missing_clip_without_admin_credentials(self):
+        self.group().raise_for_status()
+        event_id = self.event()
+        request = self.requests(event_id).json()['items'][0]
+        url = '/api/processing/events/'+event_id+'/clip-requests/'+request['request_id']
+        body = {'status': 'failed', 'error_code': 'buffer_read_failed'}
+        self.assertEqual(self.client.put(url, headers=self.node, json=body).status_code, 200)
+        self.assertEqual(self.requests(event_id).json()['items'][0]['status'], 'failed')
+        self.assertEqual(self.client.put(url, headers=self.node, json=body).status_code, 409)
+        body = {'status': 'unavailable', 'error_code': 'buffer_window_expired'}
+        self.assertEqual(self.client.put(url, headers=self.node, json=body).status_code, 200)
+        row = self.requests(event_id).json()['items'][0]
+        self.assertEqual(row['status'], 'unavailable')
+        self.assertEqual(row['error_code'], 'buffer_window_expired')
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM event_media WHERE event_id=?', (event_id,)).fetchone()[0], 0)
+
+    def test_clip_failure_reporting_permissions_and_validation(self):
+        self.group().raise_for_status()
+        event_id = self.event()
+        request = self.requests(event_id).json()['items'][0]
+        url = '/api/processing/events/'+event_id+'/clip-requests/'+request['request_id']
+        body = {'status': 'unavailable', 'error_code': 'buffer_missing'}
+        self.assertEqual(self.client.put(url, json=body).status_code, 401)
+        self.assertEqual(self.client.put(url, headers=self.admin, json=body).status_code, 401)
+        ordinary = self.client.post('/api/nodes', headers=self.admin, json={'node_id': 'clip-sender', 'name': '송출 PC'}).json()
+        self.assertEqual(self.client.put(url, headers={'Authorization': 'Bearer '+ordinary['token']}, json=body).status_code, 403)
+        self.assertEqual(self.client.put(url, headers=self.node, json={'status': 'received', 'error_code': 'fake'}).status_code, 422)
+        self.assertEqual(self.client.put(url, headers=self.node, json={'status': 'failed', 'error_code': '   '}).status_code, 422)
+        self.assertEqual(self.client.put(url+'missing', headers=self.node, json=body).status_code, 404)
+        self.assertEqual(self.requests(event_id).json()['items'][0]['status'], 'pending')
+        self.client.put('/api/processing/workers/group-processor', headers=self.admin, json={'enabled': False}).raise_for_status()
+        self.assertEqual(self.client.put(url, headers=self.node, json=body).status_code, 403)
+
     def test_v12_upgrade_adds_reference_role_and_preserves_events(self):
         from backend.db.init_db import init_database
         with get_connection() as conn:
