@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-LATEST_VERSION = 12
+LATEST_VERSION = 13
 
 
 def _now() -> str:
@@ -271,6 +271,22 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
                 if statement.strip():
                     conn.execute(statement)
             conn.execute('PRAGMA user_version=12')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 13:
+        from pathlib import Path
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            if 'role' not in {row[1] for row in conn.execute('PRAGMA table_info(event_clip_request)')}:
+                conn.execute("ALTER TABLE event_clip_request ADD COLUMN role TEXT NOT NULL DEFAULT 'clip' CHECK(role IN ('clip','reference'))")
+            script = (Path(__file__).resolve().parents[1] / 'camera_groups' / 'schema.sql').read_text(encoding='utf-8')
+            for statement in script.split(';'):
+                if statement.strip():
+                    conn.execute(statement)
+            conn.execute('PRAGMA user_version=13')
             conn.commit()
         except Exception:
             conn.rollback()
