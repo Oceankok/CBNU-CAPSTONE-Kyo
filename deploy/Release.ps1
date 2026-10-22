@@ -7,7 +7,11 @@ param(
     [ValidatePattern('^[a-z][a-z0-9-]{2,40}$')][string]$Project = 'kyo-server',
     [switch]$Https,
     [switch]$Lan,
-    [switch]$InitializeDatabase
+    [switch]$InitializeDatabase,
+    [switch]$MigrateDatabase,
+    [switch]$ClientsPaused,
+    [int]$ExpectedSchemaVersion = 0,
+    [int]$TargetSchemaVersion = 0
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -46,6 +50,9 @@ if (Test-Path -LiteralPath $manifestPath) { $previous = Get-Content -LiteralPath
 $previousLan = $false
 if ($previous -and $previous.PSObject.Properties['lan']) { $previousLan = [bool]$previous.lan }
 if ($previous -and $InitializeDatabase) { throw 'InitializeDatabase is only for the first release; migrations require a separate backup/compatibility plan' }
+if ($MigrateDatabase -and ($InitializeDatabase -or -not $previous -or -not $ClientsPaused -or $ExpectedSchemaVersion -lt 10 -or $TargetSchemaVersion -le $ExpectedSchemaVersion)) { throw 'Migration requires an existing release, paused external clients/workers, and explicit increasing schema versions (10 or newer)' }
+if ($ClientsPaused -and -not $MigrateDatabase) { throw 'ClientsPaused is only for an explicit database migration' }
+if (-not $MigrateDatabase -and ($ExpectedSchemaVersion -or $TargetSchemaVersion)) { throw 'Schema versions require MigrateDatabase' }
 if (-not $previous -and -not $InitializeDatabase) { throw 'First release requires an explicit manual InitializeDatabase run' }
 if ($previous -and $previous.project -ne $Project) { throw 'Changing the persistent Compose project is not allowed' }
 if ($previous -and [bool]$previous.https -ne [bool]$Https) { throw 'Change HTTPS mode through a separate reviewed deployment' }
@@ -85,27 +92,58 @@ function Confirm-Ready([string]$Release) {
 }
 $arguments = Compose-Arguments $releasePath
 $changed = $false
+$migrationStarted = $false
+$migrationCommitted = $false
+$backupFile = $null
+$backupHash = $null
+$upgradeState = Join-Path $releasePath 'upgrade-state.json'
+$services = @('postgres','api','web','maintenance')
+if ($Https) { $services += 'gateway' }
+$writers = @($services | Where-Object { $_ -ne 'postgres' })
+function Write-UpgradeState([string]$Phase) {
+    @{phase=$Phase;from_version=$ExpectedSchemaVersion;target_version=$TargetSchemaVersion;backup_file=$backupFile;backup_sha256=$backupHash;updated_utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json | Set-Content -LiteralPath $upgradeState -Encoding utf8
+}
+function Stop-Writers {
+    Invoke-Docker ($arguments + @('stop','--timeout','30') + $writers)
+    $stillRunning = @(Invoke-Docker ($arguments + @('ps','--status','running','--services')))
+    if (@($writers | Where-Object { $stillRunning -contains $_ }).Count) { throw 'Application writers are still running' }
+}
 try {
     Invoke-Docker ($arguments + @('config','--quiet'))
     Invoke-Docker ($arguments + @('pull'))
+    if ($MigrateDatabase) {
+        $running = @(Invoke-Docker ($arguments + @('ps','--status','running','--services')))
+        if ($running -notcontains 'api' -or $running -notcontains 'postgres') { throw 'Start the current API/PostgreSQL release before upgrading' }
+        Invoke-Docker ($arguments + @('run','--rm','--no-deps','-T','api','python','-m','backend.db.upgrade','inspect','--expected-version',"$ExpectedSchemaVersion",'--target-version',"$TargetSchemaVersion"))
+        $changed = $true
+        Stop-Writers
+    }
     if ($previous) {
         # Back up PostgreSQL before changing application images. Binary dump is copied,
         # never piped through Windows text redirection.
         $backupRoot = Join-Path $deploymentPath 'backups'
         New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
-        $backupName = 'postgres-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $Commit.Substring(0,8) + '.dump'
+        $backupName = 'postgres-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $Commit.Substring(0,8) + '-' + [guid]::NewGuid().ToString('N').Substring(0,8) + '.dump'
         Invoke-Docker ($arguments + @('exec','-T','postgres','pg_dump','-U','kyo','-d','kyo','-Fc','-f','/tmp/release-backup.dump'))
-        Invoke-Docker ($arguments + @('cp','postgres:/tmp/release-backup.dump',(Join-Path $backupRoot $backupName)))
+        $backupFile = Join-Path $backupRoot $backupName
+        Invoke-Docker ($arguments + @('cp','postgres:/tmp/release-backup.dump',$backupFile))
         Invoke-Docker ($arguments + @('exec','-T','postgres','rm','-f','/tmp/release-backup.dump'))
+        if (-not (Test-Path -LiteralPath $backupFile -PathType Leaf) -or (Get-Item -LiteralPath $backupFile).Length -eq 0) { throw 'Empty database backup' }
+        $backupHash = (Get-FileHash -LiteralPath $backupFile -Algorithm SHA256).Hash
+    }
+    if ($MigrateDatabase) {
+        Write-UpgradeState 'backed_up'
+        $migrationStarted = $true
+        Invoke-Docker ($arguments + @('run','--rm','--no-deps','-T','api','python','-m','backend.db.upgrade','apply','--expected-version',"$ExpectedSchemaVersion",'--target-version',"$TargetSchemaVersion",'--writers-paused'))
+        Write-UpgradeState 'migrated'
     }
     if ($InitializeDatabase) {
         Invoke-Docker ($arguments + @('up','-d','--wait','--wait-timeout','120','postgres'))
         Invoke-Docker ($arguments + @('run','--rm','db-init'))
     }
     $changed = $true
-    $services = @('postgres','api','web','maintenance')
-    if ($Https) { $services += 'gateway' }
-    Invoke-Docker ($arguments + @('up','-d','--no-build','--wait','--wait-timeout','180') + $services)
+    $startServices = if ($MigrateDatabase) { @($services | Where-Object { $_ -ne 'maintenance' }) } else { $services }
+    Invoke-Docker ($arguments + @('up','-d','--no-build','--wait','--wait-timeout','180') + $startServices)
     Confirm-Ready $releasePath
     if ($Https) {
         # No certificate validation bypass. Requires hairpin DNS/routing from the server.
@@ -113,17 +151,40 @@ try {
         if ($response.StatusCode -ne 200) { throw 'HTTPS readiness failed' }
     }
     $record = @{commit=$Commit;api_image=$ApiImage;web_image=$WebImage;project=$Project;https=[bool]$Https;lan=[bool]$Lan}
+    if ($MigrateDatabase) { $record['schema_version'] = $TargetSchemaVersion }
+    elseif ($previous -and $previous.PSObject.Properties['schema_version']) { $record['schema_version'] = $previous.schema_version }
     if ($previous -and ($previous.commit -ne $Commit -or $previousLan -ne [bool]$Lan)) {
         $previous | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $deploymentPath 'previous-release.json') -Encoding utf8
     }
     $temporary = $manifestPath + '.tmp'
     $record | ConvertTo-Json | Set-Content -LiteralPath $temporary -Encoding utf8
+    if ($MigrateDatabase) { Write-UpgradeState 'ready' }
     Move-Item -LiteralPath $temporary -Destination $manifestPath -Force
+    if ($MigrateDatabase) {
+        $migrationCommitted = $true
+        # Never run deletion maintenance before the schema/image rollback boundary.
+        Invoke-Docker ($arguments + @('up','-d','--no-build','maintenance'))
+    }
     Write-Output "Release ready: $Commit"
 } catch {
     $failure = $_
-    if ($changed -and $previous) {
-        Write-Warning 'Deployment failed; restoring previous application images. Database is not restored automatically.'
+    if ($migrationCommitted) {
+        Write-UpgradeState 'ready_maintenance_failed'
+        Write-Warning 'The new schema and release are committed; retry maintenance startup. Do not restore an old database over new writes.'
+    } elseif ($changed -and $previous) {
+        if ($migrationStarted) {
+            Write-Warning 'Upgrade failed; stopping application writers and restoring the pre-upgrade database.'
+            Write-UpgradeState 'rollback_started'
+            Stop-Writers
+            if ((Get-FileHash -LiteralPath $backupFile -Algorithm SHA256).Hash -ne $backupHash) { throw 'Backup checksum mismatch; services remain stopped for manual recovery' }
+            Invoke-Docker ($arguments + @('cp',$backupFile,'postgres:/tmp/release-rollback.dump'))
+            Invoke-Docker ($arguments + @('exec','-T','postgres','dropdb','-U','kyo','--force','kyo'))
+            Invoke-Docker ($arguments + @('exec','-T','postgres','createdb','-U','kyo','kyo'))
+            Invoke-Docker ($arguments + @('exec','-T','postgres','pg_restore','-U','kyo','-d','kyo','--no-owner','--no-privileges','--exit-on-error','/tmp/release-rollback.dump'))
+            Invoke-Docker ($arguments + @('exec','-T','postgres','rm','-f','/tmp/release-rollback.dump'))
+            Write-UpgradeState 'database_restored'
+        }
+        Write-Warning 'Deployment failed; restoring previous application images.'
         $env:PPE_API_IMAGE = $previous.api_image
         $env:PPE_WEB_IMAGE = $previous.web_image
         $env:PPE_WEB_BIND = if ($previousLan) { '0.0.0.0' } else { '127.0.0.1' }
@@ -132,6 +193,7 @@ try {
         if ($Https) { $restoreServices += 'gateway' }
         Invoke-Docker ((Compose-Arguments $previousPath) + @('up','-d','--no-build','--wait','--wait-timeout','180') + $restoreServices)
         Confirm-Ready $previousPath
+        if ($MigrateDatabase) { Write-UpgradeState 'rolled_back' }
     }
     throw $failure
 } finally {

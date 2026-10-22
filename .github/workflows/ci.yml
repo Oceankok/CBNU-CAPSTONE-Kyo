@@ -22,6 +22,7 @@ jobs:
         run: |
           ./deploy/tests/Release.Tests.ps1
           ./deploy/tests/Prepare-Docker.Tests.ps1
+          ./deploy/tests/Upgrade.Tests.ps1
   backend:
     runs-on: ubuntu-latest
     steps:
@@ -78,7 +79,9 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: backend/requirements-api.txt
-      - run: pip install -r backend/requirements-api.txt
+      - run: pip install -r backend/requirements-api.txt -r video_sender/requirements.txt
+      - name: Sender media probe dependency
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Disposable Docker API/web/PostgreSQL integration
         run: python deploy/tests/validate_backend_integration.py
       - uses: actions/upload-artifact@v4
