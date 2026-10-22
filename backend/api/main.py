@@ -501,6 +501,8 @@ app.include_router(processing_router)
 from backend.cameras.routes import router as cameras_router
 from backend.cameras.service import CameraStateError
 app.include_router(cameras_router)
+from backend.camera_groups.routes import router as camera_groups_router
+app.include_router(camera_groups_router)
 from backend.video.routes import router as video_router
 app.include_router(video_router)
 

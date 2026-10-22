@@ -96,12 +96,29 @@ def create_clip_request(event_id: str, body: ClipRequestInput, node: dict = Depe
     return register_clip_request(event_id, ClipRequestRegistration(camera_id=body.camera_id))
 
 
+@router.get('/events/{event_id}/clip-requests')
+def read_clip_requests(event_id: str, node: dict = Depends(processor)):
+    with get_connection() as conn:
+        event = conn.execute('SELECT timestamp_start,timestamp_end FROM candidate_event WHERE event_id=?', (event_id,)).fetchone()
+        if not event:
+            raise HTTPException(404, 'event_not_found')
+        if conn.execute("SELECT 1 FROM event_retention WHERE event_id=? AND decision='delete'", (event_id,)).fetchone():
+            raise HTTPException(409, 'event_media_deleted')
+        rows = conn.execute('''SELECT r.*,n.source_node_id FROM event_clip_request r
+            LEFT JOIN camera_node n ON n.camera_id=r.camera_id WHERE r.event_id=? ORDER BY r.created_at,r.camera_id,r.request_id''', (event_id,)).fetchall()
+    return {'event_id': event_id, **dict(event), 'items': [dict(row) for row in rows]}
+
+
 @router.post('/events/{event_id}/clip', status_code=201)
 async def upload_clip(event_id: str, request: Request, request_id: str,
                       camera_id: str | None = None, node: dict = Depends(processor),
                       redaction_mode: Literal['enhanced','scrfd'] = 'scrfd'):
     from backend.media.routes import upload_media
-    return await upload_media(event_id, request, kind='video', camera_id=camera_id, role='clip',
+    with get_connection() as conn:
+        registration = conn.execute('SELECT camera_id,role FROM event_clip_request WHERE request_id=? AND event_id=?', (request_id, event_id)).fetchone()
+        if not registration:
+            raise HTTPException(404, 'clip_request_not_found')
+    return await upload_media(event_id, request, kind='video', camera_id=camera_id or registration['camera_id'], role=registration['role'],
                               request_id=request_id, redaction_mode=redaction_mode)
 
 

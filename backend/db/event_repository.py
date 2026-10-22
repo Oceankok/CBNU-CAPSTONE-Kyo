@@ -291,6 +291,8 @@ def insert_candidate_event(event: dict[str, Any]) -> None:
         require_camera(conn, event['camera_id'], active=True)
         conn.execute(query, event)
         conn.execute("INSERT INTO event_retention(event_id) VALUES(?)", (event["event_id"],))
+        from backend.camera_groups.service import register_references
+        register_references(conn, event['event_id'], event['camera_id'])
         created_at = datetime.now().astimezone().isoformat(timespec="seconds")
         for kind, role, path in (
             ("image", "thumbnail", event.get("thumbnail_path")),
