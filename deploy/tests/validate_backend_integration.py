@@ -10,6 +10,8 @@ import secrets
 import socket
 import sys
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -77,13 +79,68 @@ create_user('worker01',password,'Integration worker','worker')
                 credential.write(password.encode())
                 credential.seek(0)
                 docker(base+['run', '--rm', '--no-deps', '-T', 'api', 'python', '-c', bootstrap], stdin=credential)
+            # Recreate a v10 fixture before any API/writer is started. No real deployment is used.
+            baseline = """
+from backend.db.connection import connect
+with connect() as c:
+    for table in ('event_merge','education_material','event_consent','consent_record','camera_group_member','camera_group'):
+        c.execute('DROP TABLE '+table)
+    c.execute('ALTER TABLE event_clip_request DROP COLUMN role')
+    c.execute('UPDATE app_schema_version SET version=10 WHERE singleton=1')
+"""
+            docker(base+['run', '--rm', '--no-deps', '-T', 'api', 'python', '-c', baseline])
+            upgrade = base+['run', '--rm', '--no-deps', '-T', 'api', 'python', '-m', 'backend.db.upgrade']
+            versions = ['--expected-version', '10', '--target-version', '14']
+            before = json.loads(docker(upgrade+['inspect', *versions]))
+            dump = folder/'pre-upgrade.dump'
+            with dump.open('wb') as file:
+                docker(base+['exec', '-T', 'postgres', 'pg_dump', '-U', 'kyo', '-d', 'kyo_test_integration', '-Fc'], stdout=file)
+            from deploy.snapshot import sha
+            digest = sha(dump)
+            migrated = json.loads(docker(upgrade+['apply', *versions, '--writers-paused']))
+            assert migrated['rows_preserved'] and migrated['table_counts'] == before['table_counts']
+            # Exercise real binary dump restoration after a migration, then reapply for the HTTP journey.
+            assert sha(dump) == digest
+            docker(base+['exec', '-T', 'postgres', 'dropdb', '-U', 'kyo', '--force', 'kyo_test_integration'])
+            docker(base+['exec', '-T', 'postgres', 'createdb', '-U', 'kyo', 'kyo_test_integration'])
+            with dump.open('rb') as file:
+                docker(base+['exec', '-T', 'postgres', 'pg_restore', '-U', 'kyo', '-d', 'kyo_test_integration', '--no-owner', '--no-privileges', '--exit-on-error'], stdin=file)
+            restored = json.loads(docker(upgrade+['inspect', *versions]))
+            assert restored == before
+            docker(upgrade+['apply', *versions, '--writers-paused'])
+            print('PASS: PostgreSQL v10 upgrade and real dump/restore rehearsal', flush=True)
             docker(base+['up', '-d', '--wait', '--wait-timeout', '120', 'api', 'web'])
             origin = 'http://127.0.0.1:'+str(port)
             factory = lambda: httpx.Client(base_url=origin, timeout=120, trust_env=False)
             with factory() as client:
                 request(client, 'GET', '/health/ready')
                 assert 'text/html' in request(client, 'GET', '/').headers['content-type']
-            report = run_scenario(factory, password)
+            def sender_probe(token, video, captured):
+                from video_sender import live_sender
+                out = folder/'sender'
+                out.mkdir()
+                chunk = out/'chunk_00000.mp4'
+                chunk.write_bytes(video)
+                chunk.with_suffix('.txt').write_text(captured, encoding='utf-8')
+                writing = out/'chunk_00001.mp4'
+                writing.write_bytes(b'still-being-written')
+                created = []
+                create = live_sender.create_stream
+
+                def open_stream():
+                    stream = create()
+                    created.append(stream)
+                    return stream
+
+                with patch.object(live_sender, 'SERVER_URL', origin), patch.object(live_sender, 'NODE_TOKEN', token), \
+                        patch.object(live_sender, 'CAMERA_ID', 'INTEGRATION_A'), patch.object(live_sender, 'OUTPUT_DIR', out), \
+                        patch.object(live_sender, 'create_stream', side_effect=open_stream), \
+                        patch.object(live_sender, 'time', SimpleNamespace(sleep=Mock(side_effect=KeyboardInterrupt))):
+                    live_sender.watch_and_send()
+                assert len(created) == 1 and not chunk.exists() and not chunk.with_suffix('.txt').exists() and writing.exists()
+                return created[0]
+
+            report = run_scenario(factory, password, sender_probe=sender_probe)
             print('PASS: HTTP journey through web reverse proxy', flush=True)
             inspect = """
 from pathlib import Path
@@ -108,7 +165,9 @@ assert not list(SOURCE_ROOT.glob('*'))
                 assert len(request(client, 'GET', '/api/camera-groups').json()['items']) == 1
             docker(base+['exec', '-T', 'api', 'python', '-c', inspect])
             report.update({'docker_postgresql': True, 'web_proxy': True, 'container_recreation_persistence': True,
-                           'physical_file_deletion': True, 'maintenance': True, 'production_changed': False})
+                           'physical_file_deletion': True, 'maintenance': True, 'production_changed': False,
+                           'upgrade_10_to_14': True, 'postgres_dump_restore_rehearsal': True,
+                           'actual_sender_http': True, 'actual_ffprobe': True, 'real_camera': False})
         finally:
             if project != 'kyo-integration-'+ident:
                 raise RuntimeError('Unsafe integration cleanup target')

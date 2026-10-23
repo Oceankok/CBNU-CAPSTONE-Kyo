@@ -21,7 +21,7 @@ def request(client, method, path, expected=200, **kwargs):
     return response
 
 
-def run_scenario(client_factory, password, admin_id='admin02', worker_id='worker01'):
+def run_scenario(client_factory, password, admin_id='admin02', worker_id='worker01', sender_probe=None):
     sample = Path(__file__).resolve().parents[1]/'db/demo_assets/sample.mp4'
     video = sample.read_bytes()
     capture = cv2.VideoCapture(str(sample))
@@ -56,10 +56,14 @@ def run_scenario(client_factory, password, admin_id='admin02', worker_id='worker
         request(admin, 'POST', '/api/camera-groups', 201, json={'name': '통합 검증 그룹', 'camera_ids': ['INTEGRATION_A', 'INTEGRATION_B']})
         request(admin, 'PUT', '/api/broadcast/settings', json={'enabled': True, 'default_language': 'ko', 'cooldown_sec': 0,
                 'templates': [{'template_id': 'INTEGRATION_HELMET', 'ppe_type': 'helmet', 'zone_name': '', 'language': 'ko', 'message': '통합 검증용 방송 문구'}]})
-        stream = request(source, 'POST', '/api/video/streams', 201, json={'camera_id': 'INTEGRATION_A'}).json()['stream_id']
         captured = datetime.now(timezone.utc).isoformat()
-        chunk = request(source, 'POST', f'/api/video/streams/{stream}/chunks?sequence=0', 202,
-                        headers={'Content-Type': 'video/mp4', 'X-Capture-Start': captured, 'X-Duration-Ms': '1000'}, content=video).json()
+        if sender_probe:
+            stream = sender_probe(source.headers['Authorization'].removeprefix('Bearer '), video, captured)
+            chunk = request(processor, 'GET', f'/api/processing/video/streams/{stream}/chunks').json()['items'][0]
+        else:
+            stream = request(source, 'POST', '/api/video/streams', 201, json={'camera_id': 'INTEGRATION_A'}).json()['stream_id']
+            chunk = request(source, 'POST', f'/api/video/streams/{stream}/chunks?sequence=0', 202,
+                            headers={'Content-Type': 'video/mp4', 'X-Capture-Start': captured, 'X-Duration-Ms': '1000'}, content=video).json()
         chunk_url = '/api/processing/video/chunks/'+chunk['chunk_id']
         assert request(processor, 'GET', chunk_url).content == video
         request(source, 'GET', chunk_url, 403)

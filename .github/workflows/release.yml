@@ -19,6 +19,22 @@ on:
         description: Open the web port to a trusted LAN for HTTP demo access (not with HTTPS)
         type: boolean
         default: false
+      migrate_database:
+        description: Explicit schema upgrade with pre-upgrade DB backup and failure rollback
+        type: boolean
+        default: false
+      clients_paused:
+        description: Confirm senders, inference, workers and user writes are paused for the upgrade
+        type: boolean
+        default: false
+      expected_schema_version:
+        description: Current database schema version (must match exactly)
+        type: number
+        default: 10
+      target_schema_version:
+        description: Target schema version (must match the selected API image)
+        type: number
+        default: 14
 
 permissions:
   contents: read
@@ -51,6 +67,7 @@ jobs:
             if (context.eventName === 'workflow_dispatch') {
               const enabled = value => value === true || value === 'true';
               if (enabled(context.payload.inputs.lan) && enabled(context.payload.inputs.https)) throw new Error('Choose LAN HTTP or HTTPS, not both');
+              if (enabled(context.payload.inputs.migrate_database) && (!enabled(context.payload.inputs.deploy) || !enabled(context.payload.inputs.clients_paused))) throw new Error('Migration requires deploy and paused clients/workers');
               const runs = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id:'ci.yml', branch:'main', event:'push', head_sha:commit, status:'success'});
               if (!runs.data.workflow_runs.some(r => r.head_sha === commit)) throw new Error('Successful main CI required');
               if (context.payload.inputs.deploy === true || context.payload.inputs.deploy === 'true') {
@@ -140,6 +157,10 @@ jobs:
       RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       RELEASE_HTTPS: ${{ inputs.https }}
       RELEASE_LAN: ${{ inputs.lan }}
+      RELEASE_MIGRATE: ${{ inputs.migrate_database }}
+      RELEASE_CLIENTS_PAUSED: ${{ inputs.clients_paused }}
+      RELEASE_FROM_SCHEMA: ${{ inputs.expected_schema_version }}
+      RELEASE_TO_SCHEMA: ${{ inputs.target_schema_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -158,7 +179,11 @@ jobs:
       - name: Apply approved release
         shell: pwsh
         run: |
-          ./deploy/Release.ps1 -DeploymentRoot $env:DEPLOYMENT_ROOT -Commit $env:RELEASE_COMMIT -ApiImage $env:API_IMAGE -WebImage $env:WEB_IMAGE -Https:($env:RELEASE_HTTPS -eq 'true') -Lan:($env:RELEASE_LAN -eq 'true')
+          $upgrade = @{}
+          if ($env:RELEASE_MIGRATE -eq 'true') {
+            $upgrade = @{MigrateDatabase=$true;ClientsPaused=($env:RELEASE_CLIENTS_PAUSED -eq 'true');ExpectedSchemaVersion=[int]$env:RELEASE_FROM_SCHEMA;TargetSchemaVersion=[int]$env:RELEASE_TO_SCHEMA}
+          }
+          ./deploy/Release.ps1 -DeploymentRoot $env:DEPLOYMENT_ROOT -Commit $env:RELEASE_COMMIT -ApiImage $env:API_IMAGE -WebImage $env:WEB_IMAGE -Https:($env:RELEASE_HTTPS -eq 'true') -Lan:($env:RELEASE_LAN -eq 'true') @upgrade
       - name: Remove temporary registry credentials
         if: always()
         shell: pwsh

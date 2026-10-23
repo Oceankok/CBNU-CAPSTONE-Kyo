@@ -2,9 +2,11 @@
 
 이 문서는 동료 프로그램이 연결할 API와 재실행 가능한 격리 검증을 정리합니다. 프론트 화면과 YOLO·Tracking·클립 생성 프로그램은 수정하지 않았습니다. 실제 서버 주소·현장 장치·상용 교육 AI 공급업체는 자동으로 정하지 않습니다.
 
+시연은 최신 PostgreSQL에 새 DB를 초기화하는 방향으로 진행합니다. 기존 개발용 SQLite·더미 데이터 이관은 필요하지 않습니다. 첫 배포는 [서버 배포 안내](20261013_Server_Release_Setup.md)를 따르며, 기존 PostgreSQL 데이터를 유지하기로 선택한 경우에만 [선택적 이관·복구 안내](20261023_Release_Upgrade_Runbook.md)를 사용합니다. 독립 송신 수정 #173도 함께 반영합니다.
+
 ## 적용 순서와 담당
 
-선행 PR은 #167 → #168 → #170 → #171이며, 이 변경을 마지막에 반영합니다. 실제 배포 DB는 아직 변경하지 않았습니다. 배포 전에 기존 백업·이관 절차로 스키마 v14를 적용하고 최신 API/web 이미지와 호스트 worker를 함께 사용해야 합니다. 첫 배포용 초기화를 기존 DB에 다시 실행하지 않습니다.
+선행 PR은 #167 → #168 → #170 → #171이며, #172를 마지막에 반영합니다. #174의 이관·자동 복구는 이 기능들의 필수 선행 조건이 아닙니다. 실제 배포 DB는 아직 변경하지 않았습니다. 최신 API 이미지로 새 PostgreSQL DB를 초기화하면 스키마 v14가 생성됩니다. 최신 API/web 이미지와 호스트 worker를 함께 사용합니다. 기존 배포 폴더·DB에 첫 배포용 초기화를 다시 실행하지 않으며, 새 시연 DB는 별도 배포 폴더·Compose 프로젝트로 준비합니다. 기존 서버를 대체할 때의 포트·worker 연결 전환은 실제 배포 시 확인합니다.
 
 | 담당 | 연결할 부분 | 백엔드 준비 내용 |
 | --- | --- | --- |
@@ -75,7 +77,7 @@ python -m unittest backend.tests.test_processing_events backend.tests.test_backe
 
 같은 HTTP 시나리오는 일반 backend·PostgreSQL CI에도 포함됩니다. 실제 얼굴 정확도·PPE 추론·스피커 출력은 여기서 검증했다고 간주하지 않습니다.
 
-Docker가 실행 중일 때 다음 명령으로 현재 소스의 API/web 이미지를 빌드하고 임시 PostgreSQL에서 같은 흐름을 실제 HTTP·웹 프록시로 검증합니다. Docker가 꺼져 있으면 자동으로 권한 창이나 Docker Desktop을 열지 않습니다.
+Docker와 ffprobe가 실행 가능한 환경에서 다음 명령으로 현재 소스의 API/web 이미지를 빌드하고 임시 PostgreSQL에서 같은 흐름을 실제 HTTP·웹 프록시로 검증합니다. 송신기 `requests`는 `video_sender/requirements.txt`로 설치합니다. Docker가 꺼져 있으면 자동으로 권한 창이나 Docker Desktop을 열지 않습니다.
 
 ```powershell
 $env:PYTHONUTF8 = "1"
@@ -84,7 +86,7 @@ python deploy/tests/validate_backend_integration.py
 
 이 명령은 주소나 기존 계정·볼륨을 입력받지 않습니다. 무작위 이름의 전용 프로젝트·계정·포트·볼륨을 사용하고 종료 시 해당 테스트 컨테이너·볼륨·빌드 이미지만 제거합니다. `kyo-server`를 시작·정지하거나 실제 서버 데이터를 이관하지 않습니다. 테스트 서비스에만 합성 클립·PDF를 생성하며, 결과는 `.private_media/backend-integration-results.json`에 저장합니다. 비밀번호·토큰은 결과에 포함하지 않습니다.
 
-Docker 검증에서는 웹 프록시·영상 수신·방송 명령 왕복·원본 접근 제한·클립/worker 프로토콜·병합·검토·동의 보관/철회·실제 파일 삭제·교육 게시와 컨테이너 재생성 후 데이터 유지를 확인합니다. CI의 `integration` 작업에서도 실행하고 결과 JSON을 artifact로 남깁니다. 실제 얼굴 검출 대신 인물이 없는 영상을 가짜 worker 결과로 반환합니다.
+Docker 검증에서는 PostgreSQL v10 이관·실제 dump 복원 리허설, 실제 송신 루프의 ffprobe·HTTP 전송, 웹 프록시·영상 수신·방송 명령 왕복·원본 접근 제한·클립/worker 프로토콜·병합·검토·동의 보관/철회·실제 파일 삭제·교육 게시와 컨테이너 재생성 후 데이터 유지를 확인합니다. CI의 `integration` 작업에서도 실행하고 결과 JSON을 artifact로 남깁니다. 실제 얼굴 검출 대신 인물이 없는 영상을 가짜 worker 결과로 반환합니다.
 
 ## 동료 연결 후 남는 실제 검증
 
