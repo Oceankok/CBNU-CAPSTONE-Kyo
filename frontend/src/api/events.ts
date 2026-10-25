@@ -115,6 +115,7 @@ export function saveEventRetention(
     expected_version: number;
     consent_confirmed?: boolean;
     consent_reference?: string;
+    consent_record_id?: string;
     retain_until?: string;
   },
 ): Promise<EventRetention> {

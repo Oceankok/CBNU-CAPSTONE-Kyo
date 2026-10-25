@@ -81,6 +81,7 @@ export interface EventRetention {
   event_id: string;
   decision: 'pending' | 'retain' | 'delete';
   consent_reference?: string | null;
+  consent_record_id?: string; // structured consent PDF linked to this event (#167)
   decided_by?: string | null;
   decided_at?: string | null;
   retain_until?: number | null;
