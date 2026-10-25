@@ -288,3 +288,14 @@
     padding: 12px;
   }
 }
+
+.linkBtn {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #3182ce;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+}

@@ -4,6 +4,7 @@ export const SETTINGS_ITEMS = [
   { to: '/zones', label: '구역 규칙', desc: '구역별 필수 PPE와 안전 수칙' },
   { to: '/cameras', label: '카메라 관리', desc: '카메라 등록·구역 지정, 사용·중지' },
   { to: '/equipment', label: '장비 관리', desc: '장비별 추가 PPE, 카메라별 적용 PPE' },
+  { to: '/consents', label: '동의서 관리', desc: '보관 동의서 PDF 등록, 확인, 철회' },
   { to: '/broadcast', label: '경고 방송', desc: '방송 사용 여부, 언어, 메시지 템플릿' },
   { to: '/nodes', label: '현장 PC', desc: '방송 PC 연결 상태, 음성·언어, 테스트 방송, 카메라 연결' },
 ];
