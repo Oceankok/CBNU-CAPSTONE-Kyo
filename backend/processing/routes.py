@@ -17,6 +17,7 @@ from backend.db.event_repository import get_connection
 from backend.field.routes import current_node
 from backend.media.paths import WORK_ROOT, PROCESSED_ROOT, private_source_path, storage_key, publish_file
 from backend.processing import service
+from backend.processing.events import EventSubmission, submit
 
 router = APIRouter(prefix='/api/processing', tags=['processing'])
 
@@ -88,6 +89,19 @@ def claim(node: dict = Depends(processor)):
 
 class ClipRequestInput(BaseModel):
     camera_id: str = Field(min_length=1, max_length=100)
+
+
+@router.post('/events', status_code=201)
+def submit_event(body: EventSubmission, response: Response, node: dict = Depends(processor)):
+    result = submit(body)
+    response.status_code = 201 if result['created'] else 200
+    return result
+
+
+@router.get('/cameras/{camera_id}/ppe-policy')
+def read_inference_policy(camera_id: str, node: dict = Depends(processor)):
+    from backend.equipment.routes import get_camera_policy
+    return get_camera_policy(camera_id)
 
 
 @router.post('/events/{event_id}/clip-requests', status_code=201)

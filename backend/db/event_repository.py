@@ -24,6 +24,7 @@ SQLite DB에서 조회/삽입하기 위한 함수들을 모아둔 파일이다.
 """
 
 import sqlite3
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Optional
 from datetime import datetime
@@ -203,7 +204,7 @@ def get_candidate_event_by_id(event_id: str) -> Optional[dict[str, Any]]:
         return _attach_event_media([event], conn)[0] if event else None
 
 
-def insert_candidate_event(event: dict[str, Any]) -> None:
+def insert_candidate_event(event: dict[str, Any], *, connection=None) -> None:
     """
     새로운 후보 이벤트를 candidate_event 테이블에 저장한다.
 
@@ -288,9 +289,10 @@ def insert_candidate_event(event: dict[str, Any]) -> None:
         );
     """
 
-    with get_connection() as conn:
+    with (nullcontext(connection) if connection is not None else get_connection()) as conn:
         from backend.cameras.service import require_camera
-        begin_write(conn)
+        if connection is None:
+            begin_write(conn)
         require_camera(conn, event['camera_id'], active=True)
         conn.execute(query, event)
         conn.execute("INSERT INTO event_retention(event_id) VALUES(?)", (event["event_id"],))
@@ -310,7 +312,8 @@ def insert_candidate_event(event: dict[str, Any]) -> None:
                 ) VALUES (?,?,?,?,?,?,'registered','unprocessed',?)""",
                 (str(uuid4()), event["event_id"], event["camera_id"], kind, role, path, created_at),
             )
-        conn.commit()
+        if connection is None:
+            conn.commit()
 
 def delete_candidate_event(event_id: str) -> None:
     """
