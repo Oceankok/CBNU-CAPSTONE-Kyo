@@ -1,0 +1,154 @@
+.wrap {
+  margin-top: 12px;
+  border-top: 1px solid #edf2f7;
+  padding-top: 12px;
+}
+
+.toggle {
+  padding: 7px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  color: #4a5568;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.panel {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.help {
+  margin: 0;
+  font-size: 12px;
+  color: #718096;
+  line-height: 1.5;
+}
+
+.error {
+  margin: 0;
+  font-size: 13px;
+  color: #e53e3e;
+}
+
+.item {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.itemHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.itemTitle {
+  font-size: 14px;
+  color: #1a202c;
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.draft {
+  background: #fffff0;
+  color: #b7791f;
+}
+
+.published {
+  background: #f0fff4;
+  color: #276749;
+}
+
+.superseded {
+  background: #edf2f7;
+  color: #718096;
+}
+
+.meta {
+  margin: 0;
+  font-size: 12px;
+  color: #718096;
+}
+
+.preview {
+  font-size: 13px;
+  color: #2d3748;
+}
+
+.bodyText {
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4a5568;
+}
+
+.input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 400;
+  color: #1a202c;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn,
+.primary {
+  align-self: flex-start;
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #4a5568;
+}
+
+.primary {
+  border: none;
+  background: #2b6cb0;
+  color: #fff;
+}
+
+.primary:disabled {
+  background: #cbd5e0;
+  cursor: not-allowed;
+}
