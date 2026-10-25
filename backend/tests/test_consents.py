@@ -11,6 +11,7 @@ from pypdf import PdfWriter
 
 from backend.consents import service
 from backend.db.connection import schema_version, is_postgres
+from backend.db.migrations import LATEST_VERSION
 from backend.db.event_repository import get_connection
 from backend.tests.support import isolated_api, login
 
@@ -173,7 +174,7 @@ class ConsentTests(unittest.TestCase):
         init_database()
         init_database()
         with get_connection() as conn:
-            self.assertEqual(schema_version(conn), 11)
+            self.assertEqual(schema_version(conn), LATEST_VERSION)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM app_user').fetchone()[0], before)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM consent_record').fetchone()[0], 0)
 

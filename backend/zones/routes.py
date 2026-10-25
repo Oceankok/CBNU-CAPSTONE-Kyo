@@ -9,6 +9,7 @@ from backend.auth.service import current_user, require_admin
 from backend.db.event_repository import get_connection
 from backend.zones.policy import validate_required_ppe
 from backend.zones.membership import zones_for, sync_legacy
+from backend.education.service import published_for
 
 admin = APIRouter(prefix="/api/zones", tags=["zones"], dependencies=[Depends(require_admin)])
 worker = APIRouter(prefix="/api/worker", tags=["worker"])
@@ -144,7 +145,7 @@ def get_my_education(user: dict = Depends(current_user)):
                 FROM education_recommendation WHERE zone_name=? AND quarter=?
                 ORDER BY recommendation_rank,recommendation_id""", (zone, quarter)).fetchall()
             groups.append({"quarter": quarter, "zone_name": zone,
-                           "items": [{**dict(row), "material": None} for row in rows],
+                           "items": [{**dict(row), "material": published_for(conn, quarter, zone, row['ppe_type'], row['education_topic'])} for row in rows],
                            "empty_reason": None if quarter else "recommendations_unavailable"})
     # Keep the original single-zone fields as the first group's projection.
     first = groups[0] if groups else {"quarter": None, "zone_name": None, "items": [], "empty_reason": "zone_unassigned"}
