@@ -164,7 +164,11 @@ def _preserve_source(media_id: str, source=None, frame=None, consume_source: boo
 def get_retention(event_id: str) -> dict:
     with get_connection() as conn:
         row = conn.execute("SELECT * FROM event_retention WHERE event_id=?", (event_id,)).fetchone()
-    return dict(row) if row else {"event_id": event_id, "decision": "pending", "version": 0}
+        consent = conn.execute('SELECT record_id FROM event_consent WHERE event_id=?', (event_id,)).fetchone()
+    result = dict(row) if row else {"event_id": event_id, "decision": "pending", "version": 0}
+    if consent:
+        result['consent_record_id'] = consent['record_id']
+    return result
 
 
 def get_media(media_id: str) -> dict:
@@ -375,11 +379,14 @@ def _request_delete(conn, event_id: str, actor: str):
 
 
 def decide_retention(event_id: str, decision: str, actor: str, expected_version: int,
-                     consent_confirmed: bool = False, consent_reference: str = "", retain_until: float | None = None) -> dict:
+                     consent_confirmed: bool = False, consent_reference: str = "", retain_until: float | None = None,
+                     consent_record_id: str | None = None) -> dict:
     if decision not in {"retain", "delete"}:
         raise ValueError("invalid_retention_decision")
-    if decision == "retain" and (not consent_confirmed or not consent_reference.strip()):
+    if decision == "retain" and (not consent_confirmed or not (consent_reference.strip() or consent_record_id)):
         raise ValueError("consent_confirmation_required")
+    if decision == 'retain' and consent_record_id and retain_until is None:
+        raise ValueError('invalid_consent_retention_expiry')
     if retain_until is not None and retain_until <= time.time():
         raise ValueError("retention_expiry_must_be_future")
     with get_connection() as conn:
@@ -401,6 +408,13 @@ def decide_retention(event_id: str, decision: str, actor: str, expected_version:
         if decision == "delete":
             _request_delete(conn, event_id, actor)
         else:
+            if consent_record_id:
+                from backend.consents.service import link_retention
+                consent_reference = link_retention(conn, event_id, consent_record_id, actor)
+            else:
+                # A legacy request must not silently replace structured consent.
+                if conn.execute('SELECT 1 FROM event_consent WHERE event_id=?', (event_id,)).fetchone():
+                    raise ValueError('consent_record_required')
             conn.execute("""UPDATE event_retention SET decision='retain',consent_confirmed=1,consent_reference=?,
                 decided_by=?,decided_at=?,retain_until=?,version=version+1 WHERE event_id=?""",
                 (consent_reference.strip(), actor, now(), retain_until, event_id))
