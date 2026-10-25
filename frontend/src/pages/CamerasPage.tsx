@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { MOCK_AUTH } from '../api/auth';
 import { fetchCameras, createCamera, updateCamera } from '../api/cameras';
 import type { Camera, CameraFields } from '../api/cameras';
 import { fetchZones } from '../api/zones';
 import { fetchNodes } from '../api/nodes';
 import ConfirmButton from '../components/ConfirmButton';
+import CameraGroups from '../components/CameraGroups';
 import styles from './CamerasPage.module.css';
 
 // Backend business error codes (#150 / #158)
@@ -389,6 +391,8 @@ export default function CamerasPage() {
           </ul>
         </section>
       )}
+
+      {cameras && !MOCK_AUTH && <CameraGroups cameras={cameras} />}
     </div>
   );
 }
