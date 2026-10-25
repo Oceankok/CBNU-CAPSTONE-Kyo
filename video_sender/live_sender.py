@@ -226,16 +226,16 @@ def watch_and_send():
                     continue
 
                 if is_stale_chunk(capture_start):
-                 print(
-                    f"[DROP] {CAMERA_ID} / "
-                    f"{path.name} 오래된 영상 폐기",
-                    flush=True,
-                 )
+                    print(
+                        f"[DROP] {CAMERA_ID} / "
+                        f"{path.name} 오래된 영상 폐기",
+                        flush=True,
+                    )
 
-                delete_chunk_files(path)
-                sent.add(path.name)
-                waiting_logged.discard(path.name)
-                continue
+                    delete_chunk_files(path)
+                    sent.add(path.name)
+                    waiting_logged.discard(path.name)
+                    continue
 
 
                 try:
