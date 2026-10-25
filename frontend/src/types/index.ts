@@ -5,7 +5,8 @@ export type EventStatus =
   | 'confirmed'
   | 'false_positive'
   | 'hold'
-  | 'unreviewable';
+  | 'unreviewable'
+  | 'merged'; // folded into a representative event by an admin (#138)
 
 export type PpeType = 'helmet' | 'vest' | 'all';
 
@@ -112,6 +113,21 @@ export interface CandidateEvent {
   event_status: EventStatus;
   media?: EventMedia[];
   retention?: EventRetention;
+  // Manual merge (#171). merge_version is the count of merged sources, sent back as expected_version
+  merge_version?: number;
+  merged_event_ids?: string[];
+  merged_into_event_id?: string | null;
+  merge_history?: EventMergeRecord[];
+}
+
+export interface EventMergeRecord {
+  source_event_id: string;
+  target_event_id: string;
+  merged_by: string;
+  merged_at: string;
+  reason: string;
+  media_ids: string[];
+  request_ids: string[];
 }
 
 export interface EventReview {

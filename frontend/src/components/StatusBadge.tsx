@@ -8,6 +8,7 @@ const STATUS_CONFIG: Record<EventStatus, { label: string; className: string }> =
     false_positive: { label: '오탐', className: styles.falsePositive },
     hold: { label: '보류', className: styles.hold },
     unreviewable: { label: '검토 불가', className: styles.unreviewable },
+    merged: { label: '병합됨', className: styles.merged },
   };
 
 interface StatusBadgeProps {
