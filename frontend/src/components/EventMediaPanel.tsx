@@ -14,6 +14,13 @@ import type {
   ReviewAvailability,
 } from '../types';
 import ConfirmButton from './ConfirmButton';
+import ConsentUploadForm from './ConsentUploadForm';
+import {
+  CONSENT_ERRORS,
+  fetchConsents,
+  openConsentFile,
+} from '../api/consents';
+import type { ConsentRecord } from '../api/consents';
 import styles from './EventMediaPanel.module.css';
 
 const STATUS: Record<EventMedia['status'], string> = {
@@ -47,6 +54,7 @@ const ERRORS: Record<string, string> = {
     '다른 관리자가 설정을 변경했습니다. 새로고침 후 다시 선택해 주세요.',
   file_delete_failed:
     '파일 삭제에 실패했습니다. 재시도하거나 서버의 파일 상태를 확인해 주세요.',
+  ...CONSENT_ERRORS,
 };
 // Why the reprocess button is unavailable (reprocess_unavailable_reason, #116)
 const REPROCESS_BLOCKED: Record<string, string> = {
@@ -120,7 +128,9 @@ export default function EventMediaPanel({
   const [camera, setCamera] = useState(cameraId);
   const [playing, setPlaying] = useState(false);
   const [consent, setConsent] = useState(false);
-  const [reference, setReference] = useState('');
+  const [consents, setConsents] = useState<ConsentRecord[]>([]);
+  const [recordId, setRecordId] = useState('');
+  const [addingConsent, setAddingConsent] = useState(false);
   const [expiry, setExpiry] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [sourceCamera, setSourceCamera] = useState(cameraId);
@@ -145,6 +155,14 @@ export default function EventMediaPanel({
       .then(apply)
       .catch((e: Error) => setError(e.message));
   }, [eventId, apply]);
+
+  // Active consent PDFs the admin can attach when retaining
+  useEffect(() => {
+    if (!finalReview || unreviewable) return;
+    fetchConsents()
+      .then((r) => setConsents(r.items.filter((c) => c.status === 'active')))
+      .catch(() => {});
+  }, [finalReview, unreviewable]);
 
   // Poll while the server is still redacting or deleting
   const processing = items.some(
@@ -188,9 +206,11 @@ export default function EventMediaPanel({
         decision,
         expected_version: retention.version,
         consent_confirmed: decision === 'retain' && consent,
-        consent_reference: decision === 'retain' ? reference : '',
-        ...(decision === 'retain' && expiry
-          ? { retain_until: new Date(expiry).toISOString() }
+        ...(decision === 'retain'
+          ? {
+              consent_record_id: recordId,
+              retain_until: new Date(expiry).toISOString(),
+            }
           : {}),
       }),
     );
@@ -321,7 +341,22 @@ export default function EventMediaPanel({
           <>
             {retention?.decision === 'retain' && (
               <p className={styles.text}>
-                모델 개선용으로 보관 중 · 근거: {retention.consent_reference}
+                모델 개선용으로 보관 중 · 근거:{' '}
+                {retention.consent_record_id ? (
+                  <button
+                    type="button"
+                    className={styles.linkBtn}
+                    onClick={() =>
+                      openConsentFile(retention.consent_record_id!).catch(
+                        (e: Error) => setError(ERRORS[e.message] ?? e.message),
+                      )
+                    }
+                  >
+                    동의서 PDF 보기
+                  </button>
+                ) : (
+                  retention.consent_reference
+                )}
               </p>
             )}
             {unreviewable && (
@@ -344,17 +379,40 @@ export default function EventMediaPanel({
             {consent && !unreviewable && (
               <>
                 <label className={styles.field}>
-                  동의 확인 근거 / 기록 번호
-                  <input
+                  동의서 (등록된 PDF)
+                  <select
                     className={styles.input}
-                    value={reference}
-                    maxLength={500}
+                    value={recordId}
                     disabled={busy}
-                    onChange={(e) => setReference(e.target.value)}
-                  />
+                    onChange={(e) => setRecordId(e.target.value)}
+                  >
+                    <option value="">-- 동의서 선택 --</option>
+                    {consents.map((c) => (
+                      <option key={c.record_id} value={c.record_id}>
+                        {c.site_code} · {c.form_version} ·{' '}
+                        {c.scope_description.slice(0, 30)}
+                      </option>
+                    ))}
+                  </select>
                 </label>
+                <button
+                  type="button"
+                  className={styles.linkBtn}
+                  onClick={() => setAddingConsent((v) => !v)}
+                >
+                  {addingConsent ? '새 동의서 등록 닫기' : '+ 새 동의서 등록'}
+                </button>
+                {addingConsent && (
+                  <ConsentUploadForm
+                    onCreated={(record) => {
+                      setConsents((prev) => [record, ...prev]);
+                      setRecordId(record.record_id);
+                      setAddingConsent(false);
+                    }}
+                  />
+                )}
                 <label className={styles.field}>
-                  보관 종료 시각 (선택)
+                  보관 종료 시각
                   <input
                     className={styles.input}
                     type="datetime-local"
@@ -377,7 +435,9 @@ export default function EventMediaPanel({
               {!unreviewable && (
                 <button
                   className={styles.primaryBtn}
-                  disabled={busy || !retention || !consent || !reference.trim()}
+                  disabled={
+                    busy || !retention || !consent || !recordId || !expiry
+                  }
                   onClick={() => decide('retain')}
                 >
                   동의 확인 후 보관

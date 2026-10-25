@@ -9,6 +9,7 @@ import type {
   EducationRecommendationList,
 } from '../types';
 import { ApiError } from '../api/client';
+import EducationMaterialEditor from '../components/EducationMaterialEditor';
 import type { LayoutContext } from '../components/AppLayout';
 import styles from './RecommendPage.module.css';
 
@@ -71,6 +72,8 @@ function RecommendCard({ item }: { item: EducationRecommendation }) {
           value={item.score_breakdown.process_risk_weight.toFixed(1)}
         />
       </details>
+
+      <EducationMaterialEditor recommendationId={item.recommendation_id} />
     </div>
   );
 }

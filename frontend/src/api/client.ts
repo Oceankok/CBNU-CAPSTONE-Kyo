@@ -36,7 +36,10 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
     ...init,
     credentials: 'include',
     headers: {
-      'Content-Type': 'application/json',
+      // FormData sets its own multipart boundary
+      ...(init?.body instanceof FormData
+        ? {}
+        : { 'Content-Type': 'application/json' }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },

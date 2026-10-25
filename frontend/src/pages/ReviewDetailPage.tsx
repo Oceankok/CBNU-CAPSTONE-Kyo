@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
 import EventMediaPanel from '../components/EventMediaPanel';
+import EventMergePanel from '../components/EventMergePanel';
 import { fetchEvent, submitReview, updateReview } from '../api/events';
 import { getSession } from '../api/auth';
 import type {
@@ -114,6 +115,8 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
   const [availability, setAvailability] = useState<ReviewAvailability | null>(
     null,
   );
+  // Bumped after a merge so the media panel reloads the reference media that moved in
+  const [mediaKey, setMediaKey] = useState(0);
   useEffect(() => {
     if (!event_id) return;
     fetchEvent(event_id)
@@ -218,7 +221,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
         {/* Left: redacted media first, retention below (all cameras share one policy) */}
         <div className={styles.mediaCol}>
           <EventMediaPanel
-            key={event.event_id}
+            key={`${event.event_id}-${mediaKey}`}
             eventId={event.event_id}
             cameraId={event.camera_id}
             finalReview={Boolean(
@@ -279,6 +282,47 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
             </details>
           </div>
 
+          {/* Merged source: the review happens on the representative event */}
+          {event.event_status === 'merged' && event.merged_into_event_id && (
+            <div className={styles.card}>
+              <p className={styles.headlineSub}>
+                이 이벤트는 다른 이벤트에 합쳐졌습니다. 검토는 대표 이벤트에서
+                진행합니다.
+              </p>
+              <Link to={`/review/${event.merged_into_event_id}`}>
+                {event.merged_into_event_id} 보기 →
+              </Link>
+            </div>
+          )}
+
+          {/* Representative: which events were folded in, by whom and why */}
+          {(event.merge_history?.length ?? 0) > 0 && (
+            <details className={styles.card} open>
+              <summary>합쳐진 이벤트 ({event.merge_history?.length}건)</summary>
+              {event.merge_history?.map((m) => (
+                <p key={m.source_event_id}>
+                  <Link to={`/review/${m.source_event_id}`}>
+                    {m.source_event_id}
+                  </Link>{' '}
+                  · {new Date(m.merged_at).toLocaleString('ko-KR')} ·{' '}
+                  {m.merged_by}
+                  <br />
+                  <span className={styles.optional}>{m.reason}</span>
+                </p>
+              ))}
+            </details>
+          )}
+
+          {event.event_status === 'pending' && !existingReview && (
+            <EventMergePanel
+              event={event}
+              onMerged={() => {
+                void reloadEvent();
+                setMediaKey((k) => k + 1);
+              }}
+            />
+          )}
+
           {reviewHistory.length > 0 && (
             <details className={styles.card}>
               <summary>이전 검토 기록 ({reviewHistory.length}건)</summary>
@@ -290,7 +334,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
               ))}
             </details>
           )}
-          {submitted ? (
+          {event.event_status === 'merged' ? null : submitted ? (
             <div className={styles.submittedCard}>
               <p className={styles.submittedMsg}>
                 {justSubmitted
