@@ -25,6 +25,23 @@ export function fetchEvents(): Promise<EventListResponse> {
   return apiFetch<EventListResponse>('/api/events');
 }
 
+export interface MergeRequest {
+  source_event_ids: string[];
+  expected_version: number;
+  reason: string;
+}
+
+// Admin only. Folds source events into this representative event (#171)
+export function mergeEvents(
+  eventId: string,
+  body: MergeRequest,
+): Promise<unknown> {
+  return apiFetch(`/api/events/${encodeURIComponent(eventId)}/merge`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
 export function fetchEvent(eventId: string): Promise<EventDetailResponse> {
   return apiFetch<EventDetailResponse>(`/api/events/${eventId}`);
 }
