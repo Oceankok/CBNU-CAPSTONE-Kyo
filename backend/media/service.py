@@ -205,7 +205,7 @@ def register_media(event_id: str, camera_id: str, kind: str, role: str, mode: st
                 raise ValueError('clip_request_not_found')
             if request['status'] != 'pending':
                 raise ValueError('clip_request_already_finished')
-            if kind != 'video' or role != 'clip':
+            if kind != 'video' or role != request['role']:
                 raise ValueError('invalid_clip_request_media')
             if conn.execute('SELECT 1 FROM event_media WHERE request_id=?', (request_id,)).fetchone():
                 raise ValueError('clip_request_upload_in_progress')
