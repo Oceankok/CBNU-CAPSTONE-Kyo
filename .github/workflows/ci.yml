@@ -22,6 +22,7 @@ jobs:
         run: |
           ./deploy/tests/Release.Tests.ps1
           ./deploy/tests/Prepare-Docker.Tests.ps1
+          ./deploy/tests/Remote-Camera.Tests.ps1
   backend:
     runs-on: ubuntu-latest
     steps:
