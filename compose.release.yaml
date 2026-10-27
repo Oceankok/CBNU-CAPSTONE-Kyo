@@ -33,6 +33,11 @@ services:
       retries: 20
   api:
     <<: *api
+    environment:
+      <<: *environment
+      PPE_EDUCATION_PROVIDER: ${PPE_EDUCATION_PROVIDER:-}
+      PPE_EDUCATION_MODEL: ${PPE_EDUCATION_MODEL:-}
+      PPE_EDUCATION_OPENAI_API_KEY: ${PPE_EDUCATION_OPENAI_API_KEY:-}
     ports: ["127.0.0.1:${PPE_API_PORT:-8000}:8000"]
     restart: unless-stopped
     depends_on:

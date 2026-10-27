@@ -1,12 +1,33 @@
 """Reviewed education content, scoped independently of mutable recommendation ranks."""
 from datetime import datetime, timezone
 import json
+from threading import BoundedSemaphore
 from uuid import uuid4
 
 from fastapi import HTTPException
 
 from backend.db.connection import begin_write
 from backend.db.event_repository import get_connection
+
+
+generation_slot = BoundedSemaphore(1)
+
+
+def generate_draft(recommendation_id, actor):
+    from backend.education import provider
+    # A small per-process limit; this is not a distributed job or retry system.
+    if not generation_slot.acquire(blocking=False):
+        raise HTTPException(429, 'education_generation_busy')
+    try:
+        with get_connection() as conn:
+            scope = recommendation(conn, recommendation_id)
+        try:
+            content, model = provider.generate(scope)
+        except provider.GenerationError as exc:
+            raise HTTPException(exc.status_code, exc.code) from None
+        return create_draft(recommendation_id, content, actor, expected_scope=scope, provider='openai', model=model)
+    finally:
+        generation_slot.release()
 
 
 def now():
@@ -48,17 +69,24 @@ def list_materials(recommendation_id, limit=50, offset=0):
     return [serialize(row) for row in rows]
 
 
-def create_draft(recommendation_id, content, actor):
+def create_draft(recommendation_id, content, actor, *, expected_scope=None, provider='manual', model=None):
     material_id = 'MAT_' + uuid4().hex
     with get_connection() as conn:
         begin_write(conn)
-        scope = recommendation(conn, recommendation_id)
+        try:
+            scope = recommendation(conn, recommendation_id)
+        except HTTPException:
+            if expected_scope is not None:
+                raise HTTPException(409, 'education_recommendation_changed') from None
+            raise
+        if expected_scope is not None and scope != expected_scope:
+            raise HTTPException(409, 'education_recommendation_changed')
         stamp = now()
         conn.execute('''INSERT INTO education_material(material_id,recommendation_id,quarter,zone_name,ppe_type,
-            education_topic,title,body,checklist_json,created_by,created_at,updated_by,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            education_topic,title,body,checklist_json,created_by,created_at,updated_by,updated_at,provider,model)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (material_id, recommendation_id, scope['quarter'], scope['zone_name'], scope['ppe_type'], scope['education_topic'],
-             content.title, content.body, json.dumps(content.checklist, ensure_ascii=False), actor, stamp, actor, stamp))
+             content.title, content.body, json.dumps(content.checklist, ensure_ascii=False), actor, stamp, actor, stamp, provider, model))
     return get_material(material_id)
 
 
