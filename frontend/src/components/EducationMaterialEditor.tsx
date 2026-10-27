@@ -3,11 +3,13 @@ import ConfirmButton from './ConfirmButton';
 import {
   MATERIAL_ERRORS,
   createMaterial,
+  fetchGenerationStatus,
   fetchMaterials,
+  generateMaterial,
   publishMaterial,
   updateMaterial,
 } from '../api/materials';
-import type { EducationMaterial } from '../api/materials';
+import type { EducationMaterial, GenerationStatus } from '../api/materials';
 import styles from './EducationMaterialEditor.module.css';
 
 const STATUS_LABEL = {
@@ -27,6 +29,8 @@ export default function EducationMaterialEditor({
   const [items, setItems] = useState<EducationMaterial[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [generation, setGeneration] = useState<GenerationStatus | null>(null);
+  const [generating, setGenerating] = useState(false);
   // null: not editing; 'new': writing a new draft; otherwise the draft being edited
   const [editing, setEditing] = useState<EducationMaterial | 'new' | null>(
     null,
@@ -46,6 +50,20 @@ export default function EducationMaterialEditor({
     const next = !open;
     setOpen(next);
     if (next && !items) void load();
+    if (next && !generation)
+      fetchGenerationStatus()
+        .then(setGeneration)
+        .catch(() => {});
+  };
+
+  // Drafts only; the admin still edits, checks the facts and approves before workers see it
+  const generate = () => {
+    setGenerating(true);
+    setError(null);
+    generateMaterial(recommendationId)
+      .then(() => load())
+      .catch(fail)
+      .finally(() => setGenerating(false));
   };
 
   const startEdit = (m: EducationMaterial | 'new') => {
@@ -114,6 +132,9 @@ export default function EducationMaterialEditor({
                 <span className={`${styles.badge} ${styles[m.status]}`}>
                   {STATUS_LABEL[m.status]}
                 </span>
+                {m.provider !== 'manual' && (
+                  <span className={styles.ai}>AI 초안</span>
+                )}
                 <strong className={styles.itemTitle}>{m.title}</strong>
               </div>
               <p className={styles.meta}>
@@ -207,13 +228,29 @@ export default function EducationMaterialEditor({
               </div>
             </div>
           ) : (
-            <button
-              type="button"
-              className={styles.btn}
-              onClick={() => startEdit('new')}
-            >
-              + 새 초안 작성
-            </button>
+            <div className={styles.actions}>
+              <button
+                type="button"
+                className={styles.btn}
+                onClick={() => startEdit('new')}
+              >
+                + 새 초안 작성
+              </button>
+              <ConfirmButton
+                className={styles.btn}
+                label={generating ? 'AI가 쓰는 중…' : 'AI로 초안 만들기'}
+                question="외부 AI 서비스를 호출하며 비용이 들 수 있습니다. 추천 주제와 PPE 종류만 전송합니다."
+                confirmLabel="생성"
+                danger={false}
+                disabled={busy || generating || !generation?.configured}
+                onConfirm={generate}
+              />
+              {generation && !generation.configured && (
+                <span className={styles.help}>
+                  AI 생성은 서버에 설정되지 않아 쓸 수 없습니다.
+                </span>
+              )}
+            </div>
           )}
         </div>
       )}
