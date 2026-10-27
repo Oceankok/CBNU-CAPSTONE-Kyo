@@ -26,6 +26,11 @@ x-api: &api
 services:
   api:
     <<: *api
+    environment:
+      <<: *environment
+      PPE_EDUCATION_PROVIDER: ${PPE_EDUCATION_PROVIDER:-}
+      PPE_EDUCATION_MODEL: ${PPE_EDUCATION_MODEL:-}
+      PPE_EDUCATION_OPENAI_API_KEY: ${PPE_EDUCATION_OPENAI_API_KEY:-}
     restart: unless-stopped
     ports:
       # Frontend reverse proxy will be added by the frontend owner.

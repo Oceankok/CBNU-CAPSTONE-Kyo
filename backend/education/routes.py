@@ -8,6 +8,17 @@ from backend.education import service
 router = APIRouter(prefix='/api', tags=['education materials'], dependencies=[Depends(require_admin)])
 
 
+@router.get('/education/generation')
+def generation_availability():
+    from backend.education.provider import availability
+    return availability()
+
+
+@router.post('/recommendations/{recommendation_id}/materials/generate', status_code=201)
+def generate(recommendation_id: str, user: dict = Depends(require_admin)):
+    return service.generate_draft(recommendation_id, user['user_id'])
+
+
 @router.post('/recommendations/{recommendation_id}/materials', status_code=201)
 def create(recommendation_id: str, body: MaterialContent, user: dict = Depends(require_admin)):
     return service.create_draft(recommendation_id, body, user['user_id'])
