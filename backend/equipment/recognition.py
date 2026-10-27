@@ -63,6 +63,8 @@ def public(row):
 
 
 def analyze(data: bytes, content_type: str, camera_id: str | None, actor: str):
+    if len(data) > MAX_UPLOAD:
+        raise HTTPException(413, 'image_too_large')
     if camera_id is not None:
         with get_connection() as conn:
             find_camera(conn, camera_id)
@@ -78,6 +80,8 @@ def analyze(data: bytes, content_type: str, camera_id: str | None, actor: str):
     recognition_id = str(uuid4())
     key, expires, candidates, error = "", None, [], None
     adapter = provider.get_provider()
+    from backend.runtime import processing_mode
+    remote = processing_mode() == 'remote'
     if adapter is None:
         error = "provider_not_configured"
     else:
@@ -86,11 +90,20 @@ def analyze(data: bytes, content_type: str, camera_id: str | None, actor: str):
         try:
             with TemporaryDirectory(prefix="recognition_", dir=EVIDENCE_ROOT) as directory:
                 output = Path(directory) / "redacted.jpg"
-                redact_frame(frame, output, mode="scrfd")
-                redacted = output.read_bytes()
-                # Only this completed redaction output may cross the provider boundary.
-                stage = "provider"
-                result = provider.ProviderResult.model_validate(adapter.analyze(redacted, timeout_seconds=30))
+                if remote:
+                    import base64
+                    import os
+                    from backend.processing.ai_jobs import request_job
+                    # Private raw bytes go only to our authenticated host worker, never to the provider.
+                    returned = request_job('equipment', os.environ.get('PPE_EQUIPMENT_PROVIDER', '').strip(), {}, data)
+                    redacted = base64.b64decode(returned['redacted_jpeg'], validate=True)
+                    result = provider.ProviderResult.model_validate(returned['analysis'])
+                else:
+                    redact_frame(frame, output, mode="scrfd")
+                    redacted = output.read_bytes()
+                    # Only this completed redaction output may cross the provider boundary.
+                    stage = "provider"
+                    result = provider.ProviderResult.model_validate(adapter.analyze(redacted, timeout_seconds=30))
                 candidates = [{"candidate_id": str(uuid4()), **item.model_dump(),
                                "confidence_kind": "provider_estimate" if item.confidence is not None else "not_available"}
                               for item in result.candidates]
@@ -101,6 +114,8 @@ def analyze(data: bytes, content_type: str, camera_id: str | None, actor: str):
                 expires = time.time() + EVIDENCE_SECONDS
         except provider.ProviderError as exc:
             error = exc.code
+        except HTTPException:
+            raise
         except ValidationError:
             error = "provider_response_invalid"
         except Exception:

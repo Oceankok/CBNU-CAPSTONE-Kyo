@@ -22,10 +22,21 @@ def generate_draft(recommendation_id, actor):
         with get_connection() as conn:
             scope = recommendation(conn, recommendation_id)
         try:
-            content, model = provider.generate(scope)
+            configured = provider.settings()
+            from backend.runtime import processing_mode
+            if configured.provider == 'codex_chatgpt' and processing_mode() == 'remote':
+                from backend.processing.ai_jobs import request_job
+                result = request_job('education', configured.provider, {'ppe_type': scope['ppe_type'],
+                                     'education_topic': scope['education_topic']})
+                from backend.education.models import MaterialContent
+                content, model = MaterialContent.model_validate(result['content']), result['model']
+            else:
+                if configured.provider == 'codex_chatgpt' and processing_mode() == 'disabled':
+                    raise provider.GenerationError('processing_worker_not_connected', 503)
+                content, model = provider.generate(scope)
         except provider.GenerationError as exc:
             raise HTTPException(exc.status_code, exc.code) from None
-        return create_draft(recommendation_id, content, actor, expected_scope=scope, provider='openai', model=model)
+        return create_draft(recommendation_id, content, actor, expected_scope=scope, provider=configured.provider, model=model)
     finally:
         generation_slot.release()
 
@@ -122,6 +133,23 @@ def publish(material_id, actor, expected_version):
         conn.execute("UPDATE education_material SET status='published',published_by=?,published_at=?,updated_by=?,updated_at=?,version=version+1 WHERE material_id=?",
                      (actor, stamp, actor, stamp, material_id))
     return get_material(material_id)
+
+
+def unpublish(material_id, actor, expected_version):
+    with get_connection() as conn:
+        begin_write(conn)
+        row = find(conn, material_id)
+        if row['version'] != expected_version:
+            raise HTTPException(409, 'education_material_version_conflict')
+        if row['status'] != 'published':
+            raise HTTPException(409, 'education_material_not_published')
+        changed = conn.execute('''UPDATE education_material SET status='draft',updated_by=?,updated_at=?,
+            version=version+1 WHERE material_id=? AND version=? AND status='published' ''',
+            (actor, now(), material_id, expected_version))
+        if changed.rowcount != 1:
+            raise HTTPException(409, 'education_material_version_conflict')
+        result = serialize(find(conn, material_id))
+    return result
 
 
 def published_for(conn, quarter, zone_name, ppe_type, topic):

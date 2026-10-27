@@ -12,7 +12,7 @@ def initialize(*, seed=False):
         conn.execute("""CREATE TABLE IF NOT EXISTS app_schema_version (
             singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL)""")
         row = conn.execute("SELECT version FROM app_schema_version WHERE singleton=1").fetchone()
-        if row is not None and row[0] not in (7, 8, 9, 10, 11, 12, 13, LATEST_VERSION):
+        if row is not None and row[0] not in (7, 8, 9, 10, 11, 12, 13, 14, LATEST_VERSION):
             raise RuntimeError("Unsupported PostgreSQL schema version; explicit migration required")
         if row is None:
             if conn.execute("SELECT to_regclass('camera_info')").fetchone()[0] is not None:
@@ -40,6 +40,9 @@ def initialize(*, seed=False):
             conn.execute('UPDATE app_schema_version SET version=? WHERE singleton=1', (LATEST_VERSION,))
         if row is None or row[0] < 14:
             conn.execute((root.parent / 'event_merge' / 'schema.sql').read_text(encoding='utf-8'))
+            conn.execute('UPDATE app_schema_version SET version=? WHERE singleton=1', (LATEST_VERSION,))
+        if row is None or row[0] < 15:
+            conn.execute((root.parent / 'processing' / 'ai_schema.sql').read_text(encoding='utf-8'))
             conn.execute('UPDATE app_schema_version SET version=? WHERE singleton=1', (LATEST_VERSION,))
         if seed:
             conn.execute((root / "postgres_seed.sql").read_text(encoding="utf-8"))
