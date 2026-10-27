@@ -1,17 +1,18 @@
 
 import cv2
+import os
 import subprocess
 from pathlib import Path
 import time
 from datetime import datetime,timezone
 
-CAMERA_INDEX = 0
+CAMERA_INDEX = int(os.getenv("VIDEO_CAMERA_INDEX", "0"))
 FPS = 15
 WIDTH = 640
 HEIGHT = 360
 SEGMENT_SECONDS = 1
 
-OUTPUT_DIR = Path("video_sender/output")
+OUTPUT_DIR = Path(os.getenv("VIDEO_OUTPUT_DIR", "video_sender/output"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
