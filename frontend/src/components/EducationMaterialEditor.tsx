@@ -7,6 +7,7 @@ import {
   fetchMaterials,
   generateMaterial,
   publishMaterial,
+  unpublishMaterial,
   updateMaterial,
 } from '../api/materials';
 import type { EducationMaterial, GenerationStatus } from '../api/materials';
@@ -111,6 +112,15 @@ export default function EducationMaterialEditor({
       .finally(() => setBusy(false));
   };
 
+  const unpublish = (m: EducationMaterial) => {
+    setBusy(true);
+    setError(null);
+    unpublishMaterial(m.material_id, m.version)
+      .then(() => load())
+      .catch(fail)
+      .finally(() => setBusy(false));
+  };
+
   return (
     <div className={styles.wrap}>
       <button type="button" className={styles.toggle} onClick={toggle}>
@@ -152,6 +162,18 @@ export default function EducationMaterialEditor({
                   ))}
                 </ul>
               </details>
+              {m.status === 'published' && (
+                <div className={styles.actions}>
+                  <ConfirmButton
+                    className={styles.btn}
+                    label="게시 취소"
+                    question="작업자에게 더 이상 보이지 않고 초안으로 돌아갑니다. 이전에 교체된 자료는 복구되지 않습니다."
+                    confirmLabel="게시 취소"
+                    disabled={busy}
+                    onConfirm={() => unpublish(m)}
+                  />
+                </div>
+              )}
               {m.status === 'draft' && editing !== m && (
                 <div className={styles.actions}>
                   <button
