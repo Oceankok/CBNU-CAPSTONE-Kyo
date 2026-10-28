@@ -17,7 +17,10 @@ class MaterialUpdate(MaterialContent):
     expected_version: int = Field(ge=0)
 
 
-class MaterialApproval(BaseModel):
+class MaterialVersion(BaseModel):
     model_config = ConfigDict(extra='forbid')
     expected_version: int = Field(ge=0)
+
+
+class MaterialApproval(MaterialVersion):
     approved: bool

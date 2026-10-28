@@ -498,6 +498,8 @@ app.include_router(recognition_router)  # Static /recognitions must precede /{eq
 app.include_router(equipment_router)
 from backend.processing.routes import router as processing_router
 app.include_router(processing_router)
+from backend.processing.ai_routes import router as host_ai_router
+app.include_router(host_ai_router)
 from backend.cameras.routes import router as cameras_router
 from backend.cameras.service import CameraStateError
 app.include_router(cameras_router)

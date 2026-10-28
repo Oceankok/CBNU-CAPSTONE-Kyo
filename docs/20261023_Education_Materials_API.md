@@ -13,6 +13,7 @@
 | `GET /api/education/materials/{material_id}` | 관리자용 내용·상태·작성/수정/게시 이력 조회 |
 | `PATCH /api/education/materials/{material_id}` | 초안 수정, `expected_version` 필요 |
 | `POST /api/education/materials/{material_id}/publish` | 검토 승인 후 게시, `expected_version`·`approved=true` 필요 |
+| `POST /api/education/materials/{material_id}/unpublish` | 게시 취소 후 초안으로 전환, `expected_version` 필요 |
 
 작성 본문은 다음과 같습니다. 수정할 때는 같은 내용에 `expected_version`을 추가합니다.
 
@@ -33,6 +34,18 @@
 ```
 
 버전이 다르면 `409 education_material_version_conflict`를 반환합니다. 게시된 본문은 직접 수정하지 않습니다. 수정본은 새 초안으로 작성하고 검토 후 게시합니다. 새 초안을 작성하는 것만으로 기존 게시 자료는 바뀌지 않습니다. 새 자료가 승인되면 같은 분기·구역·PPE의 기존 자료는 `superseded`로 바꾸고, 새 자료 게시와 함께 트랜잭션으로 반영합니다. 이전 승인 자료와 게시 담당자·시각은 유지합니다.
+
+## 게시 취소
+
+오류가 있는 자료의 노출을 중단할 때 `POST /api/education/materials/{material_id}/unpublish`를 호출합니다.
+
+```json
+{"expected_version": 1}
+```
+
+현재 상태가 `published`인 자료만 `draft`로 전환하고 버전을 증가시킵니다. 취소 담당자·시각은 `updated_by`·`updated_at`에 기록하며 직전 `published_by`·`published_at`은 유지합니다. 별도 전체 변경 이력 테이블을 추가하지는 않습니다. 취소 이후 작업자 조회의 `material`은 `null`이며, 이전에 `superseded`된 자료를 자동 복구하지 않습니다. 이미 작업자 화면에 표시된 내용의 즉시 회수는 프론트의 재조회가 필요합니다.
+
+수정 후 다시 게시하려면 현재 버전으로 `approved=true`를 전달해야 합니다. 버전 불일치는 `409 education_material_version_conflict`, 게시 중이 아닌 자료는 `409 education_material_not_published`를 반환합니다. 새 DB 필드나 상태값은 추가하지 않습니다. 관리자 화면의 게시 취소 버튼은 프론트 담당이 별도로 연동합니다.
 
 ## 기존 작업자 API
 
@@ -61,6 +74,6 @@
 후속 작업으로 기록합니다.
 
 - 상용 AI 초안 생성: [OpenAI API 계약](20261027_Education_AI_Drafts_API.md)을 사용합니다. 실제 키·모델 설정과 유료 호출은 별도입니다.
-- 게시 취소 API: 오류 자료의 즉시 노출 중단을 위한 제안이며, 이번에는 기본 기능만 구현하기로 하여 보류했습니다.
+- 게시 취소 API는 위 계약으로 제공합니다. 화면 연동은 프론트 담당 PR로 진행합니다.
 - 프론트 담당: 관리자 작성·검토·게시 화면과 작업자 `material` 표시를 별도 PR로 연동합니다.
-- 번역은 기존 합의대로 우선 제외합니다.
+- 번역은 프론트 담당과 합의 후 결정합니다. 사용자별 선호 언어, 언어별 교육 텍스트 저장·승인 정책을 논의하며, 영상은 우선 한국어 단일본을 사용하고 자막은 일정에 따라 결정합니다. 이 API 변경에는 번역·자막 구현이 포함되지 않습니다.

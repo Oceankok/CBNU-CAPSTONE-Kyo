@@ -10,7 +10,7 @@ from backend.auth.service import require_admin
 from backend.db.event_repository import get_connection
 from backend.equipment import recognition
 from backend.equipment.routes import EquipmentInput, now
-from backend.runtime import require_local_processing
+from backend.runtime import require_media_processing
 
 router = APIRouter(prefix="/api/equipment/recognitions", dependencies=[Depends(require_admin)], tags=["equipment recognition"])
 
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/equipment/recognitions", dependencies=[Depends(r
 }}})
 async def analyze_image(request: Request, camera_id: str | None = Query(default=None, min_length=1, max_length=100),
                         user: dict = Depends(require_admin)):
-    require_local_processing()
+    require_media_processing()
     content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if content_type not in {"image/jpeg", "image/png"}:
         raise HTTPException(415, "unsupported_image_type")

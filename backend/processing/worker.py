@@ -50,7 +50,8 @@ class Worker:
                 if journal.get('server') != self.server or journal.get('job_id') != folder.name:
                     continue
                 self.erase_payloads(folder)
-                response = self.client.post(f'/api/processing/jobs/{folder.name}/cleanup')
+                prefix = '/api/processing/ai/jobs' if journal.get('kind') == 'ai' else '/api/processing/jobs'
+                response = self.client.post(f'{prefix}/{folder.name}/cleanup')
                 if response.status_code == 200:
                     (folder / 'journal.json').unlink()
                     folder.rmdir()
@@ -142,11 +143,22 @@ class Worker:
     def run_once(self):
         self.recover_cleanup()
         self.client.post('/api/field/heartbeat').raise_for_status()
+        ai_enabled = os.environ.get('PPE_HOST_AI_ENABLED', 'false').lower() == 'true'
+        if ai_enabled:
+            from backend.processing.ai_worker import capabilities
+            self.client.put('/api/processing/ai/capabilities', json={'capabilities': capabilities()}).raise_for_status()
         response = self.client.post('/api/processing/claim')
         response.raise_for_status()
         job = response.json()['job']
         if job:
             self.execute(job)
+        elif ai_enabled:
+            from backend.processing.ai_worker import execute
+            response = self.client.post('/api/processing/ai/claim')
+            response.raise_for_status()
+            job = response.json()['job']
+            if job:
+                execute(self, job)
         return bool(job)
 
 

@@ -15,6 +15,8 @@ def maintain_once(stale_after: int = 3600) -> dict:
     cleaned_video = cleanup_video()
     from backend.processing.service import expire_jobs
     expire_jobs()
+    from backend.processing.ai_jobs import maintain as maintain_ai
+    maintain_ai()
     cutoff = time.time() - stale_after
     with get_connection() as conn:
         begin_write(conn)

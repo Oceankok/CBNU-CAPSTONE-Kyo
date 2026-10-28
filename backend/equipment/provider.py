@@ -37,4 +37,7 @@ def get_provider() -> RecognitionProvider | None:
     if selected in {"codex_chatgpt", "chatgpt_oauth"}:
         from backend.equipment.subscription_provider import SubscriptionProvider
         return SubscriptionProvider(selected)
+    if selected == 'openai':
+        from backend.equipment.openai_provider import OpenAIProvider
+        return OpenAIProvider()
     return None
