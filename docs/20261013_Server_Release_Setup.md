@@ -14,7 +14,7 @@ GitHub에서 먼저 설정합니다.
 
 1. Settings → Environments → `production`을 생성합니다.
 2. Required reviewers를 지정하고 Deployment branches and tags를 **선택한 브랜치 main 하나만** 허용하도록 설정합니다.
-3. environment variable `KYO_DEPLOY_ROOT`에 별도 서버 배포 폴더의 절대 경로를 지정합니다.
+3. environment variable `KYO_DEPLOY_ROOT`에 별도 서버 배포 폴더의 절대 경로를 지정합니다. `KYO_DEPLOY_PROJECT`는 그 서버의 Compose 프로젝트와 같게 설정하며, 생략하면 기존 `kyo-server`를 사용합니다. 별도 시연 서버의 프로젝트가 `kyo-demo`라면 두 변수를 함께 확인합니다.
 4. 서버 PC의 별도 배포 계정에 Windows X64 runner를 등록하고 `kyo-deploy` label을 추가합니다. PowerShell 7과 Linux Docker 엔진 접근이 필요합니다.
 5. 공개 저장소 runner가 다른 workflow의 임의 작업을 받을 수 있으므로 runner 등록 전에 모든 self-hosted workflow와 저장소 접근 권한을 확인합니다. GitHub의 [self-hosted runner 보안 지침](https://docs.github.com/en/actions/reference/security/secure-use)을 따릅니다. 개인 ChatGPT/OAuth 자격 증명을 배포 계정과 공유하지 않습니다.
 
@@ -73,10 +73,13 @@ DB와 동의된 보관 미디어를 함께 백업하고 별도 PostgreSQL에서 
 
 ```powershell
 $previousRelease = Get-Content (Join-Path $deploymentRoot 'previous-release.json') -Raw | ConvertFrom-Json
-./deploy/Release.ps1 -DeploymentRoot $deploymentRoot -Commit $previousRelease.commit -ApiImage $previousRelease.api_image -WebImage $previousRelease.web_image -Https:([bool]$previousRelease.https) -Lan:([bool]$previousRelease.lan)
+$previousTunnel = $previousRelease.PSObject.Properties['tunnel_https'] -and [bool]$previousRelease.tunnel_https
+./deploy/Release.ps1 -Project $previousRelease.project -DeploymentRoot $deploymentRoot -Commit $previousRelease.commit -ApiImage $previousRelease.api_image -WebImage $previousRelease.web_image -Https:([bool]$previousRelease.https) -Lan:([bool]$previousRelease.lan) -TunnelHttps:([bool]$previousTunnel)
 ```
 
 DB 스키마 변경은 자동 배포 명령에서 수행하지 않습니다. 별도로 백업·이전 이미지와의 호환성·마이그레이션·복구 절차를 검토한 뒤 진행합니다. 이전 코드와 호환되지 않는 DB는 이미지 rollback만으로 복구할 수 없습니다. pg_dump는 DB 백업이며 미디어 volume까지 같은 시점으로 복사하는 백업은 별도 절차가 필요합니다.
+
+기존 HTTPS 터널을 사용하는 배포는 [CD 배포 대상·터널 연결](20261028_Release_Tunnel_Target.md)의 `-TunnelHttps` 옵션을 사용합니다. Caddy용 `-Https`와 함께 지정하지 않습니다.
 
 ## HTTPS 활성화
 

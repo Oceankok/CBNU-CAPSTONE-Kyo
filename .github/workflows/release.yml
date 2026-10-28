@@ -19,6 +19,10 @@ on:
         description: Open the web port to a trusted LAN for HTTP demo access (not with HTTPS)
         type: boolean
         default: false
+      tunnel_https:
+        description: Use an existing HTTPS tunnel to the localhost web port (not with https/lan)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -50,7 +54,7 @@ jobs:
             if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('Invalid release commit');
             if (context.eventName === 'workflow_dispatch') {
               const enabled = value => value === true || value === 'true';
-              if (enabled(context.payload.inputs.lan) && enabled(context.payload.inputs.https)) throw new Error('Choose LAN HTTP or HTTPS, not both');
+              if (['lan', 'https', 'tunnel_https'].filter(key => enabled(context.payload.inputs[key])).length > 1) throw new Error('Choose one access mode: LAN HTTP, Caddy HTTPS, or tunnel HTTPS');
               const runs = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id:'ci.yml', branch:'main', event:'push', head_sha:commit, status:'success'});
               if (!runs.data.workflow_runs.some(r => r.head_sha === commit)) throw new Error('Successful main CI required');
               if (context.payload.inputs.deploy === true || context.payload.inputs.deploy === 'true') {
@@ -135,11 +139,13 @@ jobs:
     env:
       DOCKER_HOST: npipe:////./pipe/dockerDesktopLinuxEngine
       DEPLOYMENT_ROOT: ${{ vars.KYO_DEPLOY_ROOT }}
+      DEPLOYMENT_PROJECT: ${{ vars.KYO_DEPLOY_PROJECT || 'kyo-server' }}
       API_IMAGE: ${{ needs.gate.outputs.images }}-api@${{ needs.publish.outputs.api }}
       WEB_IMAGE: ${{ needs.gate.outputs.images }}-web@${{ needs.publish.outputs.web }}
       RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       RELEASE_HTTPS: ${{ inputs.https }}
       RELEASE_LAN: ${{ inputs.lan }}
+      RELEASE_TUNNEL_HTTPS: ${{ inputs.tunnel_https }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -149,6 +155,7 @@ jobs:
         shell: pwsh
         run: |
           if (-not $env:DEPLOYMENT_ROOT) { throw 'Set production KYO_DEPLOY_ROOT variable' }
+          if ($env:DEPLOYMENT_PROJECT -notmatch '^[a-z][a-z0-9-]{2,40}$') { throw 'Invalid production KYO_DEPLOY_PROJECT' }
           ./deploy/Prepare-Docker.ps1
       - uses: docker/login-action@v3
         with:
@@ -158,7 +165,7 @@ jobs:
       - name: Apply approved release
         shell: pwsh
         run: |
-          ./deploy/Release.ps1 -DeploymentRoot $env:DEPLOYMENT_ROOT -Commit $env:RELEASE_COMMIT -ApiImage $env:API_IMAGE -WebImage $env:WEB_IMAGE -Https:($env:RELEASE_HTTPS -eq 'true') -Lan:($env:RELEASE_LAN -eq 'true')
+          ./deploy/Release.ps1 -Project $env:DEPLOYMENT_PROJECT -DeploymentRoot $env:DEPLOYMENT_ROOT -Commit $env:RELEASE_COMMIT -ApiImage $env:API_IMAGE -WebImage $env:WEB_IMAGE -Https:($env:RELEASE_HTTPS -eq 'true') -Lan:($env:RELEASE_LAN -eq 'true') -TunnelHttps:($env:RELEASE_TUNNEL_HTTPS -eq 'true')
       - name: Remove temporary registry credentials
         if: always()
         shell: pwsh
