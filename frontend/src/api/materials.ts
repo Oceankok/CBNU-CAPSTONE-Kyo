@@ -11,6 +11,8 @@ export interface EducationMaterial {
   body: string;
   checklist: string[];
   status: 'draft' | 'published' | 'superseded';
+  provider: string; // 'manual' unless an AI drafted it
+  model: string | null;
   created_by: string;
   created_at: string;
   updated_by: string;
@@ -37,7 +39,49 @@ export const MATERIAL_ERRORS: Record<string, string> = {
     '추천 내용이 바뀌어 이 초안은 게시할 수 없습니다. 새 초안을 작성하세요.',
   recommendation_not_found: '추천 항목을 찾을 수 없습니다.',
   education_material_not_found: '교육 자료를 찾을 수 없습니다.',
+  // AI draft generation (#181)
+  education_generation_disabled:
+    'AI 초안 생성이 꺼져 있습니다. 직접 작성해 주세요.',
+  education_generation_not_configured:
+    'AI 초안 생성 설정이 없습니다. 서버 관리자에게 문의하거나 직접 작성해 주세요.',
+  education_provider_auth_failed:
+    'AI 서비스 키 또는 접근 권한에 문제가 있습니다. 서버 관리자에게 문의하세요.',
+  education_generation_busy:
+    '다른 초안을 만드는 중입니다. 잠시 뒤 다시 시도하세요.',
+  education_provider_rate_limited:
+    'AI 서비스 사용 한도에 걸렸습니다. 잠시 뒤 다시 시도하거나 직접 작성해 주세요.',
+  education_provider_timeout:
+    'AI 응답이 늦어졌습니다. 직접 작성하거나 다시 시도하세요.',
+  education_provider_unavailable: 'AI 서비스에 연결하지 못했습니다.',
+  education_provider_response_invalid:
+    'AI 응답이 올바르지 않아 저장하지 않았습니다.',
+  education_generation_refused:
+    'AI가 이 주제의 생성을 거절했습니다. 직접 작성해 주세요.',
+  education_topic_invalid:
+    '추천 주제가 비어 있거나 너무 길어 생성할 수 없습니다.',
 };
+
+export interface GenerationStatus {
+  configured: boolean;
+  provider: string | null;
+  model: string | null;
+  reason: string | null;
+}
+
+// Local setting check only; this never calls the AI service
+export function fetchGenerationStatus(): Promise<GenerationStatus> {
+  return apiFetch('/api/education/generation');
+}
+
+// Each call can cost money, so the UI asks first and never retries on its own
+export function generateMaterial(
+  recommendationId: string,
+): Promise<EducationMaterial> {
+  return apiFetch(
+    `/api/recommendations/${encodeURIComponent(recommendationId)}/materials/generate`,
+    { method: 'POST' },
+  );
+}
 
 export function fetchMaterials(
   recommendationId: string,
