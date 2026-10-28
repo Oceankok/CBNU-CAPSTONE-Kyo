@@ -36,6 +36,9 @@ class PostgresIntegrationTests(unittest.TestCase):
 
     def test_v7_processing_upgrade_preserves_account(self):
         with connect() as conn:
+            # Recreate the pre-processing baseline, including removal of newer dependants.
+            conn.execute('DROP TABLE host_ai_job')
+            conn.execute('DROP TABLE host_ai_worker')
             conn.execute('DROP TABLE processing_inference_load')
             conn.execute('DROP TABLE processing_job')
             conn.execute('DROP TABLE processing_worker')
@@ -45,6 +48,8 @@ class PostgresIntegrationTests(unittest.TestCase):
         with connect() as conn:
             self.assertEqual(schema_version(conn), LATEST_VERSION)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM processing_job').fetchone()[0], 0)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM host_ai_job').fetchone()[0], 0)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM host_ai_worker').fetchone()[0], 0)
         self.assertEqual(self.client.get('/api/auth/me', headers=login(self.client)).status_code, 200)
 
     def test_week_numbers_match_sqlite_at_year_boundaries(self):

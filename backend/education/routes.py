@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.auth.service import require_admin
-from backend.education.models import MaterialApproval, MaterialContent, MaterialUpdate
+from backend.education.models import MaterialApproval, MaterialContent, MaterialUpdate, MaterialVersion
 from backend.education import service
 
 
@@ -44,3 +44,8 @@ def publish(material_id: str, body: MaterialApproval, user: dict = Depends(requi
     if not body.approved:
         raise HTTPException(400, 'education_approval_required')
     return service.publish(material_id, user['user_id'], body.expected_version)
+
+
+@router.post('/education/materials/{material_id}/unpublish')
+def unpublish(material_id: str, body: MaterialVersion, user: dict = Depends(require_admin)):
+    return service.unpublish(material_id, user['user_id'], body.expected_version)

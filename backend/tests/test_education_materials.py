@@ -117,6 +117,60 @@ class EducationMaterialTests(unittest.TestCase):
             self.assertEqual(self.draft(**changes).status_code, 422)
         self.assertEqual(self.draft('MISSING').status_code, 404)
 
+    def test_unpublish_hides_material_preserves_metadata_and_requires_new_approval(self):
+        row = self.draft().json()
+        published = self.publish(row['material_id']).json()
+        url = '/api/education/materials/'+row['material_id']
+        result = self.client.post(url+'/unpublish', headers=self.admin,
+                                  json={'expected_version': published['version']})
+        self.assertEqual(result.status_code, 200, result.text)
+        withdrawn = result.json()
+        self.assertEqual(withdrawn['status'], 'draft')
+        self.assertEqual(withdrawn['version'], published['version']+1)
+        self.assertEqual(withdrawn['published_by'], published['published_by'])
+        self.assertEqual(withdrawn['published_at'], published['published_at'])
+        self.assertEqual(withdrawn['updated_by'], 'admin02')
+        self.assertIsNone(self.client.get('/api/worker/education', headers=self.worker).json()['items'][0]['material'])
+        changed = {'title': '정정된 교육', 'body': '정정한 안전 지침', 'checklist': ['정정 사항 확인'],
+                   'expected_version': withdrawn['version']}
+        edited = self.client.patch(url, headers=self.admin, json=changed)
+        self.assertEqual(edited.status_code, 200, edited.text)
+        self.assertIsNone(self.client.get('/api/worker/education', headers=self.worker).json()['items'][0]['material'])
+        self.assertEqual(self.publish(row['material_id'], version=edited.json()['version']).status_code, 200)
+        self.assertIn('정정된 교육', self.client.get('/api/worker/education', headers=self.worker).json()['items'][0]['material'])
+
+    def test_unpublish_requires_admin_current_version_and_published_status(self):
+        row = self.draft().json()
+        url = '/api/education/materials/'+row['material_id']+'/unpublish'
+        body = {'expected_version': row['version']}
+        self.assertEqual(self.client.post(url, json=body).status_code, 401)
+        self.assertEqual(self.client.post(url, headers=self.worker, json=body).status_code, 403)
+        self.assertEqual(self.client.post(url, headers=self.admin, json=body).status_code, 409)
+        published = self.publish(row['material_id']).json()
+        self.assertEqual(self.client.post(url, headers=self.admin, json=body).status_code, 409)
+        self.assertEqual(self.client.get('/api/education/materials/'+row['material_id'], headers=self.admin).json()['status'], 'published')
+        body['expected_version'] = published['version']
+        self.assertEqual(self.client.post(url, headers=self.admin, json={'expected_version': -1}).status_code, 422)
+        self.assertEqual(self.client.post(url, headers=self.admin, json={**body, 'updated_by': 'spoofed'}).status_code, 422)
+        self.assertEqual(self.client.post('/api/education/materials/MISSING/unpublish', headers=self.admin, json=body).status_code, 404)
+        self.assertEqual(self.client.post(url, headers=self.admin, json=body).status_code, 200)
+        body['expected_version'] += 1
+        self.assertEqual(self.client.post(url, headers=self.admin, json=body).status_code, 409)
+
+    def test_unpublish_does_not_restore_superseded_material(self):
+        first = self.draft().json()
+        self.publish(first['material_id'])
+        second = self.draft(title='정정 전 교육').json()
+        published = self.publish(second['material_id']).json()
+        url = '/api/education/materials/'
+        previous = self.client.get(url+first['material_id'], headers=self.admin).json()
+        self.assertEqual(self.client.post(url+first['material_id']+'/unpublish', headers=self.admin,
+                                        json={'expected_version': previous['version']}).status_code, 409)
+        self.assertEqual(self.client.post(url+second['material_id']+'/unpublish', headers=self.admin,
+                                        json={'expected_version': published['version']}).status_code, 200)
+        self.assertIsNone(self.client.get('/api/worker/education', headers=self.worker).json()['items'][0]['material'])
+        self.assertEqual(self.client.get(url+first['material_id'], headers=self.admin).json()['status'], 'superseded')
+
     def test_v11_upgrade_preserves_consent_and_existing_accounts(self):
         from backend.db.init_db import init_database
         with get_connection() as conn:

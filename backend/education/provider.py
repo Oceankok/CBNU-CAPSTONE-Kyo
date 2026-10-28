@@ -1,4 +1,4 @@
-"""Opt-in OpenAI text generation. Never reads equipment/OAuth credentials."""
+"""Explicit text providers; subscription execution stays on the native host."""
 from dataclasses import dataclass, field
 import json
 import os
@@ -12,7 +12,8 @@ from backend.education.models import MaterialContent
 @dataclass(frozen=True)
 class Settings:
     model: str
-    api_key: str = field(repr=False)
+    api_key: str = field(default='', repr=False)
+    provider: str = 'openai'
 
 
 class GenerationError(Exception):
@@ -28,6 +29,8 @@ def settings():
         raise GenerationError('education_generation_disabled', 503)
     key = os.environ.get('PPE_EDUCATION_OPENAI_API_KEY', '').strip()
     model = os.environ.get('PPE_EDUCATION_MODEL', '').strip()
+    if selected == 'codex_chatgpt' and (not model or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,199}', model)):
+        return Settings(model=model or 'codex-default', provider=selected)
     if selected != 'openai' or not key or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,199}', model):
         raise GenerationError('education_generation_not_configured', 503)
     return Settings(model=model, api_key=key)
@@ -36,9 +39,9 @@ def settings():
 def availability():
     try:
         configured = settings()
-        return {'configured': True, 'provider': 'openai', 'model': configured.model, 'reason': None}
+        return {'configured': True, 'provider': configured.provider, 'model': configured.model, 'reason': None}
     except GenerationError as exc:
-        return {'configured': False, 'provider': 'openai' if os.environ.get('PPE_EDUCATION_PROVIDER', '').strip() == 'openai' else None,
+        return {'configured': False, 'provider': os.environ.get('PPE_EDUCATION_PROVIDER', '').strip() or None,
                 'model': None, 'reason': exc.code}
 
 
@@ -52,11 +55,30 @@ Do not suggest bypassing PPE or safety interlocks. Do not claim the draft is app
 Keep the body concise (roughly 1000 Korean characters) and use 3 to 7 checklist items.'''
 
 
-def generate(scope):
+def generate(scope, *, timeout_seconds=60):
     configured = settings()
     topic = scope['education_topic']
     if not isinstance(topic, str) or not topic.strip() or len(topic) > 2000:
         raise GenerationError('education_topic_invalid', 409)
+    if configured.provider == 'codex_chatgpt':
+        from backend.equipment.subscription_provider import codex_structured
+        from backend.equipment.provider import ProviderError
+        import subprocess
+        try:
+            prompt = INSTRUCTIONS + '\nInput data:\n' + json.dumps(
+                {'ppe_type': scope['ppe_type'], 'education_topic': topic}, ensure_ascii=False)
+            result = codex_structured(prompt, MaterialContent.model_json_schema(),
+                                      model='' if configured.model == 'codex-default' else configured.model,
+                                      timeout=timeout_seconds)
+            return MaterialContent.model_validate_json(result), configured.model
+        except ProviderError as exc:
+            raise GenerationError('education_' + exc.code, 503) from None
+        except subprocess.TimeoutExpired:
+            raise GenerationError('education_provider_timeout', 504) from None
+        except OSError:
+            raise GenerationError('education_provider_unavailable', 502) from None
+        except ValueError:
+            raise GenerationError('education_provider_response_invalid', 502) from None
     payload = {
         'model': configured.model, 'store': False, 'max_output_tokens': 2400,
         'instructions': INSTRUCTIONS,
@@ -67,7 +89,8 @@ def generate(scope):
     }
     try:
         # Fixed endpoint; no redirect/proxy credential forwarding and no automatic retry.
-        with httpx.Client(timeout=httpx.Timeout(30, connect=5, write=10, pool=5),
+        with httpx.Client(timeout=httpx.Timeout(min(30, timeout_seconds), connect=min(5, timeout_seconds),
+                                              write=min(10, timeout_seconds), pool=min(5, timeout_seconds)),
                           trust_env=False, follow_redirects=False) as client:
             response = client.post('https://api.openai.com/v1/responses',
                                    headers={'Authorization': 'Bearer ' + configured.api_key}, json=payload)
