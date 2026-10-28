@@ -60,6 +60,40 @@ class VideoClient:
         )
         response.raise_for_status()
         return response.json()
+    
+    
+    def get_clip_requests(self, event_id):
+        response = self.client.get(
+            f"/api/processing/events/{event_id}/clip-requests"
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def upload_clip(self, event_id, request_id, video_bytes):
+        """Upload an MP4 clip requested by the server."""
+        if not video_bytes:
+            raise ValueError("Empty video clip")
+
+        response = self.client.post(
+            f"/api/processing/events/{event_id}/clip",
+            params={"request_id": request_id},
+            headers={"Content-Type": "video/mp4"},
+            content=video_bytes,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def report_clip_failure(self, event_id, request_id, error_code):
+        response = self.client.put(
+            f"/api/processing/events/{event_id}/clip-requests/{request_id}",
+            json={
+                "status": "failed",
+                "error_code": error_code,
+            },
+        )
+        response.raise_for_status()
+        return response.json()
+
 
     def close(self):
         self.client.close()
