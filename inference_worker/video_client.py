@@ -42,6 +42,24 @@ class VideoClient:
         )
         response.raise_for_status()
         return response.content
+    
+    
+    def get_ppe_policy(self, camera_id):
+        """Fetch the configured PPE policy for a camera."""
+        response = self.client.get(
+            f"/api/processing/cameras/{camera_id}/ppe-policy"
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def submit_event(self, event):
+        """Submit an already-qualified PPE violation event."""
+        response = self.client.post(
+            "/api/processing/events",
+            json=event,
+        )
+        response.raise_for_status()
+        return response.json()
 
     def close(self):
         self.client.close()
