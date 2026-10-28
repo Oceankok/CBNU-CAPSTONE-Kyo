@@ -7,6 +7,7 @@ param(
     [ValidatePattern('^[a-z][a-z0-9-]{2,40}$')][string]$Project = 'kyo-server',
     [switch]$Https,
     [switch]$Lan,
+    [switch]$TunnelHttps,
     [switch]$InitializeDatabase
 )
 $ErrorActionPreference = 'Stop'
@@ -25,11 +26,13 @@ $settings = @{}
 foreach ($line in Get-Content -LiteralPath $secretFile) {
     if ($line -match '^([A-Z_]+)=(.*)$') { $settings[$Matches[1]] = $Matches[2].Trim() }
 }
-if ($Lan -and $Https) { throw 'Choose LAN HTTP or public HTTPS, not both' }
+if (([int][bool]$Lan + [int][bool]$Https + [int][bool]$TunnelHttps) -gt 1) {
+    throw 'Choose one access mode: LAN HTTP, Caddy HTTPS, or tunnel HTTPS'
+}
 if (-not $settings.ContainsKey('PPE_JWT_SECRET') -or [Text.Encoding]::UTF8.GetByteCount($settings['PPE_JWT_SECRET']) -lt 32) { throw 'PPE_JWT_SECRET must contain at least 32 bytes' }
 if (-not $settings.ContainsKey('PPE_DATABASE_URL') -or $settings['PPE_DATABASE_URL'] -notmatch '^postgresql://[^/]+@postgres:5432/kyo$' -or $settings['PPE_DATABASE_URL'] -match 'CHANGE_ME') { throw 'Set PostgreSQL URL for the internal postgres service' }
-if ($Https -and (-not $settings.ContainsKey('PPE_PUBLIC_HOST') -or $settings['PPE_PUBLIC_HOST'] -notmatch '^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$' -or $settings['PPE_COOKIE_SECURE'] -ne 'true')) { throw 'HTTPS requires a public hostname and secure cookies' }
-if (-not $Https -and $settings['PPE_COOKIE_SECURE'] -eq 'true') { throw 'Local HTTP requires PPE_COOKIE_SECURE=false' }
+if (($Https -or $TunnelHttps) -and (-not $settings.ContainsKey('PPE_PUBLIC_HOST') -or $settings['PPE_PUBLIC_HOST'] -notmatch '^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$' -or $settings['PPE_COOKIE_SECURE'] -ne 'true')) { throw 'HTTPS requires a public hostname and secure cookies' }
+if (-not ($Https -or $TunnelHttps) -and $settings['PPE_COOKIE_SECURE'] -eq 'true') { throw 'Local HTTP requires PPE_COOKIE_SECURE=false' }
 $docker = Get-Command docker -ErrorAction SilentlyContinue
 if ($docker) { $dockerPath = $docker.Source } else {
     $dockerPath = Join-Path $env:LOCALAPPDATA 'Programs/DockerDesktop/resources/bin/docker.exe'
@@ -44,7 +47,9 @@ $manifestPath = Join-Path $deploymentPath 'current-release.json'
 $previous = $null
 if (Test-Path -LiteralPath $manifestPath) { $previous = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json }
 $previousLan = $false
+$previousTunnel = $false
 if ($previous -and $previous.PSObject.Properties['lan']) { $previousLan = [bool]$previous.lan }
+if ($previous -and $previous.PSObject.Properties['tunnel_https']) { $previousTunnel = [bool]$previous.tunnel_https }
 if ($previous -and $InitializeDatabase) { throw 'InitializeDatabase is only for the first release; migrations require a separate backup/compatibility plan' }
 if (-not $previous -and -not $InitializeDatabase) { throw 'First release requires an explicit manual InitializeDatabase run' }
 if ($previous -and $previous.project -ne $Project) { throw 'Changing the persistent Compose project is not allowed' }
@@ -65,6 +70,7 @@ if ($Lan -and -not (Get-Content -LiteralPath (Join-Path $releasePath 'compose.re
 $oldApi = $env:PPE_API_IMAGE
 $oldWeb = $env:PPE_WEB_IMAGE
 $oldBind = $env:PPE_WEB_BIND
+$oldCookie = $env:PPE_COOKIE_SECURE
 $lockPath = Join-Path $deploymentPath 'release.lock'
 $deploymentLock = [IO.File]::Open($lockPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
 $lockBytes = [Text.Encoding]::UTF8.GetBytes([string]$PID)
@@ -73,6 +79,8 @@ $deploymentLock.Flush()
 $env:PPE_API_IMAGE = $ApiImage
 $env:PPE_WEB_IMAGE = $WebImage
 $env:PPE_WEB_BIND = if ($Lan) { '0.0.0.0' } else { '127.0.0.1' }
+# Compose prioritizes process variables over server.env. Pin the validated mode.
+$env:PPE_COOKIE_SECURE = if ($Https -or $TunnelHttps) { 'true' } else { 'false' }
 function Compose-Arguments([string]$Release) {
     $arguments = @('compose','--project-name',$Project,'--env-file',$secretFile,'-f',(Join-Path $Release 'compose.release.yaml'))
     if ($Https) { $arguments += @('--profile','https') }
@@ -107,13 +115,13 @@ try {
     if ($Https) { $services += 'gateway' }
     Invoke-Docker ($arguments + @('up','-d','--no-build','--wait','--wait-timeout','180') + $services)
     Confirm-Ready $releasePath
-    if ($Https) {
-        # No certificate validation bypass. Requires hairpin DNS/routing from the server.
+    if ($Https -or $TunnelHttps) {
+        # No certificate bypass. The server must reach the selected public HTTPS origin.
         $response = Invoke-WebRequest -Uri ('https://' + $settings['PPE_PUBLIC_HOST'] + '/health/ready') -TimeoutSec 15
         if ($response.StatusCode -ne 200) { throw 'HTTPS readiness failed' }
     }
-    $record = @{commit=$Commit;api_image=$ApiImage;web_image=$WebImage;project=$Project;https=[bool]$Https;lan=[bool]$Lan}
-    if ($previous -and ($previous.commit -ne $Commit -or $previousLan -ne [bool]$Lan)) {
+    $record = @{commit=$Commit;api_image=$ApiImage;web_image=$WebImage;project=$Project;https=[bool]$Https;lan=[bool]$Lan;tunnel_https=[bool]$TunnelHttps}
+    if ($previous -and ($previous.commit -ne $Commit -or $previousLan -ne [bool]$Lan -or $previousTunnel -ne [bool]$TunnelHttps)) {
         $previous | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $deploymentPath 'previous-release.json') -Encoding utf8
     }
     $temporary = $manifestPath + '.tmp'
@@ -127,6 +135,7 @@ try {
         $env:PPE_API_IMAGE = $previous.api_image
         $env:PPE_WEB_IMAGE = $previous.web_image
         $env:PPE_WEB_BIND = if ($previousLan) { '0.0.0.0' } else { '127.0.0.1' }
+        $env:PPE_COOKIE_SECURE = if ([bool]$previous.https -or $previousTunnel) { 'true' } else { 'false' }
         $previousPath = Join-Path (Join-Path $deploymentPath 'releases') $previous.commit
         $restoreServices = @('api','web','maintenance')
         if ($Https) { $restoreServices += 'gateway' }
@@ -138,6 +147,7 @@ try {
     $env:PPE_API_IMAGE = $oldApi
     $env:PPE_WEB_IMAGE = $oldWeb
     $env:PPE_WEB_BIND = $oldBind
+    $env:PPE_COOKIE_SECURE = $oldCookie
     $deploymentLock.Dispose()
     Remove-Item -LiteralPath $lockPath -Force
 }

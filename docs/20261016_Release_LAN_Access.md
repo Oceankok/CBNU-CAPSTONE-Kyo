@@ -9,8 +9,9 @@
 | 기본 실행 | 127.0.0.1 | 서버 PC 내부 HTTP |
 | `-Lan` | 0.0.0.0 | 신뢰하는 같은 LAN의 현장 PC·폰에서 HTTP |
 | `-Https` | 127.0.0.1 + Caddy의 80/443 | 준비한 도메인의 HTTPS |
+| `-TunnelHttps` | 127.0.0.1, 기존 터널로 HTTPS 연결 | [터널 배포 안내](20261028_Release_Tunnel_Target.md) |
 
-`-Lan`과 `-Https`는 동시에 사용할 수 없습니다. LAN 모드에서도 API 8000 포트는 localhost로 유지하고 PostgreSQL 포트는 공개하지 않습니다. 외부 기기는 웹 포트의 nginx를 통해 `/api`·보호된 `/storage`에 접근합니다. 기존 웹 화면과 nginx 설정은 변경하지 않습니다.
+`-Lan`·`-Https`·`-TunnelHttps` 중 하나만 선택할 수 있습니다. LAN 모드에서도 API 8000 포트는 localhost로 유지하고 PostgreSQL 포트는 공개하지 않습니다. 외부 기기는 웹 포트의 nginx를 통해 `/api`·보호된 `/storage`에 접근합니다. 기존 웹 화면과 nginx 설정은 변경하지 않습니다.
 
 ## 실행
 
