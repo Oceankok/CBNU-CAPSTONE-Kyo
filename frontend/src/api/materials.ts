@@ -39,6 +39,8 @@ export const MATERIAL_ERRORS: Record<string, string> = {
     '추천 내용이 바뀌어 이 초안은 게시할 수 없습니다. 새 초안을 작성하세요.',
   recommendation_not_found: '추천 항목을 찾을 수 없습니다.',
   education_material_not_found: '교육 자료를 찾을 수 없습니다.',
+  education_material_not_published:
+    '게시 중인 자료가 아닙니다. 화면을 새로고침하세요.',
   // AI draft generation (#181)
   education_generation_disabled:
     'AI 초안 생성이 꺼져 있습니다. 직접 작성해 주세요.',
@@ -127,6 +129,20 @@ export function publishMaterial(
         expected_version: expectedVersion,
         approved: true,
       }),
+    },
+  );
+}
+
+// Published → draft; workers stop seeing it. The old superseded material is not restored
+export function unpublishMaterial(
+  materialId: string,
+  expectedVersion: number,
+): Promise<EducationMaterial> {
+  return apiFetch(
+    `/api/education/materials/${encodeURIComponent(materialId)}/unpublish`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ expected_version: expectedVersion }),
     },
   );
 }
