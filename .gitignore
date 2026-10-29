@@ -73,4 +73,7 @@ storage/candidate_events/processed/*
 /video_sender/output_cam002/
 /video_sender/fixtures/
 /video_sender/output_cam002/
-/.private_media/
+/.private_media/inference_worker/test_chunks/
+inference_worker/__pycache__/
+
+inference_worker/test_chunks/

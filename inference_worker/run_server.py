@@ -1,0 +1,339 @@
+
+"""Read server video chunks and analyze PPE violation candidates.
+
+Read-only: never submits events, uploads clips, or triggers broadcasts.
+Local candidate clips are saved for integration testing.
+"""
+
+import argparse
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+from inference_worker.video_client import VideoClient
+from inference_worker.video_decoder import decode_mp4
+from inference_worker.ppe_detector import PPEDetector
+from inference_worker.ppe_rules import assess_helmets
+from inference_worker.person_tracker import PersonTracker
+from inference_worker.violation_tracker import ViolationTracker
+from inference_worker.policy import helmet_policy_status
+from inference_worker.time_utils import (
+    frame_timestamp,
+    is_continuous_chunk,
+)
+from inference_worker.event_builder import build_event
+from inference_worker.event_validation import validate_candidate
+from inference_worker.clip_buffer import ClipBuffer
+from inference_worker.clip_manager import create_clip
+from inference_worker.pending_clips import PendingClips
+
+
+CLIP_DIR = Path(__file__).resolve().parent / "test_chunks"
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--camera-id", required=True)
+    parser.add_argument("--poll", type=float, default=1.0)
+    parser.add_argument("--max-chunks", type=int, default=5)
+    args = parser.parse_args()
+
+    if args.poll <= 0 or args.max_chunks <= 0:
+        parser.error("--poll and --max-chunks must be positive")
+
+    # Initialize YOLO and API client.
+    detector = PPEDetector()
+    client = VideoClient()
+
+    def reset_tracking():
+        return (
+            PersonTracker(),
+            ViolationTracker(threshold_seconds=3.0),
+        )
+
+    tracker, violations = reset_tracking()
+    clip_buffer = ClipBuffer(retention_seconds=30.0)
+    pending_clips = PendingClips()
+
+    stream_id = None
+    last_sequence = -1
+    previous_chunk = None
+    previous_policy = None
+
+    processed = 0
+    candidate_count = 0
+    blocked_count = 0
+    ready_count = 0
+    local_clip_count = 0
+    incomplete_clip_count = 0
+
+    try:
+        while processed < args.max_chunks:
+
+            # 1. Find active camera stream.
+            streams = client.list_streams()
+
+            selected = next(
+                (
+                    stream
+                    for stream in streams
+                    if stream["camera_id"] == args.camera_id
+                ),
+                None,
+            )
+
+            if selected is None:
+                if stream_id is not None:
+                    tracker, violations = reset_tracking()
+                    clip_buffer = ClipBuffer(retention_seconds=30.0)
+                    pending_clips = PendingClips()
+                    stream_id = None
+                    previous_chunk = None
+                    last_sequence = -1
+                    previous_policy = None
+
+                print("[WAIT] No active stream")
+                time.sleep(args.poll)
+                continue
+
+            # 2. Check camera PPE policy.
+            policy = client.get_ppe_policy(args.camera_id)
+            enabled, reason = helmet_policy_status(policy)
+
+            policy_signature = (
+                policy.get("configured"),
+                tuple(policy.get("required_ppe") or []),
+                tuple(policy.get("detectable_ppe") or []),
+                tuple(policy.get("configuration_issues") or []),
+            )
+
+            if previous_policy != policy_signature:
+                tracker, violations = reset_tracking()
+                clip_buffer = ClipBuffer(retention_seconds=30.0)
+                pending_clips = PendingClips()
+                previous_chunk = None
+                previous_policy = policy_signature
+                print("[RESET] PPE policy changed")
+
+            if not enabled:
+                tracker, violations = reset_tracking()
+                clip_buffer = ClipBuffer(retention_seconds=30.0)
+                pending_clips = PendingClips()
+                previous_chunk = None
+                print(f"[POLICY SKIP] reason={reason}")
+                time.sleep(args.poll)
+                continue
+
+            # 3. Reset on stream change.
+            if stream_id != selected["stream_id"]:
+                stream_id = selected["stream_id"]
+                last_sequence = -1
+                previous_chunk = None
+
+                tracker, violations = reset_tracking()
+                clip_buffer = ClipBuffer(retention_seconds=30.0)
+                pending_clips = PendingClips()
+
+                print(f"[STREAM] {stream_id}")
+
+            # 4. Fetch newer MP4 chunks.
+            chunks = client.list_chunks(stream_id, last_sequence)
+
+            if not chunks:
+                time.sleep(args.poll)
+                continue
+
+            for chunk in chunks:
+                if processed >= args.max_chunks:
+                    break
+
+                sequence = chunk["sequence"]
+
+                if sequence <= last_sequence:
+                    continue
+
+                # 5. Detect missing or discontinuous chunks.
+                if previous_chunk is not None:
+                    continuous = (
+                        sequence == last_sequence + 1
+                        and is_continuous_chunk(
+                            previous_chunk["capture_start_at"],
+                            previous_chunk["duration_ms"],
+                            chunk["capture_start_at"],
+                        )
+                    )
+
+                    if not continuous:
+                        tracker, violations = reset_tracking()
+                        clip_buffer = ClipBuffer(retention_seconds=30.0)
+                        pending_clips = PendingClips()
+                        print("[RESET] Chunk discontinuity")
+
+                # 6. Download and decode MP4.
+                data = client.download_chunk(chunk["chunk_id"])
+                frames = list(decode_mp4(data))
+
+                if not frames:
+                    raise RuntimeError(
+                        f"No decoded frames: {chunk['chunk_id']}"
+                    )
+
+                duration_ms = chunk["duration_ms"]
+
+                if duration_ms <= 0:
+                    raise RuntimeError("Invalid chunk duration")
+
+                fps = len(frames) / (duration_ms / 1000)
+
+                # 7. Analyze frames in capture-time order.
+                for index, frame in enumerate(frames):
+                    timestamp = frame_timestamp(
+                        chunk["capture_start_at"],
+                        index,
+                        fps,
+                    )
+
+                    # Retain recent frames and finish clips after post-roll arrives.
+                    clip_buffer.add(timestamp, frame)
+
+                    for job in pending_clips.pop_ready(timestamp):
+                        # Reject partial clips; no original footage may be inferred.
+                        selected = [
+                            (ts, image)
+                            for ts, image in clip_buffer.frames
+                            if job["clip_start"] <= ts <= job["clip_end"]
+                        ]
+                        tolerance = max(0.25, 1.5 / fps)
+                        complete = bool(selected)
+                        if complete:
+                            complete = (
+                                (selected[0][0] - job["clip_start"]).total_seconds() <= tolerance
+                                and (job["clip_end"] - selected[-1][0]).total_seconds() <= tolerance
+                                and all(
+                                    0 <= (b[0] - a[0]).total_seconds() <= tolerance
+                                    for a, b in zip(selected, selected[1:])
+                                )
+                            )
+                        if not complete:
+                            incomplete_clip_count += 1
+                            print(f"[CLIP INCOMPLETE] track={job['tracking_id']} ")
+                            continue
+
+                        clip_name = (
+                            f"{job['camera_id']}_{job['tracking_id']}_"
+                            f"{int(job['clip_end'].timestamp() * 1000)}.mp4"
+                        )
+                        clip_path = create_clip(
+                            [image for _, image in selected],
+                            CLIP_DIR / clip_name,
+                            fps=fps,
+                        )
+                        local_clip_count += 1
+                        print(f"[LOCAL CLIP READY] {clip_path}")
+
+                    # YOLO detection.
+                    detections = detector.detect(frame)
+
+                    # Person-level helmet assessment and tracking.
+                    assessments = tracker.update(
+                        assess_helmets(detections)
+                    )
+
+                    # Detect sustained suspected violations.
+                    candidates = violations.update(
+                        assessments,
+                        timestamp.timestamp(),
+                    )
+
+                    # 8. Create local clips and validate candidates.
+                    for candidate in candidates:
+                        candidate_count += 1
+
+                        print(
+                            f"[LOCAL CANDIDATE] "
+                            f"camera={args.camera_id} "
+                            f"track={candidate['tracking_id']} "
+                            f"duration={candidate['duration_seconds']:.2f}s"
+                        )
+
+                        start_time = datetime.fromtimestamp(
+                            candidate["start_time"],
+                            tz=timezone.utc,
+                        )
+
+                        end_time = datetime.fromtimestamp(
+                            candidate["end_time"],
+                            tz=timezone.utc,
+                        )
+
+                        # Defer clip generation until post-event frames arrive.
+                        pending_clips.add(candidate, args.camera_id)
+                        print(
+                            f"[CLIP PENDING] camera={args.camera_id} "
+                            f"track={candidate['tracking_id']}"
+                        )
+
+                        # Check policy and PPE confidence.
+                        allowed, reason = validate_candidate(
+                            candidate,
+                            policy,
+                        )
+
+                        if not allowed:
+                            blocked_count += 1
+                            print(
+                                f"[EVENT BLOCKED] reason={reason}"
+                            )
+                            continue
+
+                        # Only externally verified PPE confidence
+                        # may be used for event submission.
+                        verified_confidence = candidate[
+                            "verified_ppe_confidence"
+                        ]
+
+                        event = build_event(
+                            camera_id=args.camera_id,
+                            tracking_id=candidate["tracking_id"],
+                            start_time=start_time,
+                            end_time=end_time,
+                            confidence=verified_confidence,
+                            frame_sample_count=max(
+                                1,
+                                round(
+                                    candidate["duration_seconds"] * fps
+                                ),
+                            ),
+                        )
+
+                        ready_count += 1
+
+                        # Never submit events in read-only mode.
+                        print(f"[EVENT READY] {event}")
+
+                last_sequence = sequence
+                previous_chunk = chunk
+                processed += 1
+
+                print(
+                    f"[OK] camera={args.camera_id} "
+                    f"sequence={sequence} "
+                    f"frames={len(frames)}"
+                )
+
+    finally:
+        client.close()
+
+    print("\n========== Analysis ==========")
+    print(f"Processed chunks: {processed}")
+    print(f"Local candidates: {candidate_count}")
+    print(f"Local clips: {local_clip_count}")
+    print(f"Incomplete clips: {incomplete_clip_count}")
+    print(f"Pending clips: {len(pending_clips.pending)}")
+    print(f"Blocked events: {blocked_count}")
+    print(f"Ready events: {ready_count}")
+    print("==============================")
+
+
+if __name__ == "__main__":
+    main()
