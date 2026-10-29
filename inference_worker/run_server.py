@@ -1,18 +1,19 @@
 
 """Read server video chunks and analyze PPE violation candidates.
 
-Read-only: never submits events, uploads clips, or triggers broadcasts.
-Local candidate clips are saved for integration testing.
+Event delivery is disabled by default; inference priority is still reported.
+--submit-events enables qualified event/clip delivery.
+Unredacted clips are temporary and removed on success or failure.
 """
 
 import argparse
 import time
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 from inference_worker.video_client import VideoClient
 from inference_worker.video_decoder import decode_mp4
-from inference_worker.ppe_detector import PPEDetector
 from inference_worker.ppe_rules import assess_helmets
 from inference_worker.person_tracker import PersonTracker
 from inference_worker.violation_tracker import ViolationTracker
@@ -26,9 +27,14 @@ from inference_worker.event_validation import validate_candidate
 from inference_worker.clip_buffer import ClipBuffer
 from inference_worker.clip_manager import create_clip
 from inference_worker.pending_clips import PendingClips
+from inference_worker.event_pipeline import submit_event_with_clip
+from inference_worker.inference_load import InferenceLoad
 
 
-CLIP_DIR = Path(__file__).resolve().parent / "test_chunks"
+def create_detector():
+    # Offline contract tests do not import Ultralytics or load weights.
+    from inference_worker.ppe_detector import PPEDetector
+    return PPEDetector()
 
 
 def main():
@@ -36,14 +42,18 @@ def main():
     parser.add_argument("--camera-id", required=True)
     parser.add_argument("--poll", type=float, default=1.0)
     parser.add_argument("--max-chunks", type=int, default=5)
+    parser.add_argument("--submit-events", action="store_true",
+                        help="Send qualified events; can trigger field broadcasts")
     args = parser.parse_args()
 
     if args.poll <= 0 or args.max_chunks <= 0:
         parser.error("--poll and --max-chunks must be positive")
 
     # Initialize YOLO and API client.
-    detector = PPEDetector()
+    detector = create_detector()
     client = VideoClient()
+    priority = InferenceLoad(client)
+    clips = tempfile.TemporaryDirectory(prefix="ppe_inference_")
 
     def reset_tracking():
         return (
@@ -225,13 +235,22 @@ def main():
                         )
                         clip_path = create_clip(
                             [image for _, image in selected],
-                            CLIP_DIR / clip_name,
+                            Path(clips.name) / clip_name,
                             fps=fps,
                         )
                         local_clip_count += 1
-                        print(f"[LOCAL CLIP READY] {clip_path}")
+                        try:
+                            if args.submit_events:
+                                priority.release()
+                                result = submit_event_with_clip(client, job["event"], clip_path)
+                                print(f"[EVENT DELIVERED] {result['event_id']}")
+                            else:
+                                print("[LOCAL CLIP READY] temporary clip validated")
+                        finally:
+                            clip_path.unlink(missing_ok=True)
 
-                    # YOLO detection.
+                    # Uploads release the lease; reacquire before GPU inference.
+                    priority.refresh()
                     detections = detector.detect(frame)
 
                     # Person-level helmet assessment and tracking.
@@ -266,13 +285,6 @@ def main():
                             tz=timezone.utc,
                         )
 
-                        # Defer clip generation until post-event frames arrive.
-                        pending_clips.add(candidate, args.camera_id)
-                        print(
-                            f"[CLIP PENDING] camera={args.camera_id} "
-                            f"track={candidate['tracking_id']}"
-                        )
-
                         # Check policy and PPE confidence.
                         allowed, reason = validate_candidate(
                             candidate,
@@ -284,6 +296,8 @@ def main():
                             print(
                                 f"[EVENT BLOCKED] reason={reason}"
                             )
+                            if not args.submit_events:
+                                pending_clips.add(candidate, args.camera_id)
                             continue
 
                         # Only externally verified PPE confidence
@@ -308,9 +322,11 @@ def main():
 
                         ready_count += 1
 
-                        # Never submit events in read-only mode.
-                        print(f"[EVENT READY] {event}")
+                        pending_clips.add(candidate, args.camera_id, event=event)
+                        print(f"[EVENT READY] {event['event_id']}")
 
+                priority.release()
+                time.sleep(args.poll)  # Give queued redaction work an idle boundary.
                 last_sequence = sequence
                 previous_chunk = chunk
                 processed += 1
@@ -322,7 +338,13 @@ def main():
                 )
 
     finally:
-        client.close()
+        try:
+            priority.release()
+        finally:
+            try:
+                client.close()
+            finally:
+                clips.cleanup()
 
     print("\n========== Analysis ==========")
     print(f"Processed chunks: {processed}")
