@@ -7,7 +7,7 @@ import httpx
 
 
 class VideoClient:
-    def __init__(self):
+    def __init__(self, *, transport=None):
         self.server_url = os.environ.get(
             "PPE_SERVER_URL", "http://127.0.0.1:8000"
         ).rstrip("/")
@@ -21,6 +21,7 @@ class VideoClient:
             headers={"Authorization": f"Bearer {token}"},
             timeout=20.0,
             follow_redirects=False,
+            transport=transport,
         )
 
     def list_streams(self):
@@ -94,6 +95,14 @@ class VideoClient:
         response.raise_for_status()
         return response.json()
 
+
+    def set_inference_load(self, busy, ttl_seconds=30):
+        response = self.client.put(
+            "/api/processing/inference-load",
+            json={"busy": busy, "ttl_seconds": ttl_seconds},
+        )
+        response.raise_for_status()
+        return response.json()
 
     def close(self):
         self.client.close()
