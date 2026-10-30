@@ -24,6 +24,14 @@ class VideoClient:
             transport=transport,
         )
 
+    def get_runtime_version(self):
+        response = self.client.get('/api/processing/runtime-version')
+        response.raise_for_status()
+        result = response.json()
+        if not isinstance(result, dict):
+            raise ValueError('runtime_version_response_invalid')
+        return result
+
     def list_streams(self):
         response = self.client.get("/api/processing/video/streams")
         response.raise_for_status()
@@ -96,13 +104,16 @@ class VideoClient:
         return response.json()
 
 
-    def set_inference_load(self, busy, ttl_seconds=30):
-        response = self.client.put(
-            "/api/processing/inference-load",
-            json={"busy": busy, "ttl_seconds": ttl_seconds},
-        )
+    def set_inference_load(self, busy, ttl_seconds=30, *, session_id=None):
+        payload = {"busy": busy, "ttl_seconds": ttl_seconds}
+        if session_id is not None:
+            payload['session_id'] = session_id
+        response = self.client.put('/api/processing/inference-load', json=payload)
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        if session_id is not None and result.get('session_id') != session_id:
+            raise RuntimeError('inference_session_unsupported')
+        return result
 
     def close(self):
         self.client.close()

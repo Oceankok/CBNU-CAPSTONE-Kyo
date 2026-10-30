@@ -185,6 +185,16 @@ class ProcessingTests(unittest.TestCase):
         self.assertEqual(target.read_bytes(), self.image)
         self.assertEqual(list(target.parent.iterdir()), [target])
 
+    def test_two_camera_sessions_defer_claim_until_both_release(self):
+        self.upload()
+        url = '/api/processing/inference-load'
+        for session in ('a'*32, 'b'*32):
+            self.client.put(url, headers=self.node, json={'session_id': session, 'busy': True}).raise_for_status()
+        self.client.put(url, headers=self.node, json={'session_id': 'a'*32, 'busy': False}).raise_for_status()
+        self.assertIsNone(self.client.post('/api/processing/claim', headers=self.node).json()['job'])
+        self.client.put(url, headers=self.node, json={'session_id': 'b'*32, 'busy': False}).raise_for_status()
+        self.assertIsNotNone(self.client.post('/api/processing/claim', headers=self.node).json()['job'])
+
     def test_inference_busy_defers_claim_and_expires(self):
         self.upload()
         response = self.client.put('/api/processing/inference-load', headers=self.node, json={'busy':True,'ttl_seconds':10})
