@@ -82,7 +82,7 @@ class ServerInferenceTest(unittest.TestCase):
         with (
             patch.object(runner, "VideoClient", return_value=client),
             patch.object(runner, "create_detector", return_value=FakeDetector()),
-            patch.object(runner, "decode_mp4", return_value=[frame] * 4),
+            patch.object(runner, "decode_mp4", side_effect=lambda *args, **kwargs: iter((index, 4.0, frame) for index in range(4))),
             patch.object(runner.time, "sleep"),
             patch.object(runner.tempfile, "TemporaryDirectory", side_effect=temporary),
             patch.object(sys, "argv", args),
