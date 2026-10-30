@@ -106,7 +106,7 @@ assert not list(SOURCE_ROOT.glob('*'))
                 assert len(events) == 1 and len(events[0]['merge_history']) == 1
                 assert all(item['status'] == 'deleted' for item in events[0]['media'])
                 assert len(request(client, 'GET', '/api/camera-groups').json()['items']) == 1
-                token = request(client, 'POST', '/api/nodes', json={'node_id': 'revision-check', 'name': 'revision-check'}).json()['token']
+                token = request(client, 'POST', '/api/nodes', expected=201, json={'node_id': 'revision-check', 'name': 'revision-check'}).json()['token']
                 request(client, 'PUT', '/api/processing/workers/revision-check', json={'enabled': True})
                 version = request(client, 'GET', '/api/processing/runtime-version', headers={'Authorization': 'Bearer '+token}).json()
                 assert version['revision'] == 'a'*40
