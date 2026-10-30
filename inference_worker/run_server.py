@@ -40,13 +40,13 @@ def create_detector():
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--buffer-mib", type=int, default=256,
+                        help="Maximum retained raw frame MiB per camera (default: 256)")
     parser.add_argument("--camera-id", required=True)
     parser.add_argument("--poll", type=float, default=1.0)
     parser.add_argument("--max-chunks", type=int, default=5)
     parser.add_argument("--submit-events", action="store_true",
                         help="Send qualified events; can trigger field broadcasts")
-    parser.add_argument("--buffer-mib", type=int, default=256,
-                        help="Maximum retained raw frame MiB per camera (default: 256)")
     args = parser.parse_args()
 
     if args.poll <= 0 or args.max_chunks <= 0:
