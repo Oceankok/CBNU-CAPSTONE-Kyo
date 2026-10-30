@@ -45,10 +45,10 @@ def local_time_sql(column):
     SQL date parsing so SQLite rounding cannot move 23:59:59.999999 across a day.
     """
     from backend.db.connection import is_postgres
-    offset = f"(substr({column},-6,1) IN ('+','-') OR substr({column},-1)='Z')"
+    offset = f"(substr({column},length({column})-5,1) IN ('+','-') OR substr({column},length({column}),1)='Z')"
     if is_postgres():
         converted = f"to_char(({column}::timestamptz AT TIME ZONE 'Asia/Seoul'),'YYYY-MM-DD HH24:MI:SS')"
     else:
-        suffix = f"CASE WHEN substr({column},-1)='Z' THEN 'Z' ELSE substr({column},-6) END"
+        suffix = f"CASE WHEN substr({column},length({column}),1)='Z' THEN 'Z' ELSE substr({column},length({column})-5) END"
         converted = f"datetime(substr({column},1,19)||({suffix}),'+9 hours')"
     return f"CASE WHEN {offset} THEN {converted} ELSE replace(substr({column},1,19),'T',' ') END"
