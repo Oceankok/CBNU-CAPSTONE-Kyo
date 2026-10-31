@@ -27,7 +27,7 @@ from inference_worker.event_validation import validate_candidate
 from inference_worker.clip_buffer import ClipBuffer
 from inference_worker.clip_manager import create_clip
 from inference_worker.pending_clips import PendingClips
-from inference_worker.event_pipeline import submit_event_with_clip
+from inference_worker.event_pipeline import ClipDeliveryError, submit_event_with_clip
 from inference_worker.inference_load import InferenceLoad
 
 
@@ -44,7 +44,12 @@ def main():
     parser.add_argument("--max-chunks", type=int, default=5)
     parser.add_argument("--submit-events", action="store_true",
                         help="Send qualified events; can trigger field broadcasts")
+    parser.add_argument("--replay-buffer", action="store_true",
+                        help="Analyze existing buffered chunks for inspection only; cannot submit events")
     args = parser.parse_args()
+
+    if args.replay_buffer and args.submit_events:
+        parser.error("--replay-buffer cannot be combined with --submit-events")
 
     if args.poll <= 0 or args.max_chunks <= 0:
         parser.error("--poll and --max-chunks must be positive")
@@ -137,7 +142,14 @@ def main():
             # 3. Reset on stream change.
             if stream_id != selected["stream_id"]:
                 stream_id = selected["stream_id"]
-                last_sequence = -1
+                # Establish a live boundary once per stream. Reopening the process
+                # must not replay old footage under newly generated event IDs.
+                last_sequence = selected["last_sequence"]
+                if type(last_sequence) is not int or last_sequence < -1:
+                    raise ValueError("Invalid stream last_sequence")
+                if args.replay_buffer:
+                    last_sequence = -1
+                print(f"[START BOUNDARY] stream={stream_id} after_sequence={last_sequence}")
                 previous_chunk = None
 
                 tracker, violations = reset_tracking()
@@ -246,6 +258,8 @@ def main():
                                 print(f"[EVENT DELIVERED] {result['event_id']}")
                             else:
                                 print("[LOCAL CLIP READY] temporary clip validated")
+                        except ClipDeliveryError as error:
+                            print(f"[EVENT DELIVERY FAILED] event={job['event']['event_id']} reason={error}")
                         finally:
                             clip_path.unlink(missing_ok=True)
 

@@ -110,6 +110,31 @@ def create_clip_request(event_id: str, body: ClipRequestInput, node: dict = Depe
     return register_clip_request(event_id, ClipRequestRegistration(camera_id=body.camera_id))
 
 
+@router.get('/reference-clip-requests')
+def pending_reference_clips(node: dict = Depends(processor)):
+    # A bounded work list, not a new event or an automatic incident merge.
+    from datetime import datetime, timedelta, timezone
+
+    def utc(value):
+        stamp = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        # Processing event submissions store UTC without an offset in the DB.
+        return stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp.astimezone(timezone.utc)
+
+    with get_connection() as conn:
+        rows = conn.execute("""SELECT r.*,e.timestamp_start,e.timestamp_end
+            FROM event_clip_request r JOIN candidate_event e ON e.event_id=r.event_id
+            JOIN event_retention t ON t.event_id=r.event_id
+            WHERE r.role='reference' AND r.status='pending' AND t.decision!='delete'
+            AND NOT EXISTS(SELECT 1 FROM event_merge x WHERE x.source_event_id=r.event_id)
+            AND NOT EXISTS(SELECT 1 FROM event_media m WHERE m.request_id=r.request_id)
+            ORDER BY r.created_at,r.request_id LIMIT 20""").fetchall()
+    return {'items': [{'request_id': row['request_id'], 'event_id': row['event_id'],
+                      'camera_id': row['camera_id'], 'role': 'reference',
+                      'clip_start_at': (utc(row['timestamp_start'])-timedelta(seconds=2)).isoformat(),
+                      'clip_end_at': (utc(row['timestamp_end'])+timedelta(seconds=2)).isoformat(),
+                      'deadline_at': row['created_at']+30} for row in rows]}
+
+
 @router.get('/events/{event_id}/clip-requests')
 def read_clip_requests(event_id: str, node: dict = Depends(processor)):
     with get_connection() as conn:
