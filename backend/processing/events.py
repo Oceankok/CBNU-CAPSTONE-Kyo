@@ -36,8 +36,8 @@ class EventSubmission(BaseModel):
 def submit(body):
     event = {'event_id': body.event_id, 'camera_id': body.camera_id, 'tracking_id': body.tracking_id,
              'ppe_type': body.ppe_type,
-             'timestamp_start': body.timestamp_start.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f'),
-             'timestamp_end': body.timestamp_end.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f'),
+             'timestamp_start': body.timestamp_start.astimezone(timezone.utc).isoformat(timespec='microseconds'),
+             'timestamp_end': body.timestamp_end.astimezone(timezone.utc).isoformat(timespec='microseconds'),
              'duration_sec': int((body.timestamp_end-body.timestamp_start).total_seconds()),
              'frame_sample_count': body.frame_sample_count, 'ai_confidence': body.confidence,
              'person_detected': 1, 'ppe_detected': 0, 'model_version': body.model_version,
@@ -50,7 +50,15 @@ def submit(body):
         if previous:
             for key in ('camera_id', 'tracking_id', 'ppe_type', 'timestamp_start', 'timestamp_end',
                         'frame_sample_count', 'ai_confidence', 'model_version'):
-                if previous[key] != event[key]:
+                old_value, new_value = previous[key], event[key]
+                if key in ('timestamp_start', 'timestamp_end'):
+                    from backend.event_time import parse
+                    old_stamp, new_stamp = parse(old_value), parse(new_value)
+                    # A retry of this processing event may predate explicit UTC storage.
+                    if old_stamp.tzinfo is None:
+                        old_stamp = old_stamp.replace(tzinfo=timezone.utc)
+                    old_value, new_value = old_stamp, new_stamp
+                if old_value != new_value:
                     raise HTTPException(409, 'event_submission_conflict')
         else:
             insert_candidate_event(event, connection=conn)

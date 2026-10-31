@@ -3,11 +3,11 @@
 
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import httpx
 from pathlib import Path
 
-from inference_worker.event_pipeline import submit_event_with_clip
+from inference_worker.event_pipeline import ClipDeliveryError, submit_event_with_clip
 
 
 class FakeClient:
@@ -109,6 +109,52 @@ class EventPipelineTest(unittest.TestCase):
                 client.uploads[0][1],
                 "REQ_001",
             )
+
+
+    def exhausted_upload(self, status, *, race=False, offline=False):
+        client = FakeClient()
+        row = {'request_id': 'REQ_001', 'camera_id': 'CAM_001', 'status': status}
+        client.upload_clip = Mock(side_effect=httpx.ReadTimeout('upload timeout'))
+        client.get_clip_requests = Mock(return_value={'items': [row]})
+        client.report_clip_failure = Mock(return_value={'status': 'unavailable'})
+        if offline:
+            client.get_clip_requests.side_effect = httpx.ConnectError('offline')
+        if race:
+            response = httpx.Response(409, request=httpx.Request('PUT', 'http://test/request'))
+            client.report_clip_failure.side_effect = httpx.HTTPStatusError('conflict', request=response.request, response=response)
+            client.get_clip_requests.side_effect = [{'items': [row]}, {'items': [{**row, 'status': 'received'}]}]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'clip.mp4'
+            path.write_bytes(b'test')
+            with patch('inference_worker.event_pipeline.time.sleep'):
+                if status == 'received' or race:
+                    result = submit_event_with_clip(client, {'event_id': 'EVT_' + 'a'*32, 'camera_id': 'CAM_001'}, path)
+                    self.assertEqual(result['uploaded_count'], 1)
+                else:
+                    with self.assertRaises(ClipDeliveryError):
+                        submit_event_with_clip(client, {'event_id': 'EVT_' + 'a'*32, 'camera_id': 'CAM_001'}, path)
+        self.assertEqual(client.upload_clip.call_count, 3)
+        return client
+
+    def test_exhausted_upload_confirms_received_without_failure_report(self):
+        client = self.exhausted_upload('received')
+        client.report_clip_failure.assert_not_called()
+
+    def test_exhausted_upload_reports_abandoned_pending_clip(self):
+        client = self.exhausted_upload('pending')
+        client.report_clip_failure.assert_called_once_with('EVT_' + 'a'*32, 'REQ_001',
+            'sender_upload_exhausted', status='unavailable')
+
+    def test_exhausted_upload_preserves_server_ingest_failure(self):
+        client = self.exhausted_upload('failed')
+        client.report_clip_failure.assert_not_called()
+
+    def test_failure_report_race_confirms_received(self):
+        self.exhausted_upload('pending', race=True)
+
+    def test_offline_confirmation_does_not_guess_delivery_state(self):
+        client = self.exhausted_upload('pending', offline=True)
+        client.report_clip_failure.assert_not_called()
 
 
 if __name__ == "__main__":
