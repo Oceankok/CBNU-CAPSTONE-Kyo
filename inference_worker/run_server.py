@@ -27,7 +27,7 @@ from inference_worker.event_validation import validate_candidate
 from inference_worker.clip_buffer import ClipBuffer
 from inference_worker.clip_manager import create_clip
 from inference_worker.pending_clips import PendingClips
-from inference_worker.event_pipeline import submit_event_with_clip
+from inference_worker.event_pipeline import ClipDeliveryError, submit_event_with_clip
 from inference_worker.inference_load import InferenceLoad
 
 
@@ -246,6 +246,8 @@ def main():
                                 print(f"[EVENT DELIVERED] {result['event_id']}")
                             else:
                                 print("[LOCAL CLIP READY] temporary clip validated")
+                        except ClipDeliveryError as error:
+                            print(f"[EVENT DELIVERY FAILED] event={job['event']['event_id']} reason={error}")
                         finally:
                             clip_path.unlink(missing_ok=True)
 
