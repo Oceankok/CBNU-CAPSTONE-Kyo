@@ -205,6 +205,19 @@ def reprocess(media_id, mode):
             raise ValueError(reason)
         if not row['source_path']:
             raise ValueError('source_file_missing')  # Remote worker never consumes published legacy output.
+        if row['request_id']:
+            request = conn.execute('SELECT * FROM event_clip_request WHERE request_id=? AND event_id=? AND camera_id=?',
+                                   (row['request_id'], row['event_id'], row['camera_id'])).fetchone()
+            if not request:
+                raise ValueError('clip_request_not_found')
+            # Ingest can preserve the complete upload before queue creation fails.
+            # Recover delivery only from that failure, after the source checks above.
+            # An explicit unavailable decision must never be silently reversed.
+            if request['status'] == 'failed' and request['error_code'] == 'clip_ingest_failed':
+                conn.execute("UPDATE event_clip_request SET status='received',error_code=NULL,updated_at=? WHERE request_id=?",
+                             (time.time(), row['request_id']))
+            elif request['status'] != 'received':
+                raise ValueError('clip_request_not_received')
         conn.execute("UPDATE event_media SET status='processing',redaction_status='unprocessed',redaction_mode=?,error_code=NULL WHERE media_id=?", (mode, media_id))
     # Failure leaves a recoverable failed record instead of an untracked processing state.
     try:

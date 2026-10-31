@@ -1,4 +1,5 @@
 from backend.db.connection import week_expression
+from backend.event_time import stored_timestamp, public_timestamp, local_date, quarter_for, local_time_sql, REPORTING_TIMEZONE
 from backend.db.connection import begin_write
 import os
 """
@@ -96,6 +97,11 @@ def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, An
     for row in rows:
         by_event[row["event_id"]].append(public_media(dict(row), retention.get(row["event_id"], {}).get("decision", "pending")))
     for event in events:
+        event['event_date_local'] = local_date(event['timestamp_start'])
+        event['timestamp_timezone'] = REPORTING_TIMEZONE if event['event_date_local'] else None
+        event['reporting_timezone'] = REPORTING_TIMEZONE
+        event['timestamp_start'] = public_timestamp(event['timestamp_start'])
+        event['timestamp_end'] = public_timestamp(event['timestamp_end'])
         from backend.event_merge.service import metadata
         event.update(metadata(conn, event['event_id']))
         event["media"] = by_event[event["event_id"]]
@@ -253,6 +259,8 @@ def insert_candidate_event(event: dict[str, Any], *, connection=None) -> None:
             "event_status": "pending",
         })
     """
+    event = {**event, 'timestamp_start': stored_timestamp(event['timestamp_start']),
+             'timestamp_end': stored_timestamp(event['timestamp_end'])}
     query = """
         INSERT INTO candidate_event (
             event_id,
@@ -869,11 +877,7 @@ def _get_quarter_from_timestamp(timestamp: str) -> str:
         str:
             예: "2026-Q2"
     """
-    year = int(timestamp[:4])
-    month = int(timestamp[5:7])
-    quarter_number = ((month - 1) // 3) + 1
-
-    return f"{year}-Q{quarter_number}"
+    return quarter_for(timestamp)
 
 
 def generate_quarterly_stats(quarter: str) -> dict:
@@ -889,44 +893,46 @@ def generate_quarterly_stats(quarter: str) -> dict:
             생성된 분기별 통계 데이터.
     """
     start_date, end_date = _get_quarter_date_range(quarter)
+    local_start = local_time_sql('timestamp_start')
+    camera_local_start = local_time_sql('ce.timestamp_start')
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     with get_connection() as conn:
         candidate_count = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) AS count
             FROM candidate_event
-            WHERE timestamp_start >= ?
-              AND timestamp_start < ?
+            WHERE {local_start} >= ?
+              AND {local_start} < ?
               AND event_status != 'merged';
             """,
             (start_date, end_date),
         ).fetchone()["count"]
 
         confirmed_count = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) AS count
             FROM candidate_event
-            WHERE timestamp_start >= ?
-              AND timestamp_start < ?
+            WHERE {local_start} >= ?
+              AND {local_start} < ?
               AND event_status = 'confirmed';
             """,
             (start_date, end_date),
         ).fetchone()["count"]
 
         hold_count = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) AS count
             FROM candidate_event
-            WHERE timestamp_start >= ?
-              AND timestamp_start < ?
+            WHERE {local_start} >= ?
+              AND {local_start} < ?
               AND event_status = 'hold';
             """,
             (start_date, end_date),
         ).fetchone()["count"]
 
         unreviewable_count = conn.execute(
-            "SELECT COUNT(*) FROM candidate_event WHERE timestamp_start>=? AND timestamp_start<? AND event_status='unreviewable'",
+            f"SELECT COUNT(*) FROM candidate_event WHERE {local_start}>=? AND {local_start}<? AND event_status='unreviewable'",
             (start_date, end_date),
         ).fetchone()[0]
 
@@ -989,10 +995,10 @@ def generate_quarterly_stats(quarter: str) -> dict:
             SELECT
                 ppe_type,
                 COUNT(*) AS confirmed_count,
-                COUNT(DISTINCT {week_expression("timestamp_start")}) AS repeat_weeks
+                COUNT(DISTINCT {week_expression(local_start)}) AS repeat_weeks
             FROM candidate_event
-            WHERE timestamp_start >= ?
-              AND timestamp_start < ?
+            WHERE {local_start} >= ?
+              AND {local_start} < ?
               AND event_status = 'confirmed'
             GROUP BY ppe_type
             ORDER BY confirmed_count DESC;
@@ -1038,11 +1044,11 @@ def generate_quarterly_stats(quarter: str) -> dict:
             SELECT
                 ci.zone_name,
                 COUNT(*) AS confirmed_count,
-                COUNT(DISTINCT {week_expression("ce.timestamp_start")}) AS repeat_weeks
+                COUNT(DISTINCT {week_expression(camera_local_start)}) AS repeat_weeks
             FROM candidate_event ce
             LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
-            WHERE ce.timestamp_start >= ?
-              AND ce.timestamp_start < ?
+            WHERE {camera_local_start} >= ?
+              AND {camera_local_start} < ?
               AND ce.event_status = 'confirmed'
             GROUP BY ci.zone_name
             ORDER BY confirmed_count DESC;
@@ -1084,11 +1090,11 @@ def generate_quarterly_stats(quarter: str) -> dict:
             )
 
         trend_rows = conn.execute(
-            """
+            f"""
             SELECT
-                substr(timestamp_start, 1, 4) ||
+                substr(({local_start}), 1, 4) ||
                 '-Q' ||
-                ((CAST(substr(timestamp_start, 6, 2) AS INTEGER) - 1) / 3 + 1)
+                ((CAST(substr(({local_start}), 6, 2) AS INTEGER) - 1) / 3 + 1)
                 AS quarter,
                 SUM(CASE WHEN ppe_type = 'helmet' THEN 1 ELSE 0 END) AS helmet,
                 SUM(CASE WHEN ppe_type = 'vest' THEN 1 ELSE 0 END) AS vest
@@ -1155,15 +1161,17 @@ def generate_education_recommendations(quarter: str) -> dict:
             생성된 교육 추천 데이터.
     """
     start_date, end_date = _get_quarter_date_range(quarter)
+    local_start = local_time_sql('timestamp_start')
+    camera_local_start = local_time_sql('ce.timestamp_start')
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     with get_connection() as conn:
         total_confirmed = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) AS count
             FROM candidate_event
-            WHERE timestamp_start >= ?
-              AND timestamp_start < ?
+            WHERE {local_start} >= ?
+              AND {local_start} < ?
               AND event_status = 'confirmed';
             """,
             (start_date, end_date),
@@ -1175,11 +1183,11 @@ def generate_education_recommendations(quarter: str) -> dict:
                 ce.ppe_type,
                 ci.zone_name,
                 COUNT(*) AS confirmed_count,
-                COUNT(DISTINCT {week_expression("ce.timestamp_start")}) AS repeat_weeks
+                COUNT(DISTINCT {week_expression(camera_local_start)}) AS repeat_weeks
             FROM candidate_event ce
             LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
-            WHERE ce.timestamp_start >= ?
-              AND ce.timestamp_start < ?
+            WHERE {camera_local_start} >= ?
+              AND {camera_local_start} < ?
               AND ce.event_status = 'confirmed'
             GROUP BY ce.ppe_type, ci.zone_name
             ORDER BY confirmed_count DESC;

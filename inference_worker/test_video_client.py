@@ -104,3 +104,73 @@ class VideoClientContractTests(unittest.TestCase):
         with self.assertRaises(httpx.HTTPStatusError) as raised:
             self.client.submit_event(event)
         self.assertEqual(raised.exception.response.status_code, 422)
+
+
+    def test_reference_collector_attaches_peer_without_second_event(self):
+        from datetime import timedelta
+        from backend.db.event_repository import get_connection
+        from inference_worker.reference_collector import ReferenceCollector
+        self.api.post('/api/camera-groups', headers=self.admin,
+            json={'name': 'reference-contract', 'camera_ids': ['CAM_001', 'CAM_002']}).raise_for_status()
+        event = self.event()
+        self.client.submit_event(event)
+        requests = self.client.list_reference_requests()
+        self.assertEqual(len(requests), 1)
+        request = requests[0]
+        start = datetime.fromisoformat(request['clip_start_at'])
+        chunks = [{'chunk_id': str(index), 'capture_start_at': (start+timedelta(seconds=2*index)).isoformat(),
+                   'duration_ms': 2000} for index in range(2)]
+        roots = []
+        def assembled(client, chosen, before, after, folder):
+            roots.append(folder)
+            path = folder/'reference.mp4'
+            path.write_bytes((Path(__file__).resolve().parents[1]/'backend/db/demo_assets/sample.mp4').read_bytes())
+            return path
+        with get_connection() as conn:
+            count = conn.execute('SELECT COUNT(*) FROM candidate_event').fetchone()[0]
+        with patch.object(self.client, 'list_streams', return_value=[{'camera_id': 'CAM_002', 'stream_id': 'peer'}]), \
+             patch.object(self.client, 'list_chunks', return_value=chunks), \
+             patch('inference_worker.reference_collector.assemble', side_effect=assembled):
+            ReferenceCollector(self.client).run_once()
+        self.assertTrue(roots)
+        self.assertTrue(all(not path.exists() for path in roots))
+        self.assertEqual(self.client.list_reference_requests(), [])
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM candidate_event').fetchone()[0], count)
+            row = conn.execute('SELECT camera_id,role,status,redaction_status FROM event_media WHERE request_id=?',
+                               (request['request_id'],)).fetchone()
+            self.assertEqual(row['camera_id'], 'CAM_002')
+            self.assertEqual(row['role'], 'reference')
+            self.assertEqual(row['status'], 'processing')
+            self.assertNotEqual(row['redaction_status'], 'complete')
+        media = self.api.get('/api/events/'+event['event_id']+'/media', headers=self.admin).json()['items']
+        self.assertTrue(all(item['url'] is None for item in media))
+        # A synthetic redaction result follows the real worker API publication path.
+        import cv2
+        import json
+        from backend.media import paths
+        target = paths.STORAGE_ROOT/'candidate_events'/'processed'
+        self.enterContext(patch('backend.processing.routes.PROCESSED_ROOT', target))
+        job = self.api.post('/api/processing/claim', headers=self.client.client.headers).json()['job']
+        headers = {**dict(self.client.client.headers), 'X-Processing-Lease': job['lease_token']}
+        payload = self.api.get(job['source_url'], headers=headers).content
+        sample = Path(__file__).resolve().parents[1]/'backend/db/demo_assets/sample.mp4'
+        cap = cv2.VideoCapture(str(sample))
+        try:
+            count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        finally:
+            cap.release()
+        meta = {'faces_detected': 0, 'processed_frames': count, 'redaction_mode': 'scrfd',
+                'inference_backend': 'synthetic-no-model', 'processing_seconds': 0}
+        response = self.api.post('/api/processing/jobs/'+job['job_id']+'/result', content=payload,
+            headers={**headers, 'Content-Type': 'video/mp4', 'X-Processing-Metadata': json.dumps(meta)})
+        self.assertEqual(response.status_code, 200, response.text)
+        media = self.api.get('/api/events/'+event['event_id']+'/media', headers=self.admin).json()['items']
+        self.assertEqual(media[0]['status'], 'ready')
+        self.assertIsNotNone(media[0]['url'])
+        self.assertEqual(media[0]['camera_id'], 'CAM_002')
+        self.assertNotIn('source_path', media[0])
+        # Polling again must not generate a second media row or event.
+        ReferenceCollector(self.client).run_once()
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM event_media WHERE request_id=?', (request['request_id'],)).fetchone()[0], 1)
