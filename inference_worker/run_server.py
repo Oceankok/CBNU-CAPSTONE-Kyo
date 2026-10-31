@@ -26,17 +26,17 @@ from inference_worker.time_utils import (
 from inference_worker.event_builder import build_event
 from inference_worker.event_validation import validate_candidate
 from inference_worker.clip_buffer import ClipBuffer
-from inference_worker.clip_manager import create_clip
+from inference_worker.clip_manager import create_clip, calculate_clip_window
 from inference_worker.pending_clips import PendingClips
 from inference_worker.event_pipeline import ClipDeliveryError, submit_event_with_clip
 from inference_worker.inference_load import InferenceLoad
 from backend.runtime_version import local_version
 
 
-def create_detector():
+def create_detector(model_path=None):
     # Offline contract tests do not import Ultralytics or load weights.
     from inference_worker.ppe_detector import PPEDetector
-    return PPEDetector()
+    return PPEDetector(model_path=model_path) if model_path is not None else PPEDetector()
 
 
 def main():
@@ -44,6 +44,8 @@ def main():
     parser.add_argument("--buffer-mib", type=int, default=256,
                         help="Maximum retained raw frame MiB per camera (default: 256)")
     parser.add_argument("--camera-id", required=True)
+    parser.add_argument("--model-path", type=Path,
+                        help="Explicit local PPE weights; no model is downloaded")
     parser.add_argument("--poll", type=float, default=1.0)
     parser.add_argument("--max-chunks", type=int, default=5)
     parser.add_argument("--submit-events", action="store_true",
@@ -65,7 +67,12 @@ def main():
         return ClipBuffer(retention_seconds=30.0, max_bytes=args.buffer_mib*1024*1024)
 
     # Initialize YOLO and API client.
-    detector = create_detector()
+    detector = create_detector(args.model_path) if args.model_path is not None else create_detector()
+    if hasattr(detector, "model_version"):
+        print(f"[MODEL] version={detector.model_version} no_helmet={detector.supports_no_helmet}")
+    if args.submit_events and getattr(detector, "supports_no_helmet", None) is False:
+        parser.error("Event submission requires person/helmet/no_helmet classes; "
+                     "select verified local weights with --model-path")
     client = VideoClient()
     priority = InferenceLoad(client)
     clips = tempfile.TemporaryDirectory(prefix="ppe_inference_")
@@ -295,6 +302,13 @@ def main():
                     assessments = tracker.update(
                         assess_helmets(detections)
                     )
+                    # Start verified observation only after pre-roll exists.
+                    # Otherwise a person already present at live startup would
+                    # emit one permanently incomplete clip and never re-arm.
+                    pre_roll_start, _ = calculate_clip_window(timestamp, timestamp)
+                    if clip_buffer.frames[0][0] > pre_roll_start:
+                        for assessment in assessments:
+                            assessment["verified_ppe_confidence"] = None
 
                     # Detect sustained suspected violations.
                     candidates = violations.update(
@@ -323,7 +337,7 @@ def main():
                             tz=timezone.utc,
                         )
 
-                        # Check policy and PPE confidence.
+                        # Check policy and actual negative-class confidence.
                         allowed, reason = validate_candidate(
                             candidate,
                             policy,
@@ -338,8 +352,8 @@ def main():
                                 pending_clips.add(candidate, args.camera_id)
                             continue
 
-                        # Only externally verified PPE confidence
-                        # may be used for event submission.
+                        # Use the minimum no_helmet score across the sustained
+                        # observation, never person confidence or helmet absence.
                         verified_confidence = candidate[
                             "verified_ppe_confidence"
                         ]
@@ -350,12 +364,9 @@ def main():
                             start_time=start_time,
                             end_time=end_time,
                             confidence=verified_confidence,
-                            frame_sample_count=max(
-                                1,
-                                round(
-                                    candidate["duration_seconds"] * fps
-                                ),
-                            ),
+                            frame_sample_count=candidate.get("frame_sample_count", max(
+                                1, round(candidate["duration_seconds"] * fps))),
+                            model_version=getattr(detector, "model_version", "helmet-yolov8n-v1"),
                         )
 
                         ready_count += 1

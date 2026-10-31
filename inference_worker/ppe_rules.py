@@ -4,6 +4,8 @@
 This is a candidate-screening heuristic, not definitive PPE compliance.
 """
 
+from inference_worker.event_validation import valid_ppe_confidence
+
 
 def center_of(bbox):
     x1, y1, x2, y2 = bbox
@@ -32,6 +34,9 @@ def assess_helmets(detections):
     helmets = [
         d for d in detections if d["class_name"] == "helmet"
     ]
+    # An absent helmet box alone is never verified negative-class evidence.
+    negatives = [d for d in detections if d["class_name"] == "no_helmet"
+                 and valid_ppe_confidence(d["confidence"])]
 
     assessments = []
 
@@ -40,6 +45,7 @@ def assess_helmets(detections):
         height = y2 - y1
 
         # Cropped or unusually short detections are uncertain.
+        confidence = None
         if height <= 0 or x2 <= x1:
             status = "unknown"
         else:
@@ -47,12 +53,24 @@ def assess_helmets(detections):
                 helmet_in_head_region(person["bbox"], h["bbox"])
                 for h in helmets
             )
-            status = "helmet" if matched else "suspected_no_helmet"
+            matching = [d for d in negatives
+                        if helmet_in_head_region(person["bbox"], d["bbox"])]
+            # Do not attach one negative prediction to overlapping people.
+            unique = [d for d in matching if sum(
+                helmet_in_head_region(other["bbox"], d["bbox"])
+                for other in people) == 1]
+            if matched and matching:
+                status = "unknown"  # Contradictory labels reset the observation.
+            else:
+                status = "helmet" if matched else "suspected_no_helmet"
+                if unique:
+                    confidence = max(d["confidence"] for d in unique)
 
         assessments.append({
             "person_bbox": person["bbox"],
             "person_confidence": person["confidence"],
             "status": status,
+            "verified_ppe_confidence": confidence,
         })
 
     return assessments
