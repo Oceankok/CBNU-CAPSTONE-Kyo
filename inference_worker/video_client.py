@@ -106,3 +106,9 @@ class VideoClient:
 
     def close(self):
         self.client.close()
+
+
+    def list_reference_requests(self):
+        response = self.client.get('/api/processing/reference-clip-requests')
+        response.raise_for_status()
+        return response.json()['items']
