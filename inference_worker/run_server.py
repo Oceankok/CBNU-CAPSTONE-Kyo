@@ -7,6 +7,7 @@ Unredacted clips are temporary and removed on success or failure.
 """
 
 import argparse
+import httpx
 import time
 import tempfile
 from datetime import datetime, timezone
@@ -39,6 +40,8 @@ def create_detector():
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--buffer-mib", type=int, default=256,
+                        help="Maximum retained raw frame MiB per camera (default: 256)")
     parser.add_argument("--camera-id", required=True)
     parser.add_argument("--poll", type=float, default=1.0)
     parser.add_argument("--max-chunks", type=int, default=5)
@@ -54,6 +57,12 @@ def main():
     if args.poll <= 0 or args.max_chunks <= 0:
         parser.error("--poll and --max-chunks must be positive")
 
+    if args.buffer_mib < 8:
+        parser.error("--buffer-mib must be at least 8")
+
+    def new_clip_buffer():
+        return ClipBuffer(retention_seconds=30.0, max_bytes=args.buffer_mib*1024*1024)
+
     # Initialize YOLO and API client.
     detector = create_detector()
     client = VideoClient()
@@ -67,7 +76,7 @@ def main():
         )
 
     tracker, violations = reset_tracking()
-    clip_buffer = ClipBuffer(retention_seconds=30.0)
+    clip_buffer = new_clip_buffer()
     pending_clips = PendingClips()
 
     stream_id = None
@@ -81,6 +90,8 @@ def main():
     ready_count = 0
     local_clip_count = 0
     incomplete_clip_count = 0
+    expired_chunk_count = 0
+    frames = None
 
     try:
         while processed < args.max_chunks:
@@ -100,7 +111,7 @@ def main():
             if selected is None:
                 if stream_id is not None:
                     tracker, violations = reset_tracking()
-                    clip_buffer = ClipBuffer(retention_seconds=30.0)
+                    clip_buffer = new_clip_buffer()
                     pending_clips = PendingClips()
                     stream_id = None
                     previous_chunk = None
@@ -124,7 +135,7 @@ def main():
 
             if previous_policy != policy_signature:
                 tracker, violations = reset_tracking()
-                clip_buffer = ClipBuffer(retention_seconds=30.0)
+                clip_buffer = new_clip_buffer()
                 pending_clips = PendingClips()
                 previous_chunk = None
                 previous_policy = policy_signature
@@ -132,7 +143,7 @@ def main():
 
             if not enabled:
                 tracker, violations = reset_tracking()
-                clip_buffer = ClipBuffer(retention_seconds=30.0)
+                clip_buffer = new_clip_buffer()
                 pending_clips = PendingClips()
                 previous_chunk = None
                 print(f"[POLICY SKIP] reason={reason}")
@@ -153,7 +164,7 @@ def main():
                 previous_chunk = None
 
                 tracker, violations = reset_tracking()
-                clip_buffer = ClipBuffer(retention_seconds=30.0)
+                clip_buffer = new_clip_buffer()
                 pending_clips = PendingClips()
 
                 print(f"[STREAM] {stream_id}")
@@ -187,28 +198,36 @@ def main():
 
                     if not continuous:
                         tracker, violations = reset_tracking()
-                        clip_buffer = ClipBuffer(retention_seconds=30.0)
+                        clip_buffer = new_clip_buffer()
                         pending_clips = PendingClips()
                         print("[RESET] Chunk discontinuity")
 
                 # 6. Download and decode MP4.
-                data = client.download_chunk(chunk["chunk_id"])
-                frames = list(decode_mp4(data))
-
-                if not frames:
-                    raise RuntimeError(
-                        f"No decoded frames: {chunk['chunk_id']}"
-                    )
-
+                try:
+                    data = client.download_chunk(chunk["chunk_id"])
+                except httpx.HTTPStatusError as error:
+                    if error.response.status_code != 404:
+                        raise  # Revoked access and other failures are not expiration.
+                    tracker, violations = reset_tracking()
+                    clip_buffer = new_clip_buffer()
+                    pending_clips = PendingClips()
+                    previous_chunk = None
+                    last_sequence = sequence
+                    processed += 1  # --max-chunks bounds attempted chunks too.
+                    expired_chunk_count += 1
+                    priority.release()
+                    print(f"[CHUNK EXPIRED] camera={args.camera_id} sequence={sequence}")
+                    continue
                 duration_ms = chunk["duration_ms"]
-
                 if duration_ms <= 0:
                     raise RuntimeError("Invalid chunk duration")
+                frames = decode_mp4(data, with_timing=True, duration_ms=duration_ms)
+                decoded_count = 0
+                chunk_evictions = 0
 
-                fps = len(frames) / (duration_ms / 1000)
-
-                # 7. Analyze frames in capture-time order.
-                for index, frame in enumerate(frames):
+                # 7. Analyze one decoded frame at a time in capture order.
+                for index, fps, frame in frames:
+                    decoded_count += 1
                     timestamp = frame_timestamp(
                         chunk["capture_start_at"],
                         index,
@@ -216,7 +235,7 @@ def main():
                     )
 
                     # Retain recent frames and finish clips after post-roll arrives.
-                    clip_buffer.add(timestamp, frame)
+                    chunk_evictions += clip_buffer.add(timestamp, frame)
 
                     for job in pending_clips.pop_ready(timestamp):
                         # Reject partial clips; no original footage may be inferred.
@@ -239,6 +258,7 @@ def main():
                         if not complete:
                             incomplete_clip_count += 1
                             print(f"[CLIP INCOMPLETE] track={job['tracking_id']} ")
+                            selected.clear()
                             continue
 
                         clip_name = (
@@ -262,6 +282,7 @@ def main():
                             print(f"[EVENT DELIVERY FAILED] event={job['event']['event_id']} reason={error}")
                         finally:
                             clip_path.unlink(missing_ok=True)
+                            selected.clear()  # Do not pin evicted frames after encoding.
 
                     # Uploads release the lease; reacquire before GPU inference.
                     priority.refresh()
@@ -339,6 +360,10 @@ def main():
                         pending_clips.add(candidate, args.camera_id, event=event)
                         print(f"[EVENT READY] {event['event_id']}")
 
+                if not decoded_count:
+                    raise RuntimeError(f"No decoded frames: {chunk['chunk_id']}")
+                if chunk_evictions:
+                    print(f"[BUFFER LIMIT] camera={args.camera_id} evicted={chunk_evictions} bytes={clip_buffer.bytes_used}")
                 priority.release()
                 time.sleep(args.poll)  # Give queued redaction work an idle boundary.
                 last_sequence = sequence
@@ -348,20 +373,25 @@ def main():
                 print(
                     f"[OK] camera={args.camera_id} "
                     f"sequence={sequence} "
-                    f"frames={len(frames)}"
+                    f"frames={decoded_count}"
                 )
 
     finally:
         try:
-            priority.release()
+            if frames is not None:
+                frames.close()  # Also release decoder files if inference raises mid-chunk.
         finally:
             try:
-                client.close()
+                priority.release()
             finally:
-                clips.cleanup()
+                try:
+                    client.close()
+                finally:
+                    clips.cleanup()
 
     print("\n========== Analysis ==========")
-    print(f"Processed chunks: {processed}")
+    print(f"Processed chunks: {processed-expired_chunk_count}")
+    print(f"Expired chunks: {expired_chunk_count}")
     print(f"Local candidates: {candidate_count}")
     print(f"Local clips: {local_clip_count}")
     print(f"Incomplete clips: {incomplete_clip_count}")

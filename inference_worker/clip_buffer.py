@@ -6,10 +6,14 @@ from datetime import datetime, timedelta
 
 
 class ClipBuffer:
-    def __init__(self, retention_seconds=30.0):
+    def __init__(self, retention_seconds=30.0, max_bytes=256*1024*1024):
         if retention_seconds <= 0:
             raise ValueError("retention_seconds must be positive")
 
+        if type(max_bytes) is not int or max_bytes <= 0:
+            raise ValueError("max_bytes must be a positive integer")
+        self.max_bytes = max_bytes
+        self.bytes_used = 0
         self.retention = timedelta(seconds=retention_seconds)
         self.frames = deque()
 
@@ -20,12 +24,20 @@ class ClipBuffer:
         if self.frames and timestamp < self.frames[-1][0]:
             raise ValueError("Frames must arrive in timestamp order")
 
-        self.frames.append((timestamp, frame.copy()))
-
+        size = frame.nbytes
+        if size > self.max_bytes:
+            raise ValueError("Frame exceeds buffer byte limit")
         cutoff = timestamp - self.retention
-
         while self.frames and self.frames[0][0] < cutoff:
-            self.frames.popleft()
+            self.bytes_used -= self.frames.popleft()[1].nbytes
+        evicted = 0
+        # Evict before copying so the new allocation cannot exceed this budget.
+        while self.frames and self.bytes_used + size > self.max_bytes:
+            self.bytes_used -= self.frames.popleft()[1].nbytes
+            evicted += 1
+        self.frames.append((timestamp, frame.copy()))
+        self.bytes_used += size
+        return evicted
 
     def select(self, start: datetime, end: datetime):
         if start.tzinfo is None or end.tzinfo is None:
