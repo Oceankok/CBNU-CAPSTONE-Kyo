@@ -92,7 +92,7 @@ class ServerInferenceTest(unittest.TestCase):
             patch.object(runner.tempfile, "TemporaryDirectory", side_effect=temporary),
             patch.object(sys, "argv", args),
             patch.object(runner, "submit_event_with_clip",
-                         side_effect=RuntimeError("test delivery failure") if delivery_error else None,
+                         side_effect=runner.ClipDeliveryError("test delivery failure") if delivery_error else None,
                          return_value={"event_id": "EVT_test"}) as deliver,
             redirect_stdout(output),
         ):
@@ -103,11 +103,7 @@ class ServerInferenceTest(unittest.TestCase):
                 from contextlib import nullcontext
                 candidate_scope = nullcontext()
             with candidate_scope:
-                if delivery_error:
-                    with self.assertRaisesRegex(RuntimeError, "test delivery failure"):
-                        runner.main()
-                else:
-                    runner.main()
+                runner.main()
             if deliver.called:
                 self.assertFalse(Path(deliver.call_args.args[2]).exists())
         self.assertTrue(client.closed)
@@ -140,7 +136,9 @@ class ServerInferenceTest(unittest.TestCase):
         deliver.assert_not_called()
 
     def test_failed_upload_removes_clip_and_releases_priority(self):
-        self.run_runner(FakeVideoClient(8), submit=True, qualified=True, delivery_error=True)
+        output, _ = self.run_runner(FakeVideoClient(8), submit=True, qualified=True, delivery_error=True)
+        self.assertIn('[EVENT DELIVERY FAILED]', output)
+        self.assertEqual(output.count('[OK]'), 8)
 
     def test_incomplete_clip_not_submitted(self):
         _, deliver = self.run_runner(FakeVideoClient(6), submit=True, qualified=True)

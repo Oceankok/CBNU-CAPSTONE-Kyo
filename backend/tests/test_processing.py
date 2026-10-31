@@ -218,3 +218,80 @@ class ProcessingTests(unittest.TestCase):
             self.assertEqual(conn.execute('SELECT status FROM event_clip_request WHERE request_id=?',(ident,)).fetchone()[0], 'received')
         job, _ = self.claim()
         self.assertEqual(job['kind'], 'video')
+
+
+    def failed_clip_ingest(self):
+        from backend.db.seed_demo import ASSETS
+        from backend.processing.service import ingest
+        request = self.client.post('/api/processing/events/EVT_0001/clip-requests',
+            headers=self.node, json={'camera_id': 'CAM_001'}).json()
+        source = Path(self.temp.name) / 'upload.mp4'
+        source.write_bytes((ASSETS / 'sample.mp4').read_bytes())
+        with patch('backend.processing.service.enqueue', side_effect=ValueError('test_queue_failure')):
+            with self.assertRaisesRegex(ValueError, 'test_queue_failure'):
+                ingest('EVT_0001', 'CAM_001', 'video', 'clip', source, 'scrfd', request['request_id'])
+        with get_connection() as conn:
+            media = dict(conn.execute('SELECT * FROM event_media WHERE request_id=?', (request['request_id'],)).fetchone())
+        return request['request_id'], media
+
+    def test_reprocess_recovers_preserved_clip_after_enqueue_failure(self):
+        ident, media = self.failed_clip_ingest()
+        response = self.client.post('/api/media/' + media['media_id'] + '/redact', headers=self.admin)
+        self.assertEqual(response.status_code, 202, response.text)
+        with get_connection() as conn:
+            request = conn.execute('SELECT status,error_code FROM event_clip_request WHERE request_id=?', (ident,)).fetchone()
+            self.assertEqual(request['status'], 'received')
+            self.assertIsNone(request['error_code'])
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM event_media WHERE request_id=?', (ident,)).fetchone()[0], 1)
+        job, headers = self.claim()
+        self.assertEqual(job['media_id'], media['media_id'])
+        source = self.client.get(job['source_url'], headers=headers)
+        self.assertEqual(source.status_code, 200)
+        cap = cv2.VideoCapture(str(private_source_path(media['source_path'])))
+        try:
+            count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        finally:
+            cap.release()
+        metadata = {**self.meta, 'processed_frames': count, 'faces_detected': 0}
+        response = self.client.post('/api/processing/jobs/' + job['job_id'] + '/result',
+            headers={**headers, 'Content-Type': 'video/mp4', 'X-Processing-Metadata': json.dumps(metadata)},
+            content=source.content)
+        self.assertEqual(response.status_code, 200, response.text)
+        response = self.client.get('/api/events/EVT_0001/media', headers=self.admin)
+        recovered = next(item for item in response.json()['items'] if item['media_id'] == media['media_id'])
+        self.assertEqual(recovered['status'], 'ready')
+        self.assertIsNotNone(recovered['url'])
+
+    def test_reprocess_missing_original_does_not_restore_clip_delivery(self):
+        ident, media = self.failed_clip_ingest()
+        private_source_path(media['source_path']).unlink()
+        response = self.client.post('/api/media/' + media['media_id'] + '/redact', headers=self.admin)
+        self.assertEqual(response.status_code, 404, response.text)
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT status FROM event_clip_request WHERE request_id=?', (ident,)).fetchone()[0], 'failed')
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM processing_job WHERE media_id=?', (media['media_id'],)).fetchone()[0], 0)
+
+    def test_reprocess_does_not_reverse_explicit_unavailable_decision(self):
+        ident, media = self.failed_clip_ingest()
+        response = self.client.put('/api/processing/events/EVT_0001/clip-requests/' + ident,
+            headers=self.node, json={'status': 'unavailable', 'error_code': 'source_abandoned'})
+        self.assertEqual(response.status_code, 200, response.text)
+        response = self.client.post('/api/media/' + media['media_id'] + '/redact', headers=self.admin)
+        self.assertEqual(response.status_code, 409, response.text)
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT status FROM event_clip_request WHERE request_id=?', (ident,)).fetchone()[0], 'unavailable')
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM processing_job WHERE media_id=?', (media['media_id'],)).fetchone()[0], 0)
+
+
+    def test_failure_report_cannot_cancel_ingest_in_progress(self):
+        from backend.media.service import register_media
+        ident = self.client.post('/api/processing/events/EVT_0001/clip-requests',
+            headers=self.node, json={'camera_id': 'CAM_001'}).json()['request_id']
+        register_media('EVT_0001', 'CAM_001', 'video', 'clip', 'scrfd', ident)
+        for status in ('failed', 'unavailable'):
+            response = self.client.put('/api/processing/events/EVT_0001/clip-requests/' + ident,
+                headers=self.node, json={'status': status, 'error_code': 'sender_upload_exhausted'})
+            self.assertEqual(response.status_code, 409, response.text)
+            self.assertEqual(response.json()['detail'], 'clip_request_upload_in_progress')
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT status FROM event_clip_request WHERE request_id=?', (ident,)).fetchone()[0], 'pending')

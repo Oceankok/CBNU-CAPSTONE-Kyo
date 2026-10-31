@@ -84,11 +84,11 @@ class VideoClient:
         response.raise_for_status()
         return response.json()
 
-    def report_clip_failure(self, event_id, request_id, error_code):
+    def report_clip_failure(self, event_id, request_id, error_code, *, status='failed'):
         response = self.client.put(
             f"/api/processing/events/{event_id}/clip-requests/{request_id}",
             json={
-                "status": "failed",
+                "status": status,
                 "error_code": error_code,
             },
         )
