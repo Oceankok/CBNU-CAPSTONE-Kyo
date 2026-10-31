@@ -35,6 +35,8 @@ class WorkerSettings(BaseModel):
 
 
 class InferenceLoad(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    session_id: str | None = Field(default=None, pattern=r'^[0-9a-f]{32}$')
     busy: bool
     ttl_seconds: int = Field(default=10, ge=1, le=30)
 
@@ -44,17 +46,46 @@ def set_inference_load(body: InferenceLoad, node: dict = Depends(processor)):
     until = time.time() + body.ttl_seconds if body.busy else 0
     with get_connection() as conn:
         begin_write(conn)
-        conn.execute('''INSERT INTO processing_inference_load(node_id,busy_until,updated_at) VALUES(?,?,?)
-            ON CONFLICT(node_id) DO UPDATE SET busy_until=excluded.busy_until,updated_at=excluded.updated_at''',
-                     (node['node_id'], until, time.time()))
-    return {'busy_until': until}
+        conn.execute('DELETE FROM processing_inference_session WHERE busy_until<=?', (time.time(),))
+        if body.session_id is None:
+            conn.execute('''INSERT INTO processing_inference_load(node_id,busy_until,updated_at) VALUES(?,?,?)
+                ON CONFLICT(node_id) DO UPDATE SET busy_until=excluded.busy_until,updated_at=excluded.updated_at''',
+                         (node['node_id'], until, time.time()))
+        elif body.busy:
+            count = conn.execute('SELECT COUNT(*) FROM processing_inference_session WHERE node_id=? AND session_id!=?',
+                                 (node['node_id'], body.session_id)).fetchone()[0]
+            if count >= 32:
+                raise HTTPException(429, 'inference_session_capacity_reached')
+            conn.execute('''INSERT INTO processing_inference_session(node_id,session_id,busy_until) VALUES(?,?,?)
+                ON CONFLICT(node_id,session_id) DO UPDATE SET busy_until=excluded.busy_until''',
+                         (node['node_id'], body.session_id, until))
+        else:
+            conn.execute('DELETE FROM processing_inference_session WHERE node_id=? AND session_id=?',
+                         (node['node_id'], body.session_id))
+    result = {'busy_until': until}
+    if body.session_id is not None:
+        result['session_id'] = body.session_id
+    return result
 
 
 @router.get('/inference-load')
 def get_inference_load(node: dict = Depends(processor)):
     with get_connection() as conn:
-        row = conn.execute('SELECT MAX(busy_until) FROM processing_inference_load').fetchone()
-    return {'busy': bool(row and row[0] and row[0] > time.time()), 'busy_until': row[0] or 0}
+        from backend.processing.priority import busy_until
+        until = busy_until(conn)
+    return {'busy': until > time.time(), 'busy_until': until}
+
+
+@router.get('/runtime-version')
+def runtime_version(node: dict = Depends(processor)):
+    from backend.runtime_version import image_revision
+    from backend.runtime import processing_mode
+    from backend.db.migrations import LATEST_VERSION
+    from backend.db.connection import schema_version
+    with get_connection() as conn:
+        actual = schema_version(conn)
+    return {'revision': image_revision(), 'required_schema_version': LATEST_VERSION,
+            'database_schema_version': actual, 'processing_mode': processing_mode()}
 
 
 @router.put('/workers/{node_id}', dependencies=[Depends(require_admin)])

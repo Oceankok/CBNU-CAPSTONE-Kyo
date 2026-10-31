@@ -67,8 +67,8 @@ def claim(node_id):
         conn.execute('UPDATE field_node SET last_seen_at=? WHERE node_id=?', (time.time(), node_id))
         if conn.execute('SELECT 1 FROM host_ai_job WHERE worker_node_id=? AND cleanup_pending=1', (node_id,)).fetchone():
             return {'job': None}
-        load = conn.execute('SELECT MAX(busy_until) FROM processing_inference_load').fetchone()
-        if load and load[0] and load[0] > time.time():
+        from backend.processing.priority import busy_until
+        if busy_until(conn) > time.time():
             return {'job': None}
         if conn.execute("SELECT 1 FROM processing_job WHERE worker_node_id=? AND local_cleanup_status='pending'", (node_id,)).fetchone():
             return {'job': None}

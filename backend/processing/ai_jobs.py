@@ -84,8 +84,8 @@ def enqueue(kind, provider, payload, image=None):
 def claim(node_id):
     with get_connection() as conn:
         begin_write(conn)
-        load = conn.execute('SELECT MAX(busy_until) FROM processing_inference_load').fetchone()[0]
-        if load and load > time.time():
+        from backend.processing.priority import busy_until
+        if busy_until(conn) > time.time():
             return {'job': None}
         if conn.execute("SELECT 1 FROM processing_job WHERE worker_node_id=? AND local_cleanup_status='pending'", (node_id,)).fetchone():
             return {'job': None}

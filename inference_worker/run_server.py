@@ -30,6 +30,7 @@ from inference_worker.clip_manager import create_clip
 from inference_worker.pending_clips import PendingClips
 from inference_worker.event_pipeline import ClipDeliveryError, submit_event_with_clip
 from inference_worker.inference_load import InferenceLoad
+from backend.runtime_version import local_version
 
 
 def create_detector():
@@ -68,6 +69,8 @@ def main():
     client = VideoClient()
     priority = InferenceLoad(client)
     clips = tempfile.TemporaryDirectory(prefix="ppe_inference_")
+    startup = local_version()
+    print(f"[HOST CODE] revision={startup['revision']} dirty={startup['dirty']}")
 
     def reset_tracking():
         return (

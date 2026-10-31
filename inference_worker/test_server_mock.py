@@ -38,7 +38,7 @@ class FakeVideoClient:
         self.downloads.append(chunk_id)
         return b"synthetic"
 
-    def set_inference_load(self, busy, ttl_seconds=30):
+    def set_inference_load(self, busy, ttl_seconds=30, *, session_id=None):
         self.loads.append(busy)
 
     def close(self):
