@@ -65,6 +65,8 @@ def claim(node_id):
     with get_connection() as conn:
         begin_write(conn)
         conn.execute('UPDATE field_node SET last_seen_at=? WHERE node_id=?', (time.time(), node_id))
+        if conn.execute("SELECT 1 FROM camera_snapshot WHERE worker_node_id=? AND local_cleanup_status='pending'", (node_id,)).fetchone():
+            return {'job': None}
         if conn.execute('SELECT 1 FROM host_ai_job WHERE worker_node_id=? AND cleanup_pending=1', (node_id,)).fetchone():
             return {'job': None}
         from backend.processing.priority import busy_until
