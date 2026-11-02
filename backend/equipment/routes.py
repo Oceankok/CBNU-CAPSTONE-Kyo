@@ -210,6 +210,9 @@ def set_camera_equipment(camera_id: str, body: CameraEquipmentInput):
                 raise HTTPException(409, "equipment_zone_mismatch")
             if equipment["status"] != "active":
                 raise HTTPException(409, "equipment_inactive")
+        area_equipment = {row[0] for row in conn.execute('SELECT equipment_id FROM camera_work_area WHERE camera_id=?', (camera_id,))}
+        if not area_equipment.issubset(body.equipment_ids):
+            raise HTTPException(409, 'equipment_has_work_areas')
         conn.execute("DELETE FROM camera_equipment WHERE camera_id=?", (camera_id,))
         conn.executemany("INSERT INTO camera_equipment(camera_id,equipment_id,sort_order) VALUES(?,?,?)",
                          [(camera_id,equipment_id,index) for index,equipment_id in enumerate(body.equipment_ids)])
