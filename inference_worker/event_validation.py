@@ -1,6 +1,14 @@
 
 """Validate local PPE candidates before server event submission."""
 
+from math import isfinite
+
+
+def valid_ppe_confidence(value):
+    """A real model score, at least the detector's existing 0.5 threshold."""
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and isfinite(value) and 0.5 <= value <= 1)
+
 
 def validate_candidate(candidate, policy):
     if not isinstance(candidate, dict):
@@ -29,10 +37,10 @@ def validate_candidate(candidate, policy):
     if candidate.get("duration_seconds", 0) < 3.0:
         return False, "duration_too_short"
 
-    # The current model has no dedicated 'no_helmet' class.
-    # Person detection confidence must not be submitted as
-    # verified PPE violation confidence.
-    if candidate.get("verified_ppe_confidence") is None:
+    confidence = candidate.get("verified_ppe_confidence")
+    if confidence is None:
         return False, "ppe_confidence_not_verified"
+    if not valid_ppe_confidence(confidence):
+        return False, "invalid_ppe_confidence"
 
     return True, "valid"

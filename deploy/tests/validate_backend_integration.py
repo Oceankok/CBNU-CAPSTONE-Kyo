@@ -43,7 +43,7 @@ def main():
         config.write_text(json.dumps({'services': {
             'postgres': {'image': 'postgres:17', 'environment': {'POSTGRES_DB': 'kyo_test_integration', 'POSTGRES_USER': 'kyo', 'POSTGRES_PASSWORD': '${KYO_TEST_DB_PASSWORD}'},
                          'volumes': ['db:/var/lib/postgresql/data'], 'healthcheck': {'test': ['CMD-SHELL', 'pg_isready -U kyo -d kyo_test_integration'], 'interval': '2s', 'timeout': '2s', 'retries': 30}},
-            'api': {'image': images[0], 'build': {'context': str(ROOT), 'dockerfile': 'deploy/api.Dockerfile'},
+            'api': {'image': images[0], 'build': {'context': str(ROOT), 'dockerfile': 'deploy/api.Dockerfile', 'args': {'PPE_BUILD_REVISION': 'a'*40}},
                     'environment': {'PPE_DATABASE_URL': '${KYO_TEST_DATABASE_URL}', 'PPE_JWT_SECRET': '${KYO_TEST_JWT_SECRET}',
                                     'PPE_PROCESSING_MODE': 'remote', 'PPE_LOCAL_PROCESSING': 'false', 'PPE_COOKIE_SECURE': 'false', 'PPE_EQUIPMENT_PROVIDER': ''},
                     'volumes': ['media:/app/storage', 'private:/app/.private_media'], 'depends_on': {'postgres': {'condition': 'service_healthy'}},
@@ -106,9 +106,14 @@ assert not list(SOURCE_ROOT.glob('*'))
                 assert len(events) == 1 and len(events[0]['merge_history']) == 1
                 assert all(item['status'] == 'deleted' for item in events[0]['media'])
                 assert len(request(client, 'GET', '/api/camera-groups').json()['items']) == 1
+                token = request(client, 'POST', '/api/nodes', expected=201, json={'node_id': 'revision-check', 'name': 'revision-check'}).json()['token']
+                request(client, 'PUT', '/api/processing/workers/revision-check', json={'enabled': True})
+                version = request(client, 'GET', '/api/processing/runtime-version', headers={'Authorization': 'Bearer '+token}).json()
+                assert version['revision'] == 'a'*40
+                assert version['database_schema_version'] == version['required_schema_version']
             docker(base+['exec', '-T', 'api', 'python', '-c', inspect])
             report.update({'docker_postgresql': True, 'web_proxy': True, 'container_recreation_persistence': True,
-                           'physical_file_deletion': True, 'maintenance': True, 'production_changed': False})
+                           'physical_file_deletion': True, 'baked_revision_verified': True, 'maintenance': True, 'production_changed': False})
         finally:
             if project != 'kyo-integration-'+ident:
                 raise RuntimeError('Unsafe integration cleanup target')

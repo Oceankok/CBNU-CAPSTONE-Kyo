@@ -84,6 +84,11 @@ def report_clip_request(event_id: str, request_id: str, body: ClipRequestResult)
             raise HTTPException(404, "clip_request_not_found")
         if row["status"] != "pending" and not (row["status"] == "failed" and body.status == "unavailable"):
             raise HTTPException(409, "clip_request_already_finished")
+        if body.status != "received" and conn.execute(
+                "SELECT 1 FROM event_media WHERE request_id=? AND (status='processing' OR processing_started_at IS NOT NULL)",
+                (request_id,)).fetchone():
+            # A client timeout does not cancel a server-side ingest still in progress.
+            raise HTTPException(409, "clip_request_upload_in_progress")
         if body.status != "received" and not body.error_code.strip():
             raise HTTPException(400, "clip_failure_reason_required")
         if body.status == "received":

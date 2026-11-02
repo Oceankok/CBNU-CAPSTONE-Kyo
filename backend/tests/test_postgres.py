@@ -39,6 +39,7 @@ class PostgresIntegrationTests(unittest.TestCase):
             # Recreate the pre-processing baseline, including removal of newer dependants.
             conn.execute('DROP TABLE host_ai_job')
             conn.execute('DROP TABLE host_ai_worker')
+            conn.execute('DROP TABLE processing_inference_session')
             conn.execute('DROP TABLE processing_inference_load')
             conn.execute('DROP TABLE processing_job')
             conn.execute('DROP TABLE processing_worker')

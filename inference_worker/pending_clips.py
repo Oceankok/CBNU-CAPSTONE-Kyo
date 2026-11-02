@@ -10,7 +10,7 @@ class PendingClips:
     def __init__(self):
         self.pending = []
 
-    def add(self, candidate, camera_id):
+    def add(self, candidate, camera_id, event=None):
         start = datetime.fromtimestamp(
             candidate["start_time"], tz=timezone.utc
         )
@@ -22,6 +22,7 @@ class PendingClips:
 
         job = {
             "camera_id": camera_id,
+            "event": event,
             "tracking_id": candidate["tracking_id"],
             "clip_start": clip_start,
             "clip_end": clip_end,

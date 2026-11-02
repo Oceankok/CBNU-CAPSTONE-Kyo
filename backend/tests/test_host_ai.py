@@ -216,6 +216,17 @@ class HostAITests(unittest.TestCase):
         paid.assert_not_called()
 
 
+    def test_camera_session_release_does_not_dispatch_ai_while_peer_busy(self):
+        self.queued()
+        url = '/api/processing/inference-load'
+        for session in ('a'*32, 'b'*32):
+            self.client.put(url, headers=self.node, json={'session_id': session, 'busy': True}).raise_for_status()
+        self.client.put(url, headers=self.node, json={'session_id': 'a'*32, 'busy': False}).raise_for_status()
+        self.assertIsNone(self.client.post('/api/processing/ai/claim', headers=self.node).json()['job'])
+        self.client.put(url, headers=self.node, json={'session_id': 'b'*32, 'busy': False}).raise_for_status()
+        self.assertIsNotNone(self.client.post('/api/processing/ai/claim', headers=self.node).json()['job'])
+
+
 class EquipmentPaidAdapterTests(unittest.TestCase):
     def test_explicit_paid_provider_sends_only_supplied_redacted_image(self):
         from backend.equipment.openai_provider import OpenAIProvider

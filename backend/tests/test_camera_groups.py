@@ -159,3 +159,30 @@ class CameraGroupTests(unittest.TestCase):
             self.assertEqual(schema_version(conn), LATEST_VERSION)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM candidate_event').fetchone()[0], events)
             conn.execute("SELECT role FROM event_clip_request").fetchall()
+
+
+    def test_reference_work_list_permissions_windows_and_ingest_exclusion(self):
+        self.group().raise_for_status()
+        event_id = self.event()
+        url = '/api/processing/reference-clip-requests'
+        self.assertEqual(self.client.get(url).status_code, 401)
+        self.assertEqual(self.client.get(url, headers=self.admin).status_code, 401)
+        items = self.client.get(url, headers=self.node).json()['items']
+        self.assertEqual(len(items), 1)
+        request = items[0]
+        self.assertEqual(request['event_id'], event_id)
+        self.assertEqual(request['camera_id'], 'CAM_002')
+        self.assertEqual(request['clip_start_at'], '2026-10-23T09:59:58+00:00')
+        self.assertEqual(request['clip_end_at'], '2026-10-23T10:00:05+00:00')
+        register_media(event_id, 'CAM_002', 'video', 'reference', request_id=request['request_id'])
+        self.assertEqual(self.client.get(url, headers=self.node).json()['items'], [])
+        response = self.client.put('/api/processing/events/'+event_id+'/clip-requests/'+request['request_id'],
+            headers=self.node, json={'status': 'unavailable', 'error_code': 'collector_timeout'})
+        self.assertEqual(response.status_code, 409)
+
+    def test_reference_work_list_excludes_deleted_events(self):
+        self.group().raise_for_status()
+        event_id = self.event()
+        with get_connection() as conn:
+            conn.execute("UPDATE event_retention SET decision='delete' WHERE event_id=?", (event_id,))
+        self.assertEqual(self.client.get('/api/processing/reference-clip-requests', headers=self.node).json()['items'], [])

@@ -7,7 +7,7 @@ PPE 분석 시스템 초기 FastAPI 서버 파일.
 담당자 검토 결과를 저장하는 최소 API 제공.
 """
 
-from datetime import datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, APIRouter, Depends, Request
@@ -163,16 +163,26 @@ def read_root() -> dict[str, str]:
 
 
 @admin_router.get("/api/events")
-def read_events() -> dict:
+def read_events(date_from: date | None = None, date_to: date | None = None) -> dict:
     """
     후보 이벤트 전체 목록 조회.
     """
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(400, 'invalid_event_date_range')
     events = get_all_candidate_events()
-
-    return {
-        "total": len(events),
-        "items": events,
-    }
+    if date_from or date_to:
+        from backend.event_time import parse
+        filtered = []
+        for event in events:
+            if not event['timestamp_start']:
+                continue
+            # Unknown legacy timezone: use only its recorded calendar date.
+            event_day = date.fromisoformat(event['event_date_local']) if event['event_date_local'] else parse(event['timestamp_start']).date()
+            if (not date_from or event_day >= date_from) and (not date_to or event_day <= date_to):
+                filtered.append(event)
+        events = filtered
+    return {"total": len(events), "items": events,
+            "reporting_timezone": "Asia/Seoul", "legacy_time_policy": "as_recorded"}
 
 
 @admin_router.get("/api/events/{event_id}")
@@ -241,7 +251,7 @@ def create_event_review(event_id: str, request: ReviewRequest, user: dict = Depe
         "reviewer_id": user["user_id"],
         "review_result": request.review_result,
         "review_reason_code": request.review_reason_code,
-        "review_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "review_time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "review_comment": request.review_comment,
         "confirmed_violation": confirmed_violation,
         "second_review_needed": 1 if request.second_review_needed else 0,
@@ -323,7 +333,7 @@ def update_existing_event_review(event_id: str, request: ReviewRequest, user: di
         "reviewer_id": user["user_id"],
         "review_result": request.review_result,
         "review_reason_code": request.review_reason_code,
-        "review_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "review_time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "review_comment": request.review_comment,
         "confirmed_violation": confirmed_violation,
         "second_review_needed": 1 if request.second_review_needed else 0,

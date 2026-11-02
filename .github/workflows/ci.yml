@@ -38,7 +38,9 @@ jobs:
           grep -v '^onnxruntime-gpu' backend/requirements.txt > /tmp/requirements-ci.txt
           pip install -r /tmp/requirements-ci.txt -r video_sender/requirements.txt
       - name: Unit tests
-        run: python -m unittest discover -s backend -t . -v
+        run: |
+          python -m unittest discover -s backend -t . -v
+          python -m unittest discover -s inference_worker -t . -v
 
   postgres:
     runs-on: ubuntu-latest
@@ -67,7 +69,9 @@ jobs:
           cache-dependency-path: backend/requirements-api.txt
       - run: pip install -r backend/requirements-api.txt -r video_sender/requirements.txt
       - name: PostgreSQL regression tests (isolated schemas)
-        run: python -m unittest discover -s backend -t . -v
+        run: |
+          python -m unittest discover -s backend -t . -v
+          python -m unittest discover -s inference_worker -t . -v
 
   integration:
     runs-on: ubuntu-latest

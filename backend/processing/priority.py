@@ -18,3 +18,13 @@ def inference_guard(callback):
         yield
     finally:
         _before_gpu.reset(token)
+
+
+def busy_until(conn):
+    """Aggregate legacy node signals and per-execution signals from active processors."""
+    row = conn.execute("""SELECT MAX(l.busy_until) FROM (
+        SELECT node_id,busy_until FROM processing_inference_load
+        UNION ALL SELECT node_id,busy_until FROM processing_inference_session
+        ) l JOIN processing_worker w ON w.node_id=l.node_id AND w.enabled=1
+        JOIN field_node n ON n.node_id=l.node_id AND n.is_active=1""").fetchone()
+    return row[0] or 0

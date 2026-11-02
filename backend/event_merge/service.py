@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from backend.db.connection import begin_write
+from backend.event_time import local_time_sql
 from backend.db.event_repository import get_connection
 
 
@@ -84,6 +85,6 @@ def merge(target_id, source_ids, expected_version, reason, actor):
         from backend.db.event_repository import _get_quarter_date_range
         for quarter in quarters:
             start, end = _get_quarter_date_range(quarter)
-            count = conn.execute("SELECT COUNT(*) FROM candidate_event WHERE timestamp_start>=? AND timestamp_start<? AND event_status!='merged'", (start, end)).fetchone()[0]
+            count = conn.execute(f"SELECT COUNT(*) FROM candidate_event WHERE {local_time_sql('timestamp_start')}>=? AND {local_time_sql('timestamp_start')}<? AND event_status!='merged'", (start, end)).fetchone()[0]
             conn.execute('UPDATE quarterly_summary SET candidate_count=? WHERE quarter=?', (count, quarter))
         return {'event_id': target_id, **metadata(conn, target_id)}

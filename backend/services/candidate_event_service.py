@@ -1,6 +1,6 @@
 """Create an event and broadcast request before processing its private media."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, Union
 from uuid import uuid4
@@ -27,9 +27,9 @@ def create_no_helmet_candidate_event(
     Processing is synchronous in this first capstone implementation; broadcasting
     has already been queued independently before video conversion starts.
     """
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     event_id = f"EVT_{now:%Y%m%d%H%M%S}_{uuid4().hex[:6]}"
-    start = timestamp_start or now.strftime("%Y-%m-%d %H:%M:%S")
+    start = timestamp_start or now.isoformat(timespec="microseconds")
     insert_candidate_event({
         "event_id": event_id, "camera_id": camera_id,
         "tracking_id": tracking_id or f"TRK_{event_id}", "ppe_type": "helmet",

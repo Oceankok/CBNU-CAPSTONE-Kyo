@@ -178,6 +178,9 @@ def main():
         worker.client.close()
         raise SystemExit('Worker already running or stale worker.lock; verify process before removing lock')
     logging.basicConfig(level=logging.INFO)
+    from backend.runtime_version import local_version
+    startup = local_version()
+    logger.info('Host code revision=%s dirty=%s', startup['revision'], startup['dirty'])
     try:
         while True:
             try:

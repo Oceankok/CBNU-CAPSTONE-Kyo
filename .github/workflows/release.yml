@@ -94,6 +94,8 @@ jobs:
         with:
           context: .
           file: deploy/api.Dockerfile
+          build-args: |
+            PPE_BUILD_REVISION=${{ needs.gate.outputs.commit }}
           push: true
           platforms: linux/amd64
           tags: ${{ needs.gate.outputs.images }}-api:${{ needs.gate.outputs.commit }}

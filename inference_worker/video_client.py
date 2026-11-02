@@ -7,7 +7,7 @@ import httpx
 
 
 class VideoClient:
-    def __init__(self):
+    def __init__(self, *, transport=None):
         self.server_url = os.environ.get(
             "PPE_SERVER_URL", "http://127.0.0.1:8000"
         ).rstrip("/")
@@ -21,7 +21,16 @@ class VideoClient:
             headers={"Authorization": f"Bearer {token}"},
             timeout=20.0,
             follow_redirects=False,
+            transport=transport,
         )
+
+    def get_runtime_version(self):
+        response = self.client.get('/api/processing/runtime-version')
+        response.raise_for_status()
+        result = response.json()
+        if not isinstance(result, dict):
+            raise ValueError('runtime_version_response_invalid')
+        return result
 
     def list_streams(self):
         response = self.client.get("/api/processing/video/streams")
@@ -83,11 +92,11 @@ class VideoClient:
         response.raise_for_status()
         return response.json()
 
-    def report_clip_failure(self, event_id, request_id, error_code):
+    def report_clip_failure(self, event_id, request_id, error_code, *, status='failed'):
         response = self.client.put(
             f"/api/processing/events/{event_id}/clip-requests/{request_id}",
             json={
-                "status": "failed",
+                "status": status,
                 "error_code": error_code,
             },
         )
@@ -95,5 +104,22 @@ class VideoClient:
         return response.json()
 
 
+    def set_inference_load(self, busy, ttl_seconds=30, *, session_id=None):
+        payload = {"busy": busy, "ttl_seconds": ttl_seconds}
+        if session_id is not None:
+            payload['session_id'] = session_id
+        response = self.client.put('/api/processing/inference-load', json=payload)
+        response.raise_for_status()
+        result = response.json()
+        if session_id is not None and result.get('session_id') != session_id:
+            raise RuntimeError('inference_session_unsupported')
+        return result
+
     def close(self):
         self.client.close()
+
+
+    def list_reference_requests(self):
+        response = self.client.get('/api/processing/reference-clip-requests')
+        response.raise_for_status()
+        return response.json()['items']
