@@ -11,6 +11,7 @@ import {
   updateMaterial,
 } from '../api/materials';
 import type { EducationMaterial, GenerationStatus } from '../api/materials';
+import { formatSeoul } from '../time';
 import styles from './EducationMaterialEditor.module.css';
 
 const STATUS_LABEL = {
@@ -149,9 +150,9 @@ export default function EducationMaterialEditor({
               </div>
               <p className={styles.meta}>
                 {m.updated_by} ·{' '}
-                {new Date(m.updated_at).toLocaleString('ko-KR')}
+                {formatSeoul(m.updated_at)}
                 {m.published_at &&
-                  ` · 게시 ${m.published_by} ${new Date(m.published_at).toLocaleString('ko-KR')}`}
+                  ` · 게시 ${m.published_by} ${formatSeoul(m.published_at)}`}
               </p>
               <details className={styles.preview}>
                 <summary>내용 보기</summary>

@@ -14,6 +14,7 @@ import type {
   ReviewRequest,
   ReviewAvailability,
 } from '../types';
+import { formatEventTime, formatSeoul } from '../time';
 import styles from './ReviewDetailPage.module.css';
 
 // Flatten all reason options into a lookup map for display (code → Korean label)
@@ -244,7 +245,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
             </p>
             <p className={styles.headlineSub}>
               {event.zone_name} ·{' '}
-              {new Date(event.timestamp_start).toLocaleString('ko-KR')}
+              {formatEventTime(event.timestamp_start, event.timestamp_timezone)}
             </p>
             <dl className={styles.dl}>
               <dt>AI 신뢰도</dt>
@@ -271,7 +272,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
               <summary>기술 정보</summary>
               <dl className={styles.dl}>
                 <dt>종료 일시</dt>
-                <dd>{new Date(event.timestamp_end).toLocaleString('ko-KR')}</dd>
+                <dd>{formatEventTime(event.timestamp_end, event.timestamp_timezone)}</dd>
                 <dt>카메라 ID</dt>
                 <dd>{event.camera_id}</dd>
                 <dt>샘플 프레임 수</dt>
@@ -304,7 +305,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
                   <Link to={`/review/${m.source_event_id}`}>
                     {m.source_event_id}
                   </Link>{' '}
-                  · {new Date(m.merged_at).toLocaleString('ko-KR')} ·{' '}
+                  · {formatSeoul(m.merged_at)} ·{' '}
                   {m.merged_by}
                   <br />
                   <span className={styles.optional}>{m.reason}</span>
@@ -372,7 +373,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
                   <dd>
                     {existingReview
                       ? existingReview.review_time
-                      : new Date().toLocaleString('ko-KR')}
+                      : formatSeoul(new Date())}
                   </dd>
                 </dl>
               )}
