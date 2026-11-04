@@ -8,6 +8,7 @@ import {
 import type { ConsentRecord } from '../api/consents';
 import ConsentUploadForm from '../components/ConsentUploadForm';
 import ConfirmButton from '../components/ConfirmButton';
+import { formatSeoul } from '../time';
 import styles from './ConsentsPage.module.css';
 
 export default function ConsentsPage() {
@@ -121,7 +122,7 @@ export default function ConsentsPage() {
           </div>
           <p className={styles.scope}>{r.scope_description}</p>
           <p className={styles.meta}>
-            {new Date(r.created_at).toLocaleString('ko-KR')} · 확인{' '}
+            {formatSeoul(r.created_at)} · 확인{' '}
             {r.confirmed_by} · {r.page_count}쪽 ·{' '}
             {(r.byte_size / 1024).toFixed(0)}KB
           </p>
@@ -129,7 +130,7 @@ export default function ConsentsPage() {
           {r.status === 'revoked' && (
             <p className={styles.meta}>
               철회{' '}
-              {r.revoked_at && new Date(r.revoked_at).toLocaleString('ko-KR')} ·{' '}
+              {r.revoked_at && formatSeoul(r.revoked_at)} ·{' '}
               {r.revoked_by} · {r.revocation_reason}
             </p>
           )}
