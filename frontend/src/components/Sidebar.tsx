@@ -17,7 +17,9 @@ const SETTINGS_PATHS = ['/settings', ...SETTINGS_ITEMS.map((i) => i.to)];
 export default function Sidebar({ pendingCount }: { pendingCount: number }) {
   const session = getSession();
   const { pathname } = useLocation();
-  const inSettings = SETTINGS_PATHS.includes(pathname);
+  const inSettings = SETTINGS_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`),
+  );
 
   return (
     <aside className={styles.sidebar}>
