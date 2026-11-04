@@ -50,7 +50,7 @@ class Worker:
                 if journal.get('server') != self.server or journal.get('job_id') != folder.name:
                     continue
                 self.erase_payloads(folder)
-                prefix = '/api/processing/ai/jobs' if journal.get('kind') == 'ai' else '/api/processing/jobs'
+                prefix = {'ai': '/api/processing/ai/jobs', 'snapshot': '/api/processing/snapshots'}.get(journal.get('kind'), '/api/processing/jobs')
                 response = self.client.post(f'{prefix}/{folder.name}/cleanup')
                 if response.status_code == 200:
                     (folder / 'journal.json').unlink()
@@ -152,7 +152,14 @@ class Worker:
         job = response.json()['job']
         if job:
             self.execute(job)
-        elif ai_enabled:
+        else:
+            from backend.work_areas.snapshot_worker import execute as execute_snapshot
+            response = self.client.post('/api/processing/snapshots/claim')
+            response.raise_for_status()
+            job = response.json()['job']
+            if job:
+                execute_snapshot(self, job)
+        if not job and ai_enabled:
             from backend.processing.ai_worker import execute
             response = self.client.post('/api/processing/ai/claim')
             response.raise_for_status()

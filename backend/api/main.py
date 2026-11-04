@@ -519,6 +519,10 @@ from backend.event_merge.routes import router as event_merge_router
 app.include_router(event_merge_router)
 from backend.video.routes import router as video_router
 app.include_router(video_router)
+from backend.work_areas.routes import router as work_areas_router
+from backend.work_areas.snapshot_routes import router as snapshots_router
+app.include_router(work_areas_router)
+app.include_router(snapshots_router)
 
 
 @app.exception_handler(CameraStateError)
