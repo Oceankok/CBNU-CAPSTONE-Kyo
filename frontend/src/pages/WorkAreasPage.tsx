@@ -131,7 +131,16 @@ export default function WorkAreasPage() {
     const timer = window.setTimeout(() => {
       fetchSnapshot(camera_id, snapId)
         .then((s) => !stale && setSnapshot(s))
-        .catch((e: Error) => !stale && setError(errorText(e)));
+        // Turn a failed lookup into a failed snapshot so the button works again
+        .catch(
+          (e: Error) =>
+            !stale &&
+            setSnapshot((cur) =>
+              cur && cur.snapshot_id === snapId
+                ? { ...cur, status: 'failed', error_code: e.message }
+                : cur,
+            ),
+        );
     }, 1500);
     return () => {
       stale = true;
