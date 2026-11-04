@@ -10,6 +10,7 @@ import type { Recognition } from '../api/recognition';
 import type { Camera } from '../api/cameras';
 import type { ZonePpe } from '../types';
 import PpeChips from './PpeChips';
+import { formatSeoul } from '../time';
 import styles from './EquipmentRecognition.module.css';
 
 // Codes from #124; analysis failures come back as 201 + status=failed + error_code
@@ -263,7 +264,7 @@ export default function EquipmentRecognition({
             {rec.evidence_expires_at && (
               <p className={styles.hint}>
                 근거 이미지 보관:{' '}
-                {new Date(rec.evidence_expires_at).toLocaleString('ko-KR')}까지
+                {formatSeoul(rec.evidence_expires_at)}까지
               </p>
             )}
           </div>
@@ -393,7 +394,7 @@ export default function EquipmentRecognition({
                 <button className={styles.linkBtn} onClick={() => open(r)}>
                   {r.candidates[0]?.label ?? '후보 없음'}
                   {r.camera_id ? ` · ${r.camera_id}` : ''} ·{' '}
-                  {new Date(r.created_at).toLocaleString('ko-KR')}
+                  {formatSeoul(r.created_at)}
                 </button>
               </li>
             ))}

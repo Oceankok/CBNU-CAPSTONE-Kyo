@@ -3,8 +3,8 @@ import { useEffect, useState } from 'react';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import { usePendingEvents } from '../hooks/usePendingEvents';
-import { quarterOf } from '../quarters';
 import type { CandidateEvent } from '../types';
+import { seoulQuarterNow } from '../time';
 import styles from './AppLayout.module.css';
 
 export interface LayoutContext {
@@ -14,7 +14,7 @@ export interface LayoutContext {
 }
 
 export default function AppLayout() {
-  const [quarter, setQuarter] = useState(() => quarterOf(new Date()));
+  const [quarter, setQuarter] = useState(() => seoulQuarterNow());
   const { pathname } = useLocation();
   // Path as trigger: re-check after navigating (e.g. returning from a submitted review)
   const { pending, error, newCount, clearNew } = usePendingEvents(pathname);
