@@ -45,13 +45,23 @@ export default function ReviewListPage() {
   // The date range is filtered by the server so it uses Korea calendar days
   const { dateFrom, dateTo } = filters;
   useEffect(() => {
+    // A slower, older request must not overwrite the result of the latest dates
+    let stale = false;
     fetchEvents(dateFrom, dateTo)
       .then((data) => {
+        if (stale) return;
         setEvents(data.items);
         setError(null);
       })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (!stale) setError(e.message);
+      })
+      .finally(() => {
+        if (!stale) setLoading(false);
+      });
+    return () => {
+      stale = true;
+    };
   }, [dateFrom, dateTo]);
 
   const visibleEvents = useMemo(() => sortEvents(applyFilters(events, filters)), [events, filters]);
