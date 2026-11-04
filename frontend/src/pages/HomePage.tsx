@@ -5,6 +5,7 @@ import SummaryCard from '../components/SummaryCard';
 import { fetchStats, calcTrend } from '../api/stats';
 import type { LayoutContext } from '../components/AppLayout';
 import type { QuarterlyStats } from '../types';
+import { formatEventTime } from '../time';
 import styles from './HomePage.module.css';
 
 // Number of pending events previewed on the home screen; the rest are on /review
@@ -77,7 +78,7 @@ export default function HomePage() {
                       </span>
                     </span>
                     <span className={styles.pendingMeta}>
-                      {new Date(event.timestamp_start).toLocaleString('ko-KR', {
+                      {formatEventTime(event.timestamp_start, event.timestamp_timezone, {
                         month: '2-digit',
                         day: '2-digit',
                         hour: '2-digit',

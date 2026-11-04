@@ -102,6 +102,9 @@ export interface CandidateEvent {
   tracking_id: string;
   ppe_type: Exclude<PpeType, 'all'>;
   timestamp_start: string;
+  // null = saved before time zones were stored; shown as recorded (#194)
+  timestamp_timezone?: string | null;
+  event_date_local?: string | null;
   timestamp_end: string;
   duration_sec: number;
   frame_sample_count: number;

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import ConfirmButton from './ConfirmButton';
 import { fetchEvents, mergeEvents } from '../api/events';
 import type { CandidateEvent } from '../types';
+import { formatEventTime } from '../time';
 import styles from './EventMergePanel.module.css';
 
 // Backend 409/422 codes on merge (#171)
@@ -131,7 +132,7 @@ export default function EventMergePanel({
                   {c.event_id}
                   <span className={styles.itemSub}>
                     {c.camera_id} · {c.zone_name} ·{' '}
-                    {new Date(c.timestamp_start).toLocaleString('ko-KR')}
+                    {formatEventTime(c.timestamp_start, c.timestamp_timezone)}
                   </span>
                 </span>
                 <Link
