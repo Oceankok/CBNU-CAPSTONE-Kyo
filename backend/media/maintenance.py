@@ -17,6 +17,8 @@ def maintain_once(stale_after: int = 3600) -> dict:
     expire_jobs()
     from backend.processing.ai_jobs import maintain as maintain_ai
     maintain_ai()
+    from backend.work_areas.snapshots import maintain as maintain_snapshots
+    cleaned_snapshots = maintain_snapshots()
     cutoff = time.time() - stale_after
     with get_connection() as conn:
         begin_write(conn)
@@ -32,7 +34,7 @@ def maintain_once(stale_after: int = 3600) -> dict:
             _request_delete(conn, row["event_id"], "system:retention_expired")
         referenced = {row[0] for row in conn.execute("SELECT storage_path FROM event_media WHERE storage_path!=''")}
         referenced_sources = {row[0] for row in conn.execute("SELECT source_path FROM event_media WHERE source_path!=''")}
-    cleaned = cleaned_video
+    cleaned = cleaned_video + cleaned_snapshots
     if SOURCE_ROOT.exists():
         for source in SOURCE_ROOT.iterdir():
             if source.is_file() and not source.is_symlink() and source.name not in referenced_sources and source.stat().st_mtime < cutoff:

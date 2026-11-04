@@ -132,7 +132,14 @@ def submit_event(body: EventSubmission, response: Response, node: dict = Depends
 @router.get('/cameras/{camera_id}/ppe-policy')
 def read_inference_policy(camera_id: str, node: dict = Depends(processor)):
     from backend.equipment.routes import get_camera_policy
-    return get_camera_policy(camera_id)
+    from backend.work_areas.service import config
+    with get_connection() as conn:
+        area_mode = config(conn, camera_id)['enabled']
+    result = get_camera_policy(camera_id)
+    if area_mode:
+        return {**result, 'configured': False, 'required_ppe': None,
+                'configuration_issues': ['work_area_policy_required']}
+    return result
 
 
 @router.post('/events/{event_id}/clip-requests', status_code=201)
