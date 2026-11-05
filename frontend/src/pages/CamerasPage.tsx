@@ -358,6 +358,14 @@ export default function CamerasPage() {
                       )}
                     </div>
                     <div className={styles.itemActions}>
+                      {!MOCK_AUTH && (
+                        <Link
+                          className={styles.linkBtn}
+                          to={`/cameras/${encodeURIComponent(c.camera_id)}/areas`}
+                        >
+                          작업 영역
+                        </Link>
+                      )}
                       <button
                         className={styles.linkBtn}
                         disabled={busy}
