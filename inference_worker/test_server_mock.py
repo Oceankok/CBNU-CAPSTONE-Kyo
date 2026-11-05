@@ -26,8 +26,11 @@ class FakeVideoClient:
         return [{"stream_id": "TEST_STREAM", "camera_id": "CAM_001", "last_sequence": self.last_sequence}]
 
     def get_ppe_policy(self, camera_id):
-        return {"configured": True, "configuration_issues": [],
-                "required_ppe": ["helmet"], "detectable_ppe": ["helmet"]}
+        return {"configured": True,
+                "scope": "camera",
+                "configuration_issues": [],
+                "required_ppe": ["helmet"],
+                "detectable_ppe": ["helmet"]}
 
     def list_chunks(self, stream_id, after_sequence=-1):
         return [{"chunk_id": str(index), "sequence": index, "duration_ms": 1000,

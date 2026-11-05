@@ -1,4 +1,3 @@
-from backend.db.connection import begin_write
 """Small persistent command queue. No automatic replay of an uncertain broadcast."""
 import hashlib
 import json
@@ -8,6 +7,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from backend.db.connection import begin_write
 from backend.db.event_repository import get_connection, get_broadcast_settings, get_candidate_event_by_id
 from backend.services.warning_broadcast_service import _select_broadcast_message
 
@@ -38,12 +38,18 @@ def enqueue_event_broadcast(event_id):
     if not event:
         raise HTTPException(404, "Event not found")
     settings = get_broadcast_settings()
-    if not settings.get("enabled"):
-        return {"queued": False, "reason": "broadcast_disabled"}
     now = time.time()
-    # Serialize duplicate/cooldown checks with insertion across concurrent requests.
+    # Keep mode checking in the same write transaction as broadcast insertion.
     with get_connection() as conn:
         begin_write(conn)
+        review_only = conn.execute(
+            "SELECT review_only FROM processing_review_only_event WHERE event_id=?",
+            (event_id,),
+        ).fetchone()
+        if review_only is not None and bool(review_only[0]):
+            return {"queued": False, "reason": "review_only_candidate"}
+        if not settings.get("enabled"):
+            return {"queued": False, "reason": "broadcast_disabled"}
         if conn.execute('SELECT 1 FROM event_merge WHERE source_event_id=?', (event_id,)).fetchone():
             return {'queued': False, 'reason': 'event_merged'}
         node = conn.execute("""SELECT n.* FROM field_node n JOIN camera_node c ON c.output_node_id=n.node_id

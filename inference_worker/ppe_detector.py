@@ -2,6 +2,7 @@
 """PPE detection using the trained YOLO model."""
 
 from pathlib import Path
+import hashlib
 
 from ultralytics import YOLO
 
@@ -23,6 +24,10 @@ class PPEDetector:
 
         self.model = YOLO(str(model_path))
         self.confidence = confidence
+        with model_path.open("rb") as weights:
+            digest = hashlib.file_digest(weights, "sha256").hexdigest()
+        self.model_version = "ppe-" + digest[:16]
+        self.supports_no_helmet = {"person", "helmet", "no_helmet"}.issubset(self.model.names.values())
 
     def detect(self, frame):
         results = self.model.predict(
