@@ -8,6 +8,7 @@ Unredacted clips are temporary and removed on success or failure.
 """
 
 import argparse
+import json
 import httpx
 import time
 import tempfile
@@ -21,6 +22,7 @@ from inference_worker.ppe_rules import assess_helmets
 from inference_worker.person_tracker import PersonTracker
 from inference_worker.violation_tracker import ViolationTracker
 from inference_worker.policy import helmet_policy_status
+from inference_worker.work_area_policy import resolve_person_policy
 from inference_worker.time_utils import (
     frame_timestamp,
     is_continuous_chunk,
@@ -158,14 +160,25 @@ def main():
 
             # 2. Check camera PPE policy.
             policy = client.get_ppe_policy(args.camera_id)
-            enabled, reason = helmet_policy_status(policy)
-
-            policy_signature = (
-                policy.get("configured"),
-                tuple(policy.get("required_ppe") or []),
-                tuple(policy.get("detectable_ppe") or []),
-                tuple(policy.get("configuration_issues") or []),
-            )
+            # Work-area policies are evaluated per person, not by camera-wide PPE union.
+            # Invalid ROI configuration must fail closed instead of falling back to camera rules.
+            if not isinstance(policy, dict):
+                enabled, reason = False, "invalid_policy"
+                policy_signature = "invalid_policy"
+            else:
+                work_area_mode = policy.get("scope") == "work_area"
+                if work_area_mode:
+                    enabled = (policy.get("configured") is True
+                               and not policy.get("configuration_issues")
+                               and bool(policy.get("policy_version"))
+                               and isinstance(policy.get("areas"), list)
+                               and isinstance(policy.get("zone_required_ppe"), list)
+                               and isinstance(policy.get("event_supported_ppe"), list))
+                    reason = "work_area_ready" if enabled else "invalid_work_area_policy"
+                else:
+                    enabled, reason = helmet_policy_status(policy)
+                # Covers ROI geometry, membership and rule changes as well as version changes.
+                policy_signature = json.dumps(policy, sort_keys=True, default=str)
 
             if previous_policy != policy_signature:
                 tracker, violations = reset_tracking()
@@ -327,6 +340,40 @@ def main():
                     assessments = tracker.update(
                         assess_helmets(detections)
                     )
+                    # Apply PPE requirements for each person's *current* ROI.
+                    # The ViolationTracker uses policy_scope_key to prevent carrying
+                    # a 3-second observation across area/policy changes.
+                    frame_height, frame_width = frame.shape[:2]
+                    person_policies = {}
+                    for assessment in assessments:
+                        track_id = assessment["tracking_id"]
+                        try:
+                            effective_policy = resolve_person_policy(
+                                policy,
+                                assessment["person_bbox"],
+                                frame_width,
+                                frame_height,
+                            )
+                            person_enabled, _ = helmet_policy_status(effective_policy)
+                        except (ValueError, KeyError, TypeError, IndexError, ZeroDivisionError) as error:
+                            # Malformed or out-of-frame geometry cannot generate a candidate.
+                            print(f"[ROI SKIP] track={track_id} reason={error}")
+                            person_enabled = False
+                            effective_policy = None
+
+                        if not person_enabled:
+                            assessment["status"] = "unknown"
+                            assessment["verified_ppe_confidence"] = None
+                            continue
+
+                        assessment["policy_scope_key"] = (
+                            effective_policy.get("policy_version"),
+                            effective_policy.get("scope"),
+                            tuple(effective_policy.get("area_ids") or []),
+                            tuple(sorted(effective_policy.get("required_ppe") or [])),
+                        )
+                        person_policies[track_id] = effective_policy
+
                     # Start verified observation only after pre-roll exists.
                     # Otherwise a person already present at live startup would
                     # emit one permanently incomplete clip and never re-arm.
@@ -343,6 +390,12 @@ def main():
 
                     # 8. Create local clips and validate candidates.
                     for candidate in candidates:
+                        # Only submit if its track still satisfies the *same* ROI policy.
+                        candidate_policy = person_policies.get(candidate["tracking_id"])
+                        if candidate_policy is None:
+                            blocked_count += 1
+                            print("[ROI BLOCKED] no effective person policy")
+                            continue
                         candidate_count += 1
 
                         print(
@@ -365,7 +418,7 @@ def main():
                         # Check policy and actual negative-class confidence.
                         allowed, reason = validate_candidate(
                             candidate,
-                            policy,
+                            candidate_policy,
                         )
 
                         if args.submit_review_candidates:
