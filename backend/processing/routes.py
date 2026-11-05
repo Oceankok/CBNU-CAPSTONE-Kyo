@@ -113,6 +113,12 @@ def read_job(job_id: str):
         return service.public(service.job(conn, job_id))
 
 
+@router.post('/cleanup-recovery')
+def recover_cleanup(node: dict = Depends(current_node)):
+    # Cleanup remains possible after processing capability is revoked.
+    return service.cleanup_requests(node['node_id'])
+
+
 @router.post('/claim')
 def claim(node: dict = Depends(processor)):
     return service.claim(node['node_id'])

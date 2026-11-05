@@ -60,4 +60,57 @@ const many: Point[] = Array.from({ length: 33 }, (_, i) => [
 ]);
 assert.match(polygonProblem(many) ?? '', /32개/);
 assert.ok(Math.abs(area(square) - 0.25) < 1e-9);
+
+// Match backend/work_areas/geometry.py: reject a redundant collinear corner.
+assert.match(
+  polygonProblem([
+    [0, 0],
+    [0.5, 0],
+    [1, 0],
+    [1, 1],
+    [0, 1],
+  ]) ?? '',
+  /일직선/,
+);
+// Small but nondegenerate shapes are allowed by the API.
+assert.equal(
+  polygonProblem([
+    [0, 0],
+    [0.001, 0],
+    [0, 0.001],
+  ]),
+  null,
+);
+assert.ok(
+  polygonProblem([
+    [0, 0],
+    [0.000001, 0],
+    [0, 0.000001],
+  ]),
+);
+assert.ok(
+  polygonProblem([
+    [0, 0],
+    [1.1, 0],
+    [0, 1],
+  ]),
+);
+assert.ok(
+  polygonProblem([
+    [0, 0],
+    [Number.NaN, 0],
+    [0, 1],
+  ]),
+);
+// Distinct close points are not duplicates; the noncollinear polygon is valid.
+assert.equal(
+  polygonProblem([
+    [0, 0],
+    [5e-10, 0],
+    [1, 1],
+    [0, 1],
+  ]),
+  null,
+);
+
 console.log('polygon ok');
