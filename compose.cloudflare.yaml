@@ -1,0 +1,25 @@
+# Independent connector stack; application releases and data stay in kyo-server.
+name: kyo-tunnel
+services:
+  cloudflared:
+    image: ${KYO_CLOUDFLARED_IMAGE:?Set the verified cloudflare/cloudflared image digest}
+    command: [tunnel, --no-autoupdate, run, --token-file, /run/secrets/tunnel_token]
+    secrets: [tunnel_token]
+    networks: [application]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+secrets:
+  tunnel_token:
+    file: ${KYO_TUNNEL_TOKEN_FILE:?Set an external tunnel token file}
+networks:
+  application:
+    external: true
+    name: ${KYO_TUNNEL_NETWORK:?Set the existing server Compose network}
