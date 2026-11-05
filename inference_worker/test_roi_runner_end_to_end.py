@@ -20,7 +20,17 @@ class ReviewDetector:
     model_version = "fixture-3class"
     supports_no_helmet = False
 
+    def __init__(self):
+        self.frames_seen = 0
+
     def detect(self, frame):
+        self.frames_seen += 1
+
+        # First 2 seconds (8 frames at 4 FPS): no person.
+        # This provides the pre-roll needed before observation starts.
+        if self.frames_seen <= 8:
+            return []
+
         return [{"class_name": "person", "confidence": 0.95,
                  "bbox": [4, 2, 28, 60]}]
 
@@ -47,6 +57,10 @@ class WorkAreaVideoClient(FakeVideoClient):
         }
 
 
+class StopPolicyPolling(Exception):
+    pass
+
+
 class ROIRunnerEndToEndTests(unittest.TestCase):
     def run_case(self, *, required=True, invalid=False):
         client = WorkAreaVideoClient(required=required, invalid=invalid)
@@ -69,13 +83,21 @@ class ROIRunnerEndToEndTests(unittest.TestCase):
                 patch.object(runner, "decode_mp4", side_effect=lambda *a, **k:
                              iter((i, 4.0, frame) for i in range(4))),
                 patch.object(runner, "create_clip", side_effect=make_clip),
-                patch.object(runner.time, "sleep"),
+                patch.object(
+                    runner.time, "sleep",
+                    side_effect=(lambda _: (_ for _ in ()).throw(StopPolicyPolling()))
+                    if invalid else None,
+                ),
                 patch.object(sys, "argv", args),
                 patch.object(runner, "submit_event_with_clip",
                              return_value={"event_id": "EVT_fixture"}) as delivery,
                 redirect_stdout(output),
             ):
-                runner.main()
+                if invalid:
+                    with self.assertRaises(StopPolicyPolling):
+                        runner.main()
+                else:
+                    runner.main()
             self.assertTrue(client.closed)
             for path in clip_paths:
                 self.assertFalse(path.exists(), "Temporary clip must be cleaned up")
