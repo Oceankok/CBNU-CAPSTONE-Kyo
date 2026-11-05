@@ -174,3 +174,76 @@ class VideoClientContractTests(unittest.TestCase):
         ReferenceCollector(self.client).run_once()
         with get_connection() as conn:
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM event_media WHERE request_id=?', (request['request_id'],)).fetchone()[0], 1)
+
+
+    def test_review_only_http_submission_never_broadcasts(self):
+        """3-class candidate: HTTP -> DB, without field broadcast."""
+        event = self.event()
+        event["review_only"] = True
+        event["confidence"] = None
+
+        with patch(
+            "backend.processing.events.enqueue_event_broadcast"
+        ) as broadcast:
+            # First HTTP submission
+            first = self.client.submit_event(event)
+
+            self.assertTrue(first["created"])
+            self.assertTrue(first["review_only"])
+            self.assertFalse(first["broadcast"]["queued"])
+
+            # Retry must remain review-only.
+            second = self.client.submit_event(event)
+
+            self.assertFalse(second["created"])
+            self.assertFalse(second["broadcast"]["queued"])
+
+            # Changing the same event to normal submission is forbidden.
+            changed = {
+                **event,
+                "review_only": False,
+                "confidence": 0.9,
+            }
+
+            with self.assertRaises(httpx.HTTPStatusError) as error:
+                self.client.submit_event(changed)
+
+            self.assertEqual(error.exception.response.status_code, 409)
+
+            # None of the above may request field broadcast.
+            broadcast.assert_not_called()
+
+        with get_connection() as conn:
+            saved = conn.execute(
+                "SELECT event_status FROM candidate_event WHERE event_id=?",
+                (event["event_id"],),
+            ).fetchone()
+
+            mode = conn.execute(
+                """
+                SELECT review_only
+                FROM processing_review_only_event
+                WHERE event_id=?
+                """,
+                (event["event_id"],),
+            ).fetchone()
+
+        self.assertIsNotNone(saved)
+        self.assertEqual(saved["event_status"], "pending")
+        self.assertIsNotNone(mode)
+        self.assertEqual(mode["review_only"], 1)
+
+        with get_connection() as conn:
+            event_count = conn.execute(
+                "SELECT COUNT(*) FROM candidate_event WHERE event_id=?",
+                (event["event_id"],),
+            ).fetchone()[0]
+            clip_request_count = conn.execute(
+                "SELECT COUNT(*) FROM event_clip_request WHERE event_id=?",
+                (event["event_id"],),
+            ).fetchone()[0]
+        self.assertEqual(event_count, 1)
+        self.assertEqual(clip_request_count, 1)
+
+
+

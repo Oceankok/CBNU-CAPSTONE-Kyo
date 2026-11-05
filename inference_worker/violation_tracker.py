@@ -1,5 +1,8 @@
-
 """Track consecutive suspected PPE violations over time."""
+
+from math import isfinite
+
+from inference_worker.event_validation import valid_ppe_confidence
 
 
 class ViolationTracker:
@@ -21,15 +24,49 @@ class ViolationTracker:
                 continue
 
             state = self.states.get(track_id)
+            scope_key = person.get("policy_scope_key")
 
-            if state is None:
-                state = {"start": timestamp, "reported": False}
+            # A changed ROI membership/policy version starts a new observation.
+            # Never carry a prior region's timer or report flag into a new region.
+            if state is not None and state.get("policy_scope_key") != scope_key:
+                self.states.pop(track_id, None)
+                state = None
+
+            score = person.get("verified_ppe_confidence")
+            verified = valid_ppe_confidence(score)
+            if not isfinite(timestamp):
+                self.states.pop(track_id, None)
+                continue
+
+            if (state is None or state["verified"] != verified
+                    or timestamp < state["last"]
+                    or (verified and timestamp - state["last"] > 0.5)):
+                alerted = bool(state and state["verified_reported"])
+                state = {
+                    "start": timestamp,
+                    "last": timestamp,
+                    "reported": alerted,
+                    "verified_reported": alerted,
+                    "verified": verified,
+                    "minimum_confidence": score if verified else None,
+                    "samples": 0,
+                    "policy_scope_key": scope_key,
+                }
                 self.states[track_id] = state
+
+            if state["samples"] and timestamp == state["last"]:
+                continue
+            state["last"] = timestamp
+            state["samples"] += 1
+            if verified:
+                state["minimum_confidence"] = min(state["minimum_confidence"], score)
 
             elapsed = timestamp - state["start"]
 
             if elapsed >= self.threshold_seconds and not state["reported"]:
                 state["reported"] = True
+                if verified:
+                    state["verified_reported"] = True
 
                 candidates.append({
                     "tracking_id": track_id,
@@ -37,7 +74,9 @@ class ViolationTracker:
                     "start_time": state["start"],
                     "end_time": timestamp,
                     "duration_seconds": elapsed,
-                    "confidence": person["person_confidence"],
+                    "person_confidence": person["person_confidence"],
+                    "verified_ppe_confidence": state["minimum_confidence"],
+                    "frame_sample_count": state["samples"],
                 })
 
         # A missing person breaks the observed violation streak.
