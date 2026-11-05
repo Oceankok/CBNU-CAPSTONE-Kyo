@@ -42,6 +42,9 @@ class Worker:
                 item.unlink()
 
     def recover_cleanup(self):
+        # Only completed/expired claims owned by this node are returned. A lost
+        # claim response leaves no local journal, so disk enumeration is not enough.
+        pending = {}
         for folder in self.root.iterdir():
             if not folder.is_dir() or folder.is_symlink() or not re.fullmatch(r'[0-9a-f-]{36}', folder.name):
                 continue
@@ -50,10 +53,30 @@ class Worker:
                 if journal.get('server') != self.server or journal.get('job_id') != folder.name:
                     continue
                 self.erase_payloads(folder)
-                prefix = {'ai': '/api/processing/ai/jobs', 'snapshot': '/api/processing/snapshots'}.get(journal.get('kind'), '/api/processing/jobs')
-                response = self.client.post(f'{prefix}/{folder.name}/cleanup')
-                if response.status_code == 200:
-                    (folder / 'journal.json').unlink()
+                pending.setdefault(folder.name, journal.get('kind', 'media'))
+            except (OSError, ValueError):
+                logger.warning('Worker cleanup deferred; will retry')
+        try:
+            response = self.client.post('/api/processing/cleanup-recovery')
+            response.raise_for_status()
+            for item in response.json()['items']:
+                if item.get('kind') not in {'media', 'snapshot', 'ai'} or not re.fullmatch(r'[0-9a-f-]{36}', item.get('job_id', '')):
+                    raise ValueError('Invalid cleanup recovery item')
+                pending[item['job_id']] = item['kind']
+        except httpx.HTTPError:
+            logger.warning('Server cleanup reconciliation deferred; will retry')
+        for ident, kind in pending.items():
+            folder = self.root / ident
+            try:
+                if folder.is_symlink() or folder.resolve().parent != self.root:
+                    raise ValueError('Unsafe worker folder')
+                if folder.exists():
+                    self.erase_payloads(folder)
+                prefix = {'ai': '/api/processing/ai/jobs', 'snapshot': '/api/processing/snapshots'}.get(kind, '/api/processing/jobs')
+                response = self.client.post(f'{prefix}/{ident}/cleanup')
+                response.raise_for_status()
+                if folder.exists():
+                    (folder / 'journal.json').unlink(missing_ok=True)
                     folder.rmdir()
             except (OSError, ValueError, httpx.HTTPError):
                 logger.warning('Worker cleanup deferred; will retry')
