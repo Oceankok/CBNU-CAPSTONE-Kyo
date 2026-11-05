@@ -21,6 +21,7 @@ import {
   openConsentFile,
 } from '../api/consents';
 import type { ConsentRecord } from '../api/consents';
+import { formatSeoul } from '../time';
 import styles from './EventMediaPanel.module.css';
 
 const STATUS: Record<EventMedia['status'], string> = {
@@ -486,9 +487,7 @@ export default function EventMediaPanel({
                 {item.source_expires_at != null && item.can_reprocess && (
                   <p className={styles.muted}>
                     원본 재처리 기한:{' '}
-                    {new Date(item.source_expires_at * 1000).toLocaleString(
-                      'ko-KR',
-                    )}
+                    {formatSeoul(item.source_expires_at, {}, true)}
                   </p>
                 )}
                 {item.error_code && (

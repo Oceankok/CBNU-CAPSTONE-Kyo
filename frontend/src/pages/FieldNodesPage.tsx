@@ -13,6 +13,7 @@ import {
 import { fetchCameras } from '../api/cameras';
 import type { Camera } from '../api/cameras';
 import type { FieldCommand, FieldNode, NodeVoices } from '../types';
+import { formatSeoul } from '../time';
 import styles from './FieldNodesPage.module.css';
 
 const POLL_MS = 10_000; // server marks a node offline after 30s without heartbeat
@@ -67,7 +68,7 @@ function ago(unixSec: number | null): string {
   const s = Math.max(0, Math.round(Date.now() / 1000 - unixSec));
   if (s < 60) return `${s}초 전`;
   if (s < 3600) return `${Math.floor(s / 60)}분 전`;
-  return new Date(unixSec * 1000).toLocaleString('ko-KR');
+  return formatSeoul(unixSec, {}, true);
 }
 
 export default function FieldNodesPage() {

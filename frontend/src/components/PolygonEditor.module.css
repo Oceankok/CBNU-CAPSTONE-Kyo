@@ -1,0 +1,32 @@
+.wrap {
+  position: relative;
+  width: 100%;
+  background: #1a202c;
+  border-radius: 6px;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.editing {
+  cursor: crosshair;
+}
+
+.handle {
+  cursor: grab;
+}

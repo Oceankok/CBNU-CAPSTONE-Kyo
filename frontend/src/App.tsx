@@ -25,6 +25,7 @@ const FieldNodesPage = lazy(() => import('./pages/FieldNodesPage'));
 const EquipmentPage = lazy(() => import('./pages/EquipmentPage'));
 const CamerasPage = lazy(() => import('./pages/CamerasPage'));
 const ConsentsPage = lazy(() => import('./pages/ConsentsPage'));
+const WorkAreasPage = lazy(() => import('./pages/WorkAreasPage'));
 const WorkerHomePage = lazy(() => import('./pages/WorkerHomePage'));
 
 // Route guard: no session → /login, wrong role → that role's home.
@@ -62,6 +63,7 @@ export default function App() {
               <Route path="nodes" element={<FieldNodesPage />} />
               <Route path="equipment" element={<EquipmentPage />} />
               <Route path="cameras" element={<CamerasPage />} />
+              <Route path="cameras/:camera_id/areas" element={<WorkAreasPage />} />
               <Route path="consents" element={<ConsentsPage />} />
             </Route>
           </Route>

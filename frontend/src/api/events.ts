@@ -21,8 +21,16 @@ export interface EventDetailResponse {
   review_history?: EventReviewHistory[];
 }
 
-export function fetchEvents(): Promise<EventListResponse> {
-  return apiFetch<EventListResponse>('/api/events');
+// Dates are YYYY-MM-DD in Korea time, both ends inclusive (filtered on the server, #194)
+export function fetchEvents(
+  dateFrom?: string,
+  dateTo?: string,
+): Promise<EventListResponse> {
+  const q = new URLSearchParams();
+  if (dateFrom) q.set('date_from', dateFrom);
+  if (dateTo) q.set('date_to', dateTo);
+  const qs = q.toString();
+  return apiFetch<EventListResponse>(`/api/events${qs ? `?${qs}` : ''}`);
 }
 
 export interface MergeRequest {

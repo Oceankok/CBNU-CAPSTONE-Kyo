@@ -4,6 +4,7 @@ import FilterBar from '../components/FilterBar';
 import StatusBadge from '../components/StatusBadge';
 import { fetchEvents } from '../api/events';
 import type { FilterState, CandidateEvent } from '../types';
+import { formatEventTime } from '../time';
 import styles from './ReviewListPage.module.css';
 
 const DEFAULT_FILTERS: FilterState = {
@@ -29,8 +30,6 @@ function applyFilters(events: CandidateEvent[], f: FilterState): CandidateEvent[
     if (f.ppeType !== 'all' && e.ppe_type !== f.ppeType) return false;
     if (f.status !== 'all' && e.event_status !== f.status) return false;
     if (f.zone.length > 0 && !f.zone.includes(e.zone_name)) return false;
-    if (f.dateFrom && e.timestamp_start < f.dateFrom) return false;
-    if (f.dateTo && e.timestamp_start > f.dateTo + 'T23:59:59') return false;
     if (e.ai_confidence < f.minConfidence) return false;
     return true;
   });
@@ -43,12 +42,27 @@ export default function ReviewListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // The date range is filtered by the server so it uses Korea calendar days
+  const { dateFrom, dateTo } = filters;
   useEffect(() => {
-    fetchEvents()
-      .then((data) => setEvents(data.items))
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+    // A slower, older request must not overwrite the result of the latest dates
+    let stale = false;
+    fetchEvents(dateFrom, dateTo)
+      .then((data) => {
+        if (stale) return;
+        setEvents(data.items);
+        setError(null);
+      })
+      .catch((e) => {
+        if (!stale) setError(e.message);
+      })
+      .finally(() => {
+        if (!stale) setLoading(false);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [dateFrom, dateTo]);
 
   const visibleEvents = useMemo(() => sortEvents(applyFilters(events, filters)), [events, filters]);
   const pendingCount = events.filter((e) => e.event_status === 'pending').length;
@@ -98,7 +112,7 @@ export default function ReviewListPage() {
                   onClick={() => navigate(`/review/${event.event_id}`)}
                 >
                   <td className={styles.eventId}>{event.event_id}</td>
-                  <td data-label="발생 일시">{new Date(event.timestamp_start).toLocaleString('ko-KR')}</td>
+                  <td data-label="발생 일시">{formatEventTime(event.timestamp_start, event.timestamp_timezone)}</td>
                   <td data-label="구역">{event.zone_name}</td>
                   <td data-label="PPE 유형">
                     <span className={`${styles.ppeTag} ${styles[event.ppe_type]}`}>
