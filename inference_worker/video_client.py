@@ -54,9 +54,12 @@ class VideoClient:
     
     
     def get_ppe_policy(self, camera_id):
-        """Fetch the configured PPE policy for a camera."""
+        """Fetch area-aware rules, including camera-wide rules when ROI is off.
+
+        Do not fall back to the legacy union: it cannot evaluate work areas.
+        """
         response = self.client.get(
-            f"/api/processing/cameras/{camera_id}/ppe-policy"
+            f"/api/processing/cameras/{camera_id}/work-area-policy"
         )
         response.raise_for_status()
         return response.json()
