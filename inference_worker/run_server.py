@@ -2,16 +2,19 @@
 """Read server video chunks and analyze PPE violation candidates.
 
 Event delivery is disabled by default; inference priority is still reported.
---submit-events enables qualified event/clip delivery.
+--submit-events enables verified event/clip delivery (may broadcast).
+--submit-review-candidates sends 3-class suspected cases for human review only.
 Unredacted clips are temporary and removed on success or failure.
 """
 
 import argparse
+import json
 import httpx
 import time
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from inference_worker.video_client import VideoClient
 from inference_worker.video_decoder import decode_mp4
@@ -19,6 +22,7 @@ from inference_worker.ppe_rules import assess_helmets
 from inference_worker.person_tracker import PersonTracker
 from inference_worker.violation_tracker import ViolationTracker
 from inference_worker.policy import helmet_policy_status
+from inference_worker.work_area_policy import resolve_person_policy
 from inference_worker.time_utils import (
     frame_timestamp,
     is_continuous_chunk,
@@ -26,17 +30,33 @@ from inference_worker.time_utils import (
 from inference_worker.event_builder import build_event
 from inference_worker.event_validation import validate_candidate
 from inference_worker.clip_buffer import ClipBuffer
-from inference_worker.clip_manager import create_clip
+from inference_worker.clip_manager import create_clip, calculate_clip_window
 from inference_worker.pending_clips import PendingClips
 from inference_worker.event_pipeline import ClipDeliveryError, submit_event_with_clip
 from inference_worker.inference_load import InferenceLoad
 from backend.runtime_version import local_version
 
 
-def create_detector():
+def create_detector(model_path=None):
     # Offline contract tests do not import Ultralytics or load weights.
     from inference_worker.ppe_detector import PPEDetector
-    return PPEDetector()
+    return PPEDetector(model_path=model_path) if model_path is not None else PPEDetector()
+
+
+def build_review_candidate_event(candidate, *, camera_id, start_time, end_time, model_version):
+    """Produce metadata for human review, never verified no-helmet evidence."""
+    return {
+        "event_id": "EVT_" + uuid4().hex,
+        "camera_id": camera_id,
+        "tracking_id": str(candidate["tracking_id"]),
+        "ppe_type": "helmet",
+        "timestamp_start": start_time.isoformat(timespec="microseconds"),
+        "timestamp_end": end_time.isoformat(timespec="microseconds"),
+        "confidence": None,
+        "frame_sample_count": candidate["frame_sample_count"],
+        "model_version": model_version,
+        "review_only": True,
+    }
 
 
 def main():
@@ -44,16 +64,22 @@ def main():
     parser.add_argument("--buffer-mib", type=int, default=256,
                         help="Maximum retained raw frame MiB per camera (default: 256)")
     parser.add_argument("--camera-id", required=True)
+    parser.add_argument("--model-path", type=Path,
+                        help="Explicit local PPE weights; no model is downloaded")
     parser.add_argument("--poll", type=float, default=1.0)
     parser.add_argument("--max-chunks", type=int, default=5)
     parser.add_argument("--submit-events", action="store_true",
                         help="Send qualified events; can trigger field broadcasts")
+    parser.add_argument("--submit-review-candidates", action="store_true",
+                        help="Submit 3-class suspected cases for manual review; no broadcast")
     parser.add_argument("--replay-buffer", action="store_true",
                         help="Analyze existing buffered chunks for inspection only; cannot submit events")
     args = parser.parse_args()
 
-    if args.replay_buffer and args.submit_events:
-        parser.error("--replay-buffer cannot be combined with --submit-events")
+    if args.submit_events and args.submit_review_candidates:
+        parser.error("--submit-events and --submit-review-candidates are mutually exclusive")
+    if args.replay_buffer and (args.submit_events or args.submit_review_candidates):
+        parser.error("--replay-buffer cannot be combined with submission modes")
 
     if args.poll <= 0 or args.max_chunks <= 0:
         parser.error("--poll and --max-chunks must be positive")
@@ -65,7 +91,14 @@ def main():
         return ClipBuffer(retention_seconds=30.0, max_bytes=args.buffer_mib*1024*1024)
 
     # Initialize YOLO and API client.
-    detector = create_detector()
+    detector = create_detector(args.model_path) if args.model_path is not None else create_detector()
+    if hasattr(detector, "model_version"):
+        print(f"[MODEL] version={detector.model_version} no_helmet={detector.supports_no_helmet}")
+    if args.submit_events and getattr(detector, "supports_no_helmet", None) is False:
+        parser.error("Event submission requires person/helmet/no_helmet classes; "
+                     "select verified local weights with --model-path")
+    if args.submit_review_candidates and getattr(detector, "supports_no_helmet", None) is not False:
+        parser.error("Review-only mode requires an identified 3-class model (no no_helmet class)")
     client = VideoClient()
     priority = InferenceLoad(client)
     clips = tempfile.TemporaryDirectory(prefix="ppe_inference_")
@@ -127,14 +160,25 @@ def main():
 
             # 2. Check camera PPE policy.
             policy = client.get_ppe_policy(args.camera_id)
-            enabled, reason = helmet_policy_status(policy)
-
-            policy_signature = (
-                policy.get("configured"),
-                tuple(policy.get("required_ppe") or []),
-                tuple(policy.get("detectable_ppe") or []),
-                tuple(policy.get("configuration_issues") or []),
-            )
+            # Work-area policies are evaluated per person, not by camera-wide PPE union.
+            # Invalid ROI configuration must fail closed instead of falling back to camera rules.
+            if not isinstance(policy, dict):
+                enabled, reason = False, "invalid_policy"
+                policy_signature = "invalid_policy"
+            else:
+                work_area_mode = policy.get("scope") == "work_area"
+                if work_area_mode:
+                    enabled = (policy.get("configured") is True
+                               and not policy.get("configuration_issues")
+                               and bool(policy.get("policy_version"))
+                               and isinstance(policy.get("areas"), list)
+                               and isinstance(policy.get("zone_required_ppe"), list)
+                               and isinstance(policy.get("event_supported_ppe"), list))
+                    reason = "work_area_ready" if enabled else "invalid_work_area_policy"
+                else:
+                    enabled, reason = helmet_policy_status(policy)
+                # Covers ROI geometry, membership and rule changes as well as version changes.
+                policy_signature = json.dumps(policy, sort_keys=True, default=str)
 
             if previous_policy != policy_signature:
                 tracker, violations = reset_tracking()
@@ -275,10 +319,11 @@ def main():
                         )
                         local_clip_count += 1
                         try:
-                            if args.submit_events:
+                            if (args.submit_events or args.submit_review_candidates) and job.get("event"):
                                 priority.release()
                                 result = submit_event_with_clip(client, job["event"], clip_path)
-                                print(f"[EVENT DELIVERED] {result['event_id']}")
+                                label = "REVIEW CANDIDATE DELIVERED" if job["event"].get("review_only") else "EVENT DELIVERED"
+                                print(f"[{label}] {result['event_id']}")
                             else:
                                 print("[LOCAL CLIP READY] temporary clip validated")
                         except ClipDeliveryError as error:
@@ -295,6 +340,47 @@ def main():
                     assessments = tracker.update(
                         assess_helmets(detections)
                     )
+                    # Apply PPE requirements for each person's *current* ROI.
+                    # The ViolationTracker uses policy_scope_key to prevent carrying
+                    # a 3-second observation across area/policy changes.
+                    frame_height, frame_width = frame.shape[:2]
+                    person_policies = {}
+                    for assessment in assessments:
+                        track_id = assessment["tracking_id"]
+                        try:
+                            effective_policy = resolve_person_policy(
+                                policy,
+                                assessment["person_bbox"],
+                                frame_width,
+                                frame_height,
+                            )
+                            person_enabled, _ = helmet_policy_status(effective_policy)
+                        except (ValueError, KeyError, TypeError, IndexError, ZeroDivisionError) as error:
+                            # Malformed or out-of-frame geometry cannot generate a candidate.
+                            print(f"[ROI SKIP] track={track_id} reason={error}")
+                            person_enabled = False
+                            effective_policy = None
+
+                        if not person_enabled:
+                            assessment["status"] = "unknown"
+                            assessment["verified_ppe_confidence"] = None
+                            continue
+
+                        assessment["policy_scope_key"] = (
+                            effective_policy.get("policy_version"),
+                            effective_policy.get("scope"),
+                            tuple(effective_policy.get("area_ids") or []),
+                            tuple(sorted(effective_policy.get("required_ppe") or [])),
+                        )
+                        person_policies[track_id] = effective_policy
+
+                    # Start verified observation only after pre-roll exists.
+                    # Otherwise a person already present at live startup would
+                    # emit one permanently incomplete clip and never re-arm.
+                    pre_roll_start, _ = calculate_clip_window(timestamp, timestamp)
+                    if clip_buffer.frames[0][0] > pre_roll_start:
+                        for assessment in assessments:
+                            assessment["verified_ppe_confidence"] = None
 
                     # Detect sustained suspected violations.
                     candidates = violations.update(
@@ -304,6 +390,12 @@ def main():
 
                     # 8. Create local clips and validate candidates.
                     for candidate in candidates:
+                        # Only submit if its track still satisfies the *same* ROI policy.
+                        candidate_policy = person_policies.get(candidate["tracking_id"])
+                        if candidate_policy is None:
+                            blocked_count += 1
+                            print("[ROI BLOCKED] no effective person policy")
+                            continue
                         candidate_count += 1
 
                         print(
@@ -323,11 +415,34 @@ def main():
                             tz=timezone.utc,
                         )
 
-                        # Check policy and PPE confidence.
+                        # Check policy and actual negative-class confidence.
                         allowed, reason = validate_candidate(
                             candidate,
-                            policy,
+                            candidate_policy,
                         )
+
+                        if args.submit_review_candidates:
+                            # The three-class detector cannot prove non-compliance.
+                            # Keep it explicitly review-only, with no fabricated confidence.
+                            # The policy was checked above; preserve the existing
+                            # continuous observation and complete-clip requirements.
+                            pre_roll_start, _ = calculate_clip_window(start_time, end_time)
+                            if (not clip_buffer.frames or
+                                    clip_buffer.frames[0][0] > pre_roll_start):
+                                blocked_count += 1
+                                print("[REVIEW BLOCKED] pre-roll unavailable")
+                                continue
+                            event = build_review_candidate_event(
+                                candidate,
+                                camera_id=args.camera_id,
+                                start_time=start_time,
+                                end_time=end_time,
+                                model_version=getattr(detector, "model_version", "helmet-3class-review"),
+                            )
+                            ready_count += 1
+                            pending_clips.add(candidate, args.camera_id, event=event)
+                            print(f"[REVIEW CANDIDATE READY] {event['event_id']}")
+                            continue
 
                         if not allowed:
                             blocked_count += 1
@@ -338,8 +453,8 @@ def main():
                                 pending_clips.add(candidate, args.camera_id)
                             continue
 
-                        # Only externally verified PPE confidence
-                        # may be used for event submission.
+                        # Use the minimum no_helmet score across the sustained
+                        # observation, never person confidence or helmet absence.
                         verified_confidence = candidate[
                             "verified_ppe_confidence"
                         ]
@@ -350,12 +465,9 @@ def main():
                             start_time=start_time,
                             end_time=end_time,
                             confidence=verified_confidence,
-                            frame_sample_count=max(
-                                1,
-                                round(
-                                    candidate["duration_seconds"] * fps
-                                ),
-                            ),
+                            frame_sample_count=candidate.get("frame_sample_count", max(
+                                1, round(candidate["duration_seconds"] * fps))),
+                            model_version=getattr(detector, "model_version", "helmet-yolov8n-v1"),
                         )
 
                         ready_count += 1

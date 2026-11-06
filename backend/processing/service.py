@@ -104,6 +104,22 @@ def claim(node_id):
     return {'job': None}
 
 
+def cleanup_requests(node_id):
+    """Reconcile committed claims whose response never reached the owner."""
+    expire_jobs()
+    with get_connection() as conn:
+        rows = conn.execute("""SELECT job_id, 'media' AS kind FROM processing_job
+            WHERE worker_node_id=? AND local_cleanup_status='pending' AND status NOT IN ('queued','running')
+            UNION ALL SELECT snapshot_id AS job_id, 'snapshot' AS kind FROM camera_snapshot
+            WHERE worker_node_id=? AND local_cleanup_status='pending'
+            AND (status IN ('ready','failed','expired') OR (status='running' AND (lease_until<=? OR expires_at<=?)))
+            UNION ALL SELECT job_id, 'ai' AS kind FROM host_ai_job
+            WHERE worker_node_id=? AND cleanup_pending=1
+            AND (status NOT IN ('queued','running') OR deadline<=?)
+            ORDER BY kind,job_id LIMIT 100""", (node_id, node_id, time.time(), time.time(), node_id, time.time())).fetchall()
+    return {'items': [dict(row) for row in rows]}
+
+
 def renew(job_id, node_id, token):
     with get_connection() as conn:
         begin_write(conn)

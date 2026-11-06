@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-LATEST_VERSION = 17
+LATEST_VERSION = 18
 
 
 def _now() -> str:
@@ -344,6 +344,19 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
                 if statement.strip():
                     conn.execute(statement)
             conn.execute('PRAGMA user_version=17')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 18:
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            conn.execute("""CREATE TABLE IF NOT EXISTS processing_review_only_event (
+                event_id TEXT PRIMARY KEY REFERENCES candidate_event(event_id) ON DELETE CASCADE,
+                review_only INTEGER NOT NULL CHECK(review_only IN (0, 1))
+            )""")
+            conn.execute('PRAGMA user_version=18')
             conn.commit()
         except Exception:
             conn.rollback()
