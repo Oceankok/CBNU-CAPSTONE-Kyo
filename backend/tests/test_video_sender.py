@@ -3,12 +3,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
+from email.utils import format_datetime
 
 import requests
 
 from backend.db.event_repository import get_connection
 from backend.tests.support import isolated_api, login
 from video_sender import live_sender
+from backend.video import service
 
 
 class VideoSenderDeliveryTests(unittest.TestCase):
@@ -39,6 +41,7 @@ class VideoSenderDeliveryTests(unittest.TestCase):
                 return self.client.post(url, headers=headers, params=params, content=content)
             return self.client.post(url, headers=headers, json=json)
 
+        self.post_bridge = post
         self.enterContext(patch.object(live_sender.requests, 'post', side_effect=post))
         self.enterContext(patch.object(live_sender, 'get_video_duration_ms', return_value=1000))
         # End after one pass (or the first reconnect wait); no camera/FFmpeg process starts.
@@ -70,3 +73,99 @@ class VideoSenderDeliveryTests(unittest.TestCase):
         self.assertTrue(self.writing.exists())
         with get_connection() as conn:
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM video_chunk').fetchone()[0], 0)
+
+    def limited_post(self, url, **kwargs):
+        if kwargs.get('data') is None:
+            return self.post_bridge(url, **kwargs)
+        self.attempts.append((url, kwargs['params'].copy(), kwargs['headers']['X-Capture-Start']))
+        if len(self.attempts) == 1:
+            with patch.object(service, 'TOTAL_BYTES', 1):
+                actual = self.post_bridge(url, **kwargs)
+            self.assertEqual(actual.status_code, 429)
+            response = requests.Response()
+            response.status_code = actual.status_code
+            response._content = actual.content
+            response.headers['Retry-After'] = '2'
+            response.url = url
+            return response
+        return self.post_bridge(url, **kwargs)
+
+    def test_backpressure_retries_same_stream_and_payload_before_cleanup(self):
+        self.attempts = []
+        sleeps = []
+        def sleep(delay):
+            sleeps.append(delay)
+            if len(sleeps) == 1:
+                self.assertEqual(delay, 2)
+                self.assertTrue(self.completed.exists())
+                self.assertTrue(self.completed.with_suffix('.txt').exists())
+                with get_connection() as conn:
+                    self.assertEqual(conn.execute('SELECT COUNT(*) FROM video_chunk').fetchone()[0], 0)
+            if not self.completed.exists():
+                raise KeyboardInterrupt
+        with patch.object(live_sender.requests, 'post', side_effect=self.limited_post), \
+             patch.object(live_sender.time, 'sleep', side_effect=sleep):
+            live_sender.watch_and_send()
+        self.assertEqual(len(self.attempts), 2)
+        self.assertEqual(self.attempts[0], self.attempts[1])
+        self.assertEqual(self.uploads, [self.data, self.data])
+        self.assertFalse(self.completed.exists())
+        self.assertTrue(self.writing.exists())
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM video_stream').fetchone()[0], 1)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM video_chunk').fetchone()[0], 1)
+
+    def test_chunk_expiring_during_backpressure_is_not_reuploaded(self):
+        self.attempts = []
+        def sleep(delay):
+            if delay == 2:
+                self.completed.with_suffix('.txt').write_text(
+                    (datetime.now(timezone.utc)-timedelta(seconds=46)).isoformat(), encoding='utf-8')
+            if not self.completed.exists():
+                raise KeyboardInterrupt
+        with patch.object(live_sender.requests, 'post', side_effect=self.limited_post), \
+             patch.object(live_sender.time, 'sleep', side_effect=sleep):
+            live_sender.watch_and_send()
+        self.assertEqual(len(self.attempts), 1)
+        self.assertFalse(self.completed.exists())
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM video_stream').fetchone()[0], 1)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM video_chunk').fetchone()[0], 0)
+
+    def test_interrupting_backpressure_wait_keeps_unsent_chunk(self):
+        self.attempts = []
+        with patch.object(live_sender.requests, 'post', side_effect=self.limited_post):
+            live_sender.watch_and_send()
+        self.assertTrue(self.completed.exists())
+        self.assertTrue(self.completed.with_suffix('.txt').exists())
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM video_stream').fetchone()[0], 1)
+
+
+class BackpressureHeaderTests(unittest.TestCase):
+    def response(self, value):
+        response = requests.Response()
+        response.status_code = 429
+        response.headers['Retry-After'] = value
+        return response
+
+    def test_retry_after_seconds_and_malformed_values(self):
+        self.assertEqual(live_sender.backpressure_delay(self.response('3')), 3)
+        for value in ['', 'bad', '-1', '0', 'NaN', 'inf']:
+            with self.subTest(value=value):
+                self.assertEqual(live_sender.backpressure_delay(self.response(value)), 1)
+
+    def test_retry_after_http_date(self):
+        now = datetime(2026, 11, 6, tzinfo=timezone.utc)
+        with patch.object(live_sender, 'datetime') as clock:
+            clock.now.return_value = now
+            response = self.response(format_datetime(now+timedelta(seconds=5), usegmt=True))
+            self.assertEqual(live_sender.backpressure_delay(response), 5)
+
+    def test_only_short_error_codes_are_logged(self):
+        response = self.response('1')
+        for data, expected in [(b'{"detail":"video_buffer_full"}', 'video_buffer_full'),
+                               (b'<html>blocked</html>', 'rate_limited'),
+                               (b'{"detail":"Bearer secret-like-value"}', 'rate_limited')]:
+            response._content = data
+            self.assertEqual(live_sender.backpressure_reason(response), expected)
