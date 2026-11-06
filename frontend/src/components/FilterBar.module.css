@@ -101,3 +101,8 @@
 .advanced[open] {
   flex-basis: 100%;
 }
+
+.sliderNote {
+  font-size: 11px;
+  color: #a0aec0;
+}

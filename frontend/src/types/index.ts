@@ -110,7 +110,9 @@ export interface CandidateEvent {
   frame_sample_count: number;
   thumbnail_path: string;
   video_clip_path: string;
-  ai_confidence: number;
+  // null when the model could not confirm the violation (review-only, #206/#208)
+  ai_confidence: number | null;
+  review_only?: boolean;
   person_detected: boolean;
   ppe_detected: boolean;
   model_version: string;

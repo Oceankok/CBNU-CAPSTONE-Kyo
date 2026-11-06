@@ -110,6 +110,11 @@ export default function FilterBar({
               }
               className={styles.slider}
             />
+            {filters.minConfidence > 0 && (
+              <span className={styles.sliderNote}>
+                '검토 필요' 이벤트는 신뢰도가 없어 제외되지 않습니다
+              </span>
+            )}
           </div>
 
           {/* Zone multi-select as checkboxes — dynamically derived from actual event data */}

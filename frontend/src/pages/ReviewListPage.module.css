@@ -167,3 +167,13 @@
     color: #a0aec0;
   }
 }
+
+/* No measured confidence: needs an administrator's judgment, not a low score */
+.reviewNeeded {
+  color: #b7791f;
+  background: #fffaf0;
+  border: 1px solid #fbd38d;
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
