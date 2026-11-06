@@ -86,17 +86,24 @@ def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, An
         return events
     from backend.media.service import public_media, review_availability
     event_ids = [event["event_id"] for event in events]
-    rows, retention = [], {}
+    rows, retention, review_modes = [], {}, {}
     for offset in range(0, len(event_ids), 500):
         ids = event_ids[offset:offset + 500]
         placeholders = ",".join("?" for _ in ids)
         rows.extend(conn.execute(f"SELECT * FROM event_media WHERE event_id IN ({placeholders}) ORDER BY created_at,media_id", ids).fetchall())
         for row in conn.execute(f"SELECT * FROM event_retention WHERE event_id IN ({placeholders})", ids):
             retention[row["event_id"]] = dict(row)
+        for row in conn.execute(f"SELECT event_id,review_only FROM processing_review_only_event WHERE event_id IN ({placeholders})", ids):
+            review_modes[row["event_id"]] = bool(row["review_only"])
     by_event: dict[str, list[dict[str, Any]]] = {event_id: [] for event_id in event_ids}
     for row in rows:
         by_event[row["event_id"]].append(public_media(dict(row), retention.get(row["event_id"], {}).get("decision", "pending")))
     for event in events:
+        # Missing mode records are legacy normal events. The DB's numeric zero
+        # placeholder must never be presented as measured review-only confidence.
+        event["review_only"] = review_modes.get(event["event_id"], False)
+        if event["review_only"]:
+            event["ai_confidence"] = None
         event['event_date_local'] = local_date(event['timestamp_start'])
         event['timestamp_timezone'] = REPORTING_TIMEZONE if event['event_date_local'] else None
         event['reporting_timezone'] = REPORTING_TIMEZONE
