@@ -374,12 +374,14 @@ def main():
                         )
                         person_policies[track_id] = effective_policy
 
-                    # Start verified observation only after pre-roll exists.
-                    # Otherwise a person already present at live startup would
-                    # emit one permanently incomplete clip and never re-arm.
+                    # Both submission modes need pre-roll; preserve diagnostic-only candidates.
+                    # Clearing confidence alone cannot reset a review-only streak:
+                    # those assessments already have no verified confidence.
                     pre_roll_start, _ = calculate_clip_window(timestamp, timestamp)
                     if clip_buffer.frames[0][0] > pre_roll_start:
                         for assessment in assessments:
+                            if args.submit_review_candidates:
+                                assessment["status"] = "unknown"
                             assessment["verified_ppe_confidence"] = None
 
                     # Detect sustained suspected violations.
