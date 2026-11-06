@@ -10,14 +10,14 @@ from fastapi import HTTPException
 
 from backend.db.event_repository import get_connection
 from backend.processing.events import EventSubmission, submit
-from backend.tests.support import isolated_api
+from backend.tests.support import isolated_api, login
 
 
 class ReviewOnlySubmissionTests(unittest.TestCase):
 
     def setUp(self):
         context = isolated_api()
-        context.__enter__()
+        self.client = context.__enter__()
         self.addCleanup(context.__exit__, None, None, None)
 
         with get_connection() as conn:
@@ -80,6 +80,51 @@ class ReviewOnlySubmissionTests(unittest.TestCase):
         self.assertEqual(event["event_status"], "pending")
         self.assertEqual(event["ai_confidence"], 0.0)
         self.assertEqual(mode["review_only"], 1)
+
+    def query_event(self, event_id):
+        admin = login(self.client)
+        detail = self.client.get('/api/events/' + event_id, headers=admin)
+        self.assertEqual(detail.status_code, 200, detail.text)
+        listing = self.client.get('/api/events', headers=admin)
+        self.assertEqual(listing.status_code, 200, listing.text)
+        event = detail.json()['event']
+        listed = next(e for e in listing.json()['items'] if e['event_id'] == event_id)
+        self.assertEqual(listed, event)
+        return event
+
+    def test_queries_expose_review_mode_without_zero_confidence(self):
+        submit(EventSubmission(**self.payload))
+        event = self.query_event(self.event_id)
+        self.assertIs(event['review_only'], True)
+        self.assertIsNone(event['ai_confidence'])
+        # Public serialization must not rewrite storage or break identical retries.
+        self.assertFalse(submit(EventSubmission(**self.payload))['created'])
+        with get_connection() as conn:
+            row = conn.execute('SELECT ai_confidence FROM candidate_event WHERE event_id=?', (self.event_id,)).fetchone()
+        self.assertEqual(row[0], 0.0)
+
+    def test_queries_preserve_normal_and_legacy_confidence(self):
+        for confidence in (0.0, 0.88):
+            ident = 'EVT_' + uuid4().hex
+            with patch('backend.processing.events.enqueue_event_broadcast'):
+                submit(EventSubmission(**{**self.payload, 'event_id': ident,
+                    'review_only': False, 'confidence': confidence}))
+            event = self.query_event(ident)
+            self.assertIs(event['review_only'], False)
+            self.assertEqual(event['ai_confidence'], confidence)
+        with get_connection() as conn:
+            legacy = conn.execute("SELECT ai_confidence FROM candidate_event WHERE event_id='EVT_0001'").fetchone()[0]
+        event = self.query_event('EVT_0001')
+        self.assertIs(event['review_only'], False)
+        self.assertEqual(event['ai_confidence'], legacy)
+
+    def test_mode_metadata_does_not_weaken_admin_query_permissions(self):
+        submit(EventSubmission(**self.payload))
+        for path in ('/api/events', '/api/events/' + self.event_id):
+            self.assertEqual(self.client.get(path).status_code, 401)
+        worker = login(self.client, 'worker01')
+        for path in ('/api/events', '/api/events/' + self.event_id):
+            self.assertEqual(self.client.get(path, headers=worker).status_code, 403)
 
     def test_retry_never_broadcasts(self):
         body = EventSubmission(**self.payload)
