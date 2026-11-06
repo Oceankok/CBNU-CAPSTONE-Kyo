@@ -6,6 +6,7 @@ import { fetchStats, calcTrend } from '../api/stats';
 import type { LayoutContext } from '../components/AppLayout';
 import type { QuarterlyStats } from '../types';
 import { formatEventTime } from '../time';
+import { formatConfidence } from '../confidence';
 import styles from './HomePage.module.css';
 
 // Number of pending events previewed on the home screen; the rest are on /review
@@ -85,7 +86,7 @@ export default function HomePage() {
                         minute: '2-digit',
                       })}
                       {' · '}
-                      {(event.ai_confidence * 100).toFixed(0)}%
+                      {formatConfidence(event)}
                     </span>
                   </button>
                 </li>

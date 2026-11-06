@@ -5,6 +5,13 @@ import StatusBadge from '../components/StatusBadge';
 import { fetchEvents } from '../api/events';
 import type { FilterState, CandidateEvent } from '../types';
 import { formatEventTime } from '../time';
+import {
+  REVIEW_NEEDED_HINT,
+  confidenceLevel,
+  formatConfidence,
+  isReviewOnly,
+  passesConfidenceFilter,
+} from '../confidence';
 import styles from './ReviewListPage.module.css';
 
 const DEFAULT_FILTERS: FilterState = {
@@ -30,7 +37,7 @@ function applyFilters(events: CandidateEvent[], f: FilterState): CandidateEvent[
     if (f.ppeType !== 'all' && e.ppe_type !== f.ppeType) return false;
     if (f.status !== 'all' && e.event_status !== f.status) return false;
     if (f.zone.length > 0 && !f.zone.includes(e.zone_name)) return false;
-    if (e.ai_confidence < f.minConfidence) return false;
+    if (!passesConfidenceFilter(e, f.minConfidence)) return false;
     return true;
   });
 }
@@ -121,17 +128,20 @@ export default function ReviewListPage() {
                   </td>
                   <td data-label="지속시간" className={styles.minor}>{event.duration_sec}초</td>
                   <td data-label="신뢰도">
-                    <span
-                      className={`${styles.confidence} ${
-                        event.ai_confidence >= 0.85
-                          ? styles.high
-                          : event.ai_confidence >= 0.7
-                            ? styles.mid
-                            : styles.low
-                      }`}
-                    >
-                      {(event.ai_confidence * 100).toFixed(0)}%
-                    </span>
+                    {isReviewOnly(event) || event.ai_confidence == null ? (
+                      <span
+                        className={`${styles.confidence} ${styles.reviewNeeded}`}
+                        title={REVIEW_NEEDED_HINT}
+                      >
+                        {formatConfidence(event)}
+                      </span>
+                    ) : (
+                      <span
+                        className={`${styles.confidence} ${styles[confidenceLevel(event.ai_confidence)]}`}
+                      >
+                        {formatConfidence(event)}
+                      </span>
+                    )}
                   </td>
                   <td data-label="상태">
                     <StatusBadge status={event.event_status} />

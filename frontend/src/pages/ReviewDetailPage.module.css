@@ -403,3 +403,20 @@
     padding: 12px;
   }
 }
+
+/* Review-only event: no measured confidence */
+.reviewNeeded {
+  font-weight: 700;
+  color: #b7791f;
+}
+
+.reviewNote {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #fffaf0;
+  border: 1px solid #fbd38d;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #7b341e;
+}

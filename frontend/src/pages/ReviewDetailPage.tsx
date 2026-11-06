@@ -15,6 +15,12 @@ import type {
   ReviewAvailability,
 } from '../types';
 import { formatEventTime, formatSeoul } from '../time';
+import {
+  REVIEW_NEEDED_HINT,
+  confidenceLevel,
+  formatConfidence,
+  isReviewOnly,
+} from '../confidence';
 import styles from './ReviewDetailPage.module.css';
 
 // Flatten all reason options into a lookup map for display (code → Korean label)
@@ -250,23 +256,26 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
             <dl className={styles.dl}>
               <dt>AI 신뢰도</dt>
               <dd>
-                <span
-                  className={`${styles.confidenceValue} ${
-                    event.ai_confidence >= 0.85
-                      ? styles.high
-                      : event.ai_confidence >= 0.7
-                        ? styles.mid
-                        : styles.low
-                  }`}
-                >
-                  {(event.ai_confidence * 100).toFixed(1)}%
-                </span>
+                {isReviewOnly(event) || event.ai_confidence == null ? (
+                  <span className={styles.reviewNeeded}>
+                    {formatConfidence(event)}
+                  </span>
+                ) : (
+                  <span
+                    className={`${styles.confidenceValue} ${styles[confidenceLevel(event.ai_confidence)]}`}
+                  >
+                    {formatConfidence(event, 1)}
+                  </span>
+                )}
               </dd>
               <dt>지속 시간</dt>
               <dd>{event.duration_sec}초</dd>
               <dt>공정</dt>
               <dd>{event.process_type}</dd>
             </dl>
+            {isReviewOnly(event) && (
+              <p className={styles.reviewNote}>{REVIEW_NEEDED_HINT}</p>
+            )}
             {/* Technical metadata — rarely needed for the decision */}
             <details className={styles.techDetails}>
               <summary>기술 정보</summary>
