@@ -51,8 +51,10 @@ def run_scenario(client_factory, password, admin_id='admin02', worker_id='worker
             request(admin, 'POST', '/api/cameras', 201, json={'camera_id': camera, 'zone_name': zone})
             request(admin, 'PUT', '/api/cameras/'+camera+'/node', json={'source_node_id': 'integration-source', 'output_node_id': 'integration-source'})
             request(admin, 'PUT', '/api/cameras/'+camera+'/equipment', json={'equipment_ids': []})
-            policy = request(processor, 'GET', '/api/processing/cameras/'+camera+'/ppe-policy').json()
+            policy = request(processor, 'GET', '/api/processing/cameras/'+camera+'/work-area-policy').json()
             assert policy['configured'] and policy['required_ppe'] == ['helmet']
+            assert policy['scope'] == 'camera' and policy['areas'] == []
+            assert policy['policy_version']
         request(admin, 'POST', '/api/camera-groups', 201, json={'name': '통합 검증 그룹', 'camera_ids': ['INTEGRATION_A', 'INTEGRATION_B']})
         request(admin, 'PUT', '/api/broadcast/settings', json={'enabled': True, 'default_language': 'ko', 'cooldown_sec': 0,
                 'templates': [{'template_id': 'INTEGRATION_HELMET', 'ppe_type': 'helmet', 'zone_name': '', 'language': 'ko', 'message': '통합 검증용 방송 문구'}]})
