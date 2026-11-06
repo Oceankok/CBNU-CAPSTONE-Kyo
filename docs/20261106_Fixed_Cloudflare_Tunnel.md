@@ -21,7 +21,7 @@
 
 1. 구매 도메인이 Cloudflare에서 활성화되어 있어야 합니다.
 2. Cloudflare 계정의 **Networking → Tunnels**에서 관리형 터널을 생성합니다. 이전 메뉴에서는 **Zero Trust → Networks → Connectors**에 표시될 수 있습니다.
-3. 설치 환경은 Docker를 선택합니다. 표시되는 명령을 별도로 실행하지 않고 터널 토큰만 로컬 파일에 저장합니다. 이 구성과 Windows 서비스 설치를 동시에 사용하지 않습니다.
+3. 생성한 터널을 다시 선택하고 **Add a replica → Docker**에서 공식 설치 명령을 확인합니다. 명령 오른쪽의 복사 버튼을 사용하며 화면에서 축약·마스킹된 문자열을 선택 복사하지 않습니다. 복사한 명령을 별도로 실행하지 않고 실제 터널 토큰만 로컬 파일에 저장합니다. 이 구성과 Windows 서비스 설치를 동시에 사용하지 않습니다. [공식 토큰 확인 절차](https://developers.cloudflare.com/tunnel/reference/tunnel-tokens/)를 참고합니다.
 4. 토큰 파일은 `<배포 폴더>/cloudflare/tunnel-token`입니다. 파일에는 토큰 문자열만 UTF-8로 저장합니다. 소스 저장소·채팅·이슈·명령 인수·`server.env`에는 토큰을 넣지 않습니다. 해당 파일과 상위 폴더의 읽기 권한은 운영 계정 및 필요한 관리자만 갖도록 설정합니다. Compose secrets는 파일 전달 방식이며 호스트 파일 자체를 암호화하지 않습니다.
 5. cloudflared 공식 이미지를 내려받고 digest를 확정합니다. 아래 다운로드는 최초 연결 시 실행하며, 설정 검증에는 필요하지 않습니다.
 
@@ -50,10 +50,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Image digest lookup failed' }
 
 2. Cloudflare에서 커넥터가 `Healthy`인지 확인합니다. 이 명령의 성공은 컨테이너 시작을 뜻하며 도메인·인증서·앱 접속 성공을 보장하지 않습니다.
 3. `server.env`에서 `PPE_PUBLIC_HOST=kyo.<구매한 도메인>`, `PPE_COOKIE_SECURE=true`를 설정합니다. DB URL과 비밀키는 유지합니다. `/api/`와 `/storage/`는 캐시 우회 대상으로 유지하며 `Cache Everything` 같은 규칙을 적용하지 않습니다. 기존 API도 비공개 미디어에 `private, no-store`를 반환합니다.
-4. 공개 호스트 `kyo.<구매한 도메인>`을 **HTTP / `web:8080`**에 연결하고, 같은 전환 작업에서 기존 `Release.ps1 -TunnelHttps`를 실행합니다. 기존 배포의 전체 커밋 SHA·API/Web digest·프로젝트를 사용합니다. `-Https`, `-Lan`, DB 초기화 옵션은 사용하지 않습니다. 호스트를 등록한 시점부터 외부 요청이 들어올 수 있으므로 전환 중 검증을 마치기 전에는 현장 PC를 연결하지 않습니다.
+4. 최초 공개 전환에서는 기존 이미지의 API·웹을 먼저 Secure 쿠키 모드로 재시작하고 내부 readiness를 확인합니다. 이는 이미지·스키마 업그레이드가 아니며, 기존 `current-release.json`의 API/Web digest·프로젝트·Compose 파일과 `server.env`를 사용합니다. 공개 호스트가 아직 없는 동안에는 Release의 외부 HTTPS 확인을 통과할 수 없으므로 이 준비 단계와 최종 배포 기록을 구분합니다. 그다음 공개 호스트 `kyo.<구매한 도메인>`을 **HTTP / `web:8080`**에 연결하고, 같은 전환 작업에서 기존 `Release.ps1 -TunnelHttps`를 실행합니다. 기존 배포의 전체 커밋 SHA·API/Web digest·프로젝트를 사용합니다. `-Https`, `-Lan`, DB 초기화 옵션은 사용하지 않습니다. 호스트를 등록한 시점부터 외부 요청이 들어올 수 있으므로 전환 중 검증을 마치기 전에는 현장 PC를 연결하지 않습니다.
 5. Release는 API의 Secure 쿠키 모드를 적용하고 공개 `https://<호스트>/health/ready`를 확인합니다. 실패하면 기존 방식대로 이미지를 복구합니다. **별도 터널은 Release가 종료하지 않으므로**, 전환에 실패하면 먼저 아래 `Stop`으로 외부 연결을 끄고 `server.env`를 기존 모드에 맞춰 복구합니다. 성공 여부는 `current-release.json`의 `tunnel_https=true`로 확인합니다.
 
 로그인과 미디어 확인은 이후 HTTPS 주소에서 수행합니다. HTTP localhost에서 로그인에 성공하더라도 Secure 미디어 쿠키가 전달되지 않을 수 있으므로 이를 HTTPS 검증 결과로 대신하지 않습니다. CORS 허용 주소는 동일 출처 웹 배포에 추가하지 않습니다. Cloudflare가 HTTP 요청을 HTTPS로 보내도록 설정하고 인증서 오류를 우회하지 않습니다.
+
+신규 도메인은 **SSL/TLS → Edge Certificates**에서 활성 인증서를 확인하고 **Always Use HTTPS**를 켭니다. 현재 사용하는 클라이언트에 맞춰 최소 TLS 1.2 이상을 사용합니다. HSTS처럼 브라우저에 장기간 유지되는 정책은 이번 연결의 필수 조건으로 추가하지 않습니다.
 
 ## 상태·중단·재시작
 
@@ -81,6 +83,16 @@ Cloudflare 호스트 경로를 다른 주소로 바꾸지 않는 한 서버 공�
 이 구성은 영상 송신·이벤트 API를 변경하지 않습니다. 최종 모델과 작업 영역 판단을 연결하는 추론 통합은 별도 작업입니다. 실제 카메라·방송·GPU·외부 AI 검증을 설정 검사에 포함하지 않습니다.
 
 ## 근거와 격리 검사
+
+### 실제 서버 적용 확인 — 2026-11-06
+
+- `https://kyo.robinjh.click`을 기존 `kyo-server` 터널의 `http://web:8080`에 연결했습니다. Cloudflare `Healthy`, 공개 HTTPS readiness 200 및 로그인 화면을 확인했습니다.
+- 미인증 사용자·이벤트·사용자 관리 API와 미디어 경로에서 401을 확인했습니다. 서버 PC 외 기기에서 실제 관리자 로그인·로그아웃도 수동 확인했습니다.
+- Secure 미디어 쿠키, HTTP → HTTPS 전환, 최소 TLS 1.2를 적용했습니다. API·DB의 호스트 포트를 외부 바인딩으로 바꾸거나 GPU worker를 시작하지 않았습니다.
+- 앱 이미지와 스키마는 당시 기존 서버 상태를 유지했습니다. 이 결과는 최신 main 배포나 실제 영상·방송 종단간 검증의 완료를 뜻하지 않습니다. PC 재부팅 검증도 별도입니다.
+- 진행·결과는 [이슈 #152](https://github.com/Oceankok/CBNU-CAPSTONE-Kyo/issues/152#issuecomment-6675558786)에 기록했습니다.
+
+### 참고 문서와 설정 검사
 
 - [Cloudflare 관리형 터널 생성](https://developers.cloudflare.com/tunnel/get-started/)
 - [cloudflared `--token-file`](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/run-parameters/)
