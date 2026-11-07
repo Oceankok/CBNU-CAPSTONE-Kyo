@@ -13,6 +13,35 @@ from inference_worker.test_server_mock import FakeVideoClient, FakeDetector, Qua
 
 
 class RunnerResilienceTests(unittest.TestCase):
+    def test_temporary_poll_failure_recovers_without_replaying_completed_chunks(self):
+        client = FakeVideoClient(3)
+        original = client.list_chunks
+        calls = []
+        def chunks(stream, after_sequence=-1):
+            calls.append(after_sequence)
+            if len(calls) == 2:
+                raise httpx.ReadTimeout('temporary interruption')
+            return original(stream, after_sequence)[:1]
+        client.list_chunks = chunks
+        output, _ = self.run_runner(client)
+        self.assertEqual(client.downloads, ['0', '1', '2'])
+        self.assertEqual(calls, [-1, 0, 0, 1])
+        self.assertIn('[SERVER RETRY]', output)
+
+    def test_503_policy_response_recovers_but_permission_errors_still_stop(self):
+        client = FakeVideoClient(2)
+        policy = client.get_ppe_policy
+        calls = []
+        def recover(camera):
+            calls.append(camera)
+            if len(calls) == 1:
+                httpx.Response(503, request=httpx.Request('GET', 'http://test/policy')).raise_for_status()
+            return policy(camera)
+        client.get_ppe_policy = recover
+        output, _ = self.run_runner(client)
+        self.assertEqual(client.downloads, ['0', '1'])
+        self.assertIn('[SERVER RETRY]', output)
+
     def run_runner(self, client, *, submit=False, qualified=False, decoder=None,
                    detector=None, buffer_mib=256, frame_shape=(64,64,3)):
         frame = np.zeros(frame_shape, dtype=np.uint8)

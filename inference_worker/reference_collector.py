@@ -151,6 +151,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--once', action='store_true')
     parser.add_argument('--poll', type=float, default=1)
+    parser.add_argument('--stop-file', type=Path)
     args = parser.parse_args()
     if not math.isfinite(args.poll) or args.poll <= 0:
         parser.error('--poll must be finite and positive')
@@ -158,7 +159,7 @@ def main():
     client = VideoClient()
     collector = ReferenceCollector(client)
     try:
-        while True:
+        while not (args.stop_file and args.stop_file.exists()):
             try:
                 collector.run_once()
             except httpx.HTTPError:

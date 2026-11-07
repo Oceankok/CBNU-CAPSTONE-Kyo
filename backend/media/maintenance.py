@@ -22,6 +22,15 @@ def maintain_once(stale_after: int = 3600) -> dict:
     cutoff = time.time() - stale_after
     with get_connection() as conn:
         begin_write(conn)
+        # Lost upload/status responses must not leave a media-less request pending
+        # forever. An existing media row protects in-progress ingest and sources
+        # retained for recovery; received requests are never changed here.
+        conn.execute("""UPDATE event_clip_request SET status='unavailable',
+            error_code='clip_delivery_timeout',updated_at=?
+            WHERE status='pending' AND created_at<?
+            AND NOT EXISTS (SELECT 1 FROM event_media m
+                            WHERE m.request_id=event_clip_request.request_id)""",
+            (time.time(), time.time()-300))
         originals = conn.execute("SELECT media_id,source_path FROM event_media WHERE source_path!='' AND source_expires_at<=? AND processing_started_at IS NULL AND status!='processing'", (time.time(),)).fetchall()
         for original in originals:
             try:
