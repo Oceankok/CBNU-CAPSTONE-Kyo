@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import cv2
 import numpy as np
 
-from video_sender.chunks import completed_chunks, next_sequence
+from video_sender.chunks import completed_chunks, next_sequence, publish_completed_segments
 
 
 class CaptureSequenceTests(unittest.TestCase):
@@ -33,6 +33,42 @@ class CaptureSequenceTests(unittest.TestCase):
                          ['chunk_99998.mp4', 'chunk_99999.mp4'])
         self.assertEqual(next_sequence(self.root), 100001)
 
+    def test_incomplete_segments_are_hidden_even_when_later_segment_exists(self):
+        for sequence in (20, 21, 22):
+            (self.root / f'chunk_{sequence:05d}.mp4.part').write_bytes(b'not finalized')
+        manifest = self.root / '.capture.list'
+        manifest.write_text('chunk_00020.mp4.part\nchunk_00021.mp4.part', encoding='utf-8')
+        publish_completed_segments(self.root, manifest)
+        self.assertTrue((self.root / 'chunk_00020.mp4').exists())
+        self.assertFalse((self.root / 'chunk_00021.mp4').exists())
+        self.assertFalse((self.root / 'chunk_00022.mp4').exists())
+        self.assertEqual(completed_chunks(self.root), [])
+        self.assertEqual(next_sequence(self.root), 23)
+
+    def test_publication_retries_shared_file_without_losing_source(self):
+        source = self.root / 'chunk_00000.mp4.part'
+        source.write_bytes(b'finalized')
+        manifest = self.root / '.capture.list'
+        manifest.write_text(source.name + '\n', encoding='utf-8')
+        with patch.object(Path, 'rename', side_effect=PermissionError):
+            publish_completed_segments(self.root, manifest)
+        self.assertTrue(source.exists())
+        publish_completed_segments(self.root, manifest)
+        self.assertEqual(source.with_suffix('').read_bytes(), b'finalized')
+        publish_completed_segments(self.root, manifest)  # repeated list entry is harmless
+
+    def test_manifest_cannot_publish_paths_or_overwrite_existing_video(self):
+        ready = self.root / 'chunk_00000.mp4'
+        ready.write_bytes(b'previous')
+        pending = self.root / 'chunk_00000.mp4.part'
+        pending.write_bytes(b'new')
+        manifest = self.root / '.capture.list'
+        manifest.write_text('../chunk_00001.mp4.part\nchunk_00000.mp4.part\n', encoding='utf-8')
+        publish_completed_segments(self.root, manifest)
+        self.assertEqual(ready.read_bytes(), b'previous')
+        self.assertTrue(pending.exists())
+        publish_completed_segments(self.root, self.root / 'missing.list')
+
     def test_capture_restart_aligns_ffmpeg_and_timestamp_without_overwrite(self):
         old_video = self.root / 'chunk_00999.mp4'
         old_video.write_bytes(b'previous session')
@@ -50,6 +86,9 @@ class CaptureSequenceTests(unittest.TestCase):
             runpy.run_module('video_sender.capture', run_name='__main__')
         command = start.call_args.args[0]
         self.assertEqual(command[command.index('-segment_start_number') + 1], '1000')
+        self.assertEqual(command[command.index('-segment_format') + 1], 'mp4')
+        self.assertEqual(command[command.index('-map') + 1], '0:v:0')
+        self.assertTrue(command[-1].endswith('.mp4.part'))
         self.assertTrue((self.root / 'chunk_01000.txt').is_file())
         self.assertEqual(old_video.read_bytes(), b'previous session')
         self.assertEqual(old_stamp.read_text(encoding='utf-8'), 'previous timestamp')
