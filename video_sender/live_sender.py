@@ -7,6 +7,8 @@ from pathlib import Path
 import requests
 import subprocess
 from datetime import datetime,timezone
+from email.utils import parsedate_to_datetime
+import math
 
 # 서버 연결 설정
 SERVER_URL = os.getenv(
@@ -139,6 +141,33 @@ def delete_chunk_files(path):
             )
 
 
+def backpressure_delay(response):
+    """Respect delta-seconds or HTTP-date Retry-After without a busy retry loop."""
+    value = response.headers.get("Retry-After", "")
+    try:
+        delay = float(value)
+    except (TypeError, ValueError):
+        try:
+            until = parsedate_to_datetime(value)
+            delay = (until - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return 1.0
+    if not math.isfinite(delay) or delay <= 0:
+        return 1.0
+    return max(1.0, delay)
+
+
+def backpressure_reason(response):
+    # Only short machine-readable error codes; never log headers or HTML bodies.
+    try:
+        detail = response.json().get("detail")
+    except (ValueError, AttributeError):
+        return "rate_limited"
+    if isinstance(detail, str) and re.fullmatch(r"[a-zA-Z0-9_]{1,80}", detail):
+        return detail
+    return "rate_limited"
+
+
 
 def send_chunk(stream_id, sequence, path, capture_start):
     duration_ms = get_video_duration_ms(path)
@@ -252,6 +281,19 @@ def watch_and_send():
                     delete_chunk_files(path)
 
                 except requests.RequestException as error:
+                    response = error.response
+                    if response is not None and response.status_code == 429:
+                        delay = backpressure_delay(response)
+                        print(
+                            f"[BACKPRESSURE] {CAMERA_ID} / "
+                            f"{backpressure_reason(response)} / "
+                            f"{delay:g}초 후 같은 스트림·조각 재시도",
+                            flush=True,
+                        )
+                        time.sleep(delay)
+                        # Retain the file and stream. The next pass still checks
+                        # capture age before retrying; a 429 is not a disconnect.
+                        break
                     print(
                         f"[DISCONNECTED] {CAMERA_ID} / "
                         f"전송 실패: {error}",
