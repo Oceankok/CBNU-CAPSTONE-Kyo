@@ -65,6 +65,17 @@ class VideoSenderDeliveryTests(unittest.TestCase):
         self.assertFalse(self.completed.with_suffix('.txt').exists())
         self.assertTrue(self.writing.exists())
 
+    def test_numeric_order_does_not_upload_current_tail_after_five_digits(self):
+        self.completed.with_suffix('.txt').rename(live_sender.OUTPUT_DIR/'chunk_99999.txt')
+        self.completed = self.completed.rename(live_sender.OUTPUT_DIR/'chunk_99999.mp4')
+        self.writing = self.writing.rename(live_sender.OUTPUT_DIR/'chunk_100000.mp4')
+        live_sender.watch_and_send()
+        self.assertEqual(self.uploads, [self.data])
+        self.assertFalse(self.completed.exists())
+        self.assertTrue(self.writing.exists())
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT sequence FROM video_chunk').fetchone()[0], 99999)
+
     def test_network_failure_keeps_fresh_chunk_for_retry(self):
         with patch.object(live_sender, 'send_chunk', side_effect=requests.ConnectionError('test-only disconnect')):
             live_sender.watch_and_send()
