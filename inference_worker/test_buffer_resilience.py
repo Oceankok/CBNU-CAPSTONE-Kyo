@@ -14,6 +14,30 @@ from inference_worker.video_decoder import decode_mp4
 
 
 class BufferBudgetTests(unittest.TestCase):
+    def test_high_resolution_retention_keeps_seven_seconds_under_default_budget(self):
+        # Reuse the incoming full-resolution allocation; only retained frames copy.
+        for shape, source_fps in (((360,640,3),15), ((720,1280,3),25),
+                                  ((720,1280,3),30), ((1080,1920,3),60)):
+            frame = np.zeros(shape, dtype=np.uint8)
+            retained_fps = source_fps / int(np.ceil(source_fps / 15))
+            buffer = ClipBuffer(max_frame_pixels=640*480, max_fps=retained_fps)
+            for index in range(source_fps*8):
+                buffer.add(self.start+timedelta(seconds=index/source_fps), frame)
+            self.assertGreaterEqual((buffer.frames[-1][0]-buffer.frames[0][0]).total_seconds(), 7)
+            self.assertLessEqual(buffer.bytes_used, 256*1024*1024)
+            self.assertTrue(all(image.shape[0]*image.shape[1] <= 640*480
+                                for _, image in buffer.frames))
+            stamps = [stamp for stamp, _ in buffer.frames]
+            self.assertAlmostEqual((stamps[-1]-stamps[0]).total_seconds(),
+                                   (len(stamps)-1)/retained_fps, places=5)
+
+    def test_invalid_sampling_limits_fail_before_retaining_video(self):
+        for fps in (0, -1, float('nan'), float('inf')):
+            with self.assertRaises(ValueError):
+                ClipBuffer(max_fps=fps)
+        for pixels in (0, 3, True, 4.5):
+            with self.assertRaises(ValueError):
+                ClipBuffer(max_frame_pixels=pixels)
     def setUp(self):
         self.start = datetime(2026, 10, 31, tzinfo=timezone.utc)
         self.frame = np.zeros((4, 5, 3), dtype=np.uint8)

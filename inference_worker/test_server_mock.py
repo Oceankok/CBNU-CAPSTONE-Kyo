@@ -21,6 +21,11 @@ class FakeVideoClient:
         self.start = datetime(2026, 10, 29, tzinfo=timezone.utc)
         self.closed = False
         self.loads = []
+        self.submitted_events = []
+
+    def submit_event(self, event):
+        self.submitted_events.append(event)
+        return {"event_id": event["event_id"], "created": True}
 
     def list_streams(self):
         return [{"stream_id": "TEST_STREAM", "camera_id": "CAM_001", "last_sequence": self.last_sequence}]
@@ -144,8 +149,18 @@ class ServerInferenceTest(unittest.TestCase):
         self.assertEqual(output.count('[OK]'), 8)
 
     def test_incomplete_clip_not_submitted(self):
-        _, deliver = self.run_runner(FakeVideoClient(6), submit=True, qualified=True)
+        client = FakeVideoClient(6)
+        _, deliver = self.run_runner(client, submit=True, qualified=True)
         deliver.assert_not_called()
+        # The preventive warning does not wait for two seconds of post-roll.
+        self.assertEqual(len(client.submitted_events), 1)
+        self.assertEqual(client.submitted_events[0]['camera_id'], 'CAM_001')
+        self.assertEqual(client.submitted_events[0]['confidence'], 0.9)
+
+    def test_clip_delivery_reuses_the_early_observation_id(self):
+        client = FakeVideoClient(8)
+        _, deliver = self.run_runner(client, submit=True, qualified=True)
+        self.assertEqual(client.submitted_events, [deliver.call_args.args[1]])
 
 
     def test_live_start_skips_existing_chunks_and_consumes_new_frames(self):

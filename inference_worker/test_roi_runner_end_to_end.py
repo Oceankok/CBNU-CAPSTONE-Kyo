@@ -70,6 +70,7 @@ class StopPolicyPolling(Exception):
 class ROIRunnerEndToEndTests(unittest.TestCase):
     def run_case(self, *, required=True, invalid=False, present_from_start=False, roi=True, count=9):
         client = WorkAreaVideoClient(required=required, invalid=invalid, roi=roi, count=count)
+        self.last_client = client
         output = io.StringIO()
         frame = np.zeros((64, 64, 3), dtype=np.uint8)
         with TemporaryDirectory() as temp:
@@ -142,11 +143,15 @@ class ROIRunnerEndToEndTests(unittest.TestCase):
         output, delivery = self.run_case(present_from_start=True, count=6)
         self.assertIn("[REVIEW CANDIDATE READY]", output)
         delivery.assert_not_called()
+        self.assertEqual(len(self.last_client.submitted_events), 1)
+        self.assertTrue(self.last_client.submitted_events[0]['review_only'])
+        self.assertIsNone(self.last_client.submitted_events[0]['confidence'])
 
     def test_helmet_optional_roi_never_submits(self):
         output, delivery = self.run_case(required=False)
         delivery.assert_not_called()
         self.assertNotIn("[REVIEW CANDIDATE READY]", output)
+        self.assertEqual(self.last_client.submitted_events, [])
 
     def test_invalid_roi_configuration_never_submits(self):
         def startup_version():
@@ -158,6 +163,7 @@ class ROIRunnerEndToEndTests(unittest.TestCase):
             output, delivery = self.run_case(invalid=True)
         delivery.assert_not_called()
         self.assertIn("[POLICY SKIP]", output)
+        self.assertEqual(self.last_client.submitted_events, [])
 
 
 if __name__ == "__main__":
