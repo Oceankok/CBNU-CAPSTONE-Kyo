@@ -4,11 +4,13 @@ No live camera, external HTTP server, model weights, or broadcast is used.
 """
 import io
 import sys
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import numpy as np
 
@@ -88,11 +90,12 @@ class ROIRunnerEndToEndTests(unittest.TestCase):
                 patch.object(runner, "decode_mp4", side_effect=lambda *a, **k:
                              iter((i, 4.0, frame) for i in range(4))),
                 patch.object(runner, "create_clip", side_effect=make_clip),
-                patch.object(
-                    runner.time, "sleep",
+                # Only replace the runner's clock. Mutating time.sleep globally
+                # can interrupt subprocess waits in the startup Git version probe.
+                patch.object(runner, "time", SimpleNamespace(sleep=Mock(
                     side_effect=(lambda _: (_ for _ in ()).throw(StopPolicyPolling()))
                     if invalid else None,
-                ),
+                ))),
                 patch.object(sys, "argv", args),
                 patch.object(runner, "submit_event_with_clip",
                              return_value={"event_id": "EVT_fixture"}) as delivery,
@@ -146,7 +149,13 @@ class ROIRunnerEndToEndTests(unittest.TestCase):
         self.assertNotIn("[REVIEW CANDIDATE READY]", output)
 
     def test_invalid_roi_configuration_never_submits(self):
-        output, delivery = self.run_case(invalid=True)
+        def startup_version():
+            # Model a subprocess wait outside the runner's policy polling loop.
+            time.sleep(0.001)
+            return {"revision": None, "dirty": None}
+
+        with patch.object(runner, "local_version", side_effect=startup_version):
+            output, delivery = self.run_case(invalid=True)
         delivery.assert_not_called()
         self.assertIn("[POLICY SKIP]", output)
 
