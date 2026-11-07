@@ -161,6 +161,19 @@ async def upload_media(event_id: str, request: Request, kind: Literal["image", "
         raise HTTPException(409, "event_media_deleted")
     if (role == "thumbnail" and kind != "image") or (role == "clip" and kind != "video"):
         raise HTTPException(400, "invalid_media_role")
+    def touch_upload():
+        if request_id:
+            with get_connection() as conn:
+                begin_write(conn)
+                changed = conn.execute("""UPDATE event_clip_request SET updated_at=?
+                    WHERE request_id=? AND event_id=? AND camera_id=? AND role=? AND status='pending'""",
+                    (time.time(), request_id, event_id, camera_id or event['camera_id'], role))
+                if changed.rowcount != 1:
+                    raise HTTPException(409, 'clip_request_not_pending')
+    # Register activity before reading a potentially slow HTTP body. Refresh
+    # while bytes arrive; a stalled/disconnected body can still expire safely.
+    touch_upload()
+    next_touch = time.monotonic()+30
     WORK_ROOT.mkdir(parents=True, exist_ok=True)
     limit = int(os.environ.get("PPE_MEDIA_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
     with tempfile.TemporaryDirectory(prefix="ppe_", dir=WORK_ROOT) as folder:
@@ -168,12 +181,16 @@ async def upload_media(event_id: str, request: Request, kind: Literal["image", "
         size = 0
         with source.open("wb") as stream:
             async for chunk in request.stream():
+                if time.monotonic() >= next_touch:
+                    touch_upload()
+                    next_touch = time.monotonic()+30
                 size += len(chunk)
                 if size > limit:
                     raise HTTPException(413, "media_upload_too_large")
                 stream.write(chunk)
         if not size:
             raise HTTPException(400, "empty_media_upload")
+        touch_upload()
         try:
             if processing_mode() == 'remote':
                 from backend.processing.service import ingest

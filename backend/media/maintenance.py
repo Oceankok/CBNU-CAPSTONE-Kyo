@@ -27,10 +27,10 @@ def maintain_once(stale_after: int = 3600) -> dict:
         # retained for recovery; received requests are never changed here.
         conn.execute("""UPDATE event_clip_request SET status='unavailable',
             error_code='clip_delivery_timeout',updated_at=?
-            WHERE status='pending' AND created_at<?
+            WHERE status='pending' AND created_at<? AND updated_at<?
             AND NOT EXISTS (SELECT 1 FROM event_media m
                             WHERE m.request_id=event_clip_request.request_id)""",
-            (time.time(), time.time()-300))
+            (time.time(), time.time()-300, time.time()-300))
         originals = conn.execute("SELECT media_id,source_path FROM event_media WHERE source_path!='' AND source_expires_at<=? AND processing_started_at IS NULL AND status!='processing'", (time.time(),)).fetchall()
         for original in originals:
             try:

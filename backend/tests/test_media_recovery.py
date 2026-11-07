@@ -13,6 +13,35 @@ from backend.tests.support import isolated_api, login, ready_media
 
 
 class MediaRecoveryTests(unittest.TestCase):
+    def test_slow_http_body_keeps_clip_pending_until_ingest_registers_media(self):
+        import asyncio
+        from backend.media.maintenance import maintain_once
+        from backend.media.routes import upload_media
+        headers = login(self.client)
+        request_id = self.client.post('/api/events/EVT_0001/clip-requests', headers=headers,
+                                     json={'camera_id': 'CAM_001'}).json()['request_id']
+        with get_connection() as conn:
+            conn.execute('UPDATE event_clip_request SET created_at=?,updated_at=? WHERE request_id=?',
+                         (time.time()-301, time.time()-301, request_id))
+        test = self
+        class Incoming:
+            async def stream(self):
+                # Route has recorded activity before waiting for incoming bytes.
+                maintain_once()
+                with get_connection() as conn:
+                    test.assertEqual(conn.execute('SELECT status FROM event_clip_request WHERE request_id=?',
+                                                  (request_id,)).fetchone()[0], 'pending')
+                yield b'synthetic body'
+        with (patch('backend.media.routes.processing_mode', return_value='remote'),
+              patch('backend.media.routes.require_media_processing'),
+              patch('backend.media.routes.WORK_ROOT', self.work),
+              patch('backend.processing.service.ingest', return_value={'status': 'processing'}) as ingest):
+            result = asyncio.run(upload_media('EVT_0001', Incoming(), kind='video',
+                                              camera_id='CAM_001', role='clip', request_id=request_id))
+        self.assertEqual(result['status'], 'processing')
+        ingest.assert_called_once()
+        self.assertEqual(list(self.work.iterdir()), [])
+
     def test_orphan_clip_timeout_allows_explicit_unreviewable_decision(self):
         from backend.media.maintenance import maintain_once
         headers = login(self.client)
@@ -24,8 +53,8 @@ class MediaRecoveryTests(unittest.TestCase):
         with get_connection() as conn:
             self.assertEqual(conn.execute('SELECT status FROM event_clip_request WHERE request_id=?',
                                           (request_id,)).fetchone()[0], 'pending')
-            conn.execute('UPDATE event_clip_request SET created_at=? WHERE request_id=?',
-                         (time.time()-301, request_id))
+            conn.execute('UPDATE event_clip_request SET created_at=?,updated_at=? WHERE request_id=?',
+                         (time.time()-301, time.time()-301, request_id))
         maintain_once()
         with get_connection() as conn:
             row = conn.execute('SELECT status,error_code FROM event_clip_request WHERE request_id=?',
@@ -47,8 +76,8 @@ class MediaRecoveryTests(unittest.TestCase):
         with ready_media() as media_id:
             with get_connection() as conn:
                 conn.execute('UPDATE event_media SET request_id=? WHERE media_id=?', (request_id, media_id))
-                conn.execute('UPDATE event_clip_request SET created_at=? WHERE request_id=?',
-                             (time.time()-301, request_id))
+                conn.execute('UPDATE event_clip_request SET created_at=?,updated_at=? WHERE request_id=?',
+                             (time.time()-301, time.time()-301, request_id))
             maintain_once()
             with get_connection() as conn:
                 self.assertEqual(conn.execute('SELECT status FROM event_clip_request WHERE request_id=?',

@@ -16,8 +16,9 @@ from inference_worker.video_decoder import decode_mp4
 class BufferBudgetTests(unittest.TestCase):
     def test_high_resolution_retention_keeps_seven_seconds_under_default_budget(self):
         # Reuse the incoming full-resolution allocation; only retained frames copy.
-        frame = np.zeros((720,1280,3), dtype=np.uint8)
-        for source_fps in (25, 30, 60):
+        for shape, source_fps in (((360,640,3),15), ((720,1280,3),25),
+                                  ((720,1280,3),30), ((1080,1920,3),60)):
+            frame = np.zeros(shape, dtype=np.uint8)
             retained_fps = source_fps / int(np.ceil(source_fps / 15))
             buffer = ClipBuffer(max_frame_pixels=640*480, max_fps=retained_fps)
             for index in range(source_fps*8):
