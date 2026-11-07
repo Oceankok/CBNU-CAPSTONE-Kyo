@@ -235,21 +235,28 @@ class VideoClientContractTests(unittest.TestCase):
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM event_media WHERE request_id=?', (request['request_id'],)).fetchone()[0], 1)
 
 
-    def test_review_only_http_submission_never_broadcasts(self):
-        """3-class candidate: HTTP -> DB, without field broadcast."""
+    def test_review_only_http_submission_warns_without_final_judgment(self):
+        """3-class candidate -> queue -> field result; judgment stays pending."""
+        from backend.db.event_repository import get_broadcast_settings, save_broadcast_settings
+        from field_agent.main import execute
+        self.api.put('/api/cameras/CAM_001/node', headers=self.admin,
+            json={'source_node_id': 'inference-contract', 'output_node_id': 'inference-contract'}).raise_for_status()
+        self.api.post('/api/field/heartbeat', headers=self.client.client.headers).raise_for_status()
+        settings = get_broadcast_settings()
+        settings.update(enabled=True, cooldown_sec=30, default_language='ko', templates=[
+            {'ppe_type': 'helmet', 'zone_name': '', 'language': 'ko', 'message': '안전모 착용 상태를 확인해 주세요.'}])
+        save_broadcast_settings(settings)
         event = self.event()
         event["review_only"] = True
         event["confidence"] = None
 
-        with patch(
-            "backend.processing.events.enqueue_event_broadcast"
-        ) as broadcast:
+        with patch("field_agent.main.speak_message", return_value={'spoken': True}) as speak:
             # First HTTP submission
             first = self.client.submit_event(event)
 
             self.assertTrue(first["created"])
             self.assertTrue(first["review_only"])
-            self.assertFalse(first["broadcast"]["queued"])
+            self.assertTrue(first["broadcast"]["queued"])
 
             # Retry must remain review-only.
             second = self.client.submit_event(event)
@@ -269,8 +276,17 @@ class VideoClientContractTests(unittest.TestCase):
 
             self.assertEqual(error.exception.response.status_code, 409)
 
-            # None of the above may request field broadcast.
-            broadcast.assert_not_called()
+            self.assertEqual(second['broadcast']['reason'], 'already_requested')
+            command = self.api.post('/api/field/commands/claim',
+                headers=self.client.client.headers).json()['command']
+            self.assertEqual(command['command_id'], first['broadcast']['command_id'])
+            result = execute(command)
+            self.assertEqual(result['status'], 'completed')
+            speak.assert_called_once_with('안전모 착용 상태를 확인해 주세요.', 'ko', None)
+            self.api.put('/api/field/commands/'+command['command_id']+'/result',
+                headers=self.client.client.headers, json=result).raise_for_status()
+            self.assertIsNone(self.api.post('/api/field/commands/claim',
+                headers=self.client.client.headers).json()['command'])
 
         with get_connection() as conn:
             saved = conn.execute(
@@ -303,6 +319,11 @@ class VideoClientContractTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(event_count, 1)
         self.assertEqual(clip_request_count, 1)
+        with get_connection() as conn:
+            command_row = conn.execute('SELECT event_id,status FROM field_command WHERE command_id=?',
+                (command['command_id'],)).fetchone()
+        self.assertEqual(command_row['event_id'], event['event_id'])
+        self.assertEqual(command_row['status'], 'completed')
 
 
 

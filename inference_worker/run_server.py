@@ -3,7 +3,8 @@
 
 Event delivery is disabled by default; inference priority is still reported.
 --submit-events enables verified event/clip delivery (may broadcast).
---submit-review-candidates sends 3-class suspected cases for human review only.
+--submit-review-candidates sends 3-class suspected cases for human judgment;
+server broadcast settings can enable preventive warnings for these candidates.
 Unredacted clips are temporary and removed on success or failure.
 """
 
@@ -71,7 +72,7 @@ def main():
     parser.add_argument("--submit-events", action="store_true",
                         help="Send qualified events; can trigger field broadcasts")
     parser.add_argument("--submit-review-candidates", action="store_true",
-                        help="Submit 3-class suspected cases for manual review; no broadcast")
+                        help="Submit 3-class suspected cases for manual review; server settings control preventive broadcasts")
     parser.add_argument("--replay-buffer", action="store_true",
                         help="Analyze existing buffered chunks for inspection only; cannot submit events")
     args = parser.parse_args()

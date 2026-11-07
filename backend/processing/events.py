@@ -37,7 +37,7 @@ class EventSubmission(BaseModel):
     frame_sample_count: int = Field(ge=1, le=100000)
     model_version: str = Field(min_length=1, max_length=100)
 
-    # True: suspected violation for human review; never queue broadcast.
+    # True: suspected violation for human review, not a confirmed violation.
     review_only: bool = False
 
     @model_validator(mode="after")
@@ -207,13 +207,9 @@ def submit(body: EventSubmission):
             )
 
     # Storage has committed.
-    # Review-only candidates must never trigger field broadcasts.
-    if review_only:
-        broadcast = {
-            "queued": False,
-            "reason": "review_only_candidate",
-        }
-    elif previous and previous["event_status"] != "pending":
+    # A preventive warning is independent of the administrator's final judgment.
+    # Both candidate types use the same broadcast switch and deduplication rules.
+    if previous and previous["event_status"] != "pending":
         broadcast = {
             "queued": False,
             "reason": "event_no_longer_pending",
