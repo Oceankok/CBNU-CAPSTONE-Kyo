@@ -8,9 +8,10 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from backend.db.event_repository import get_connection
+from backend.db.event_repository import get_connection, get_broadcast_settings, save_broadcast_settings
+from backend.field.service import enqueue_event_broadcast
 from backend.processing.events import EventSubmission, submit
-from backend.tests.support import isolated_api, login
+from backend.tests.support import isolated_api, login, ready_media
 
 
 class ReviewOnlySubmissionTests(unittest.TestCase):
@@ -48,18 +49,27 @@ class ReviewOnlySubmissionTests(unittest.TestCase):
             "review_only": True,
         }
 
-    def test_review_only_saves_without_broadcast(self):
-        body = EventSubmission(**self.payload)
+    def prepare_broadcast(self):
+        self.admin = login(self.client)
+        token = self.client.post('/api/nodes', headers=self.admin,
+            json={'node_id': 'review-speaker', 'name': 'Review warning test'}).json()['token']
+        self.node = {'Authorization': 'Bearer ' + token}
+        self.client.put('/api/cameras/'+self.camera_id+'/node', headers=self.admin,
+            json={'source_node_id': 'review-speaker', 'output_node_id': 'review-speaker'}).raise_for_status()
+        self.client.post('/api/field/heartbeat', headers=self.node).raise_for_status()
+        settings = get_broadcast_settings()
+        settings.update(enabled=True, cooldown_sec=30, default_language='ko', templates=[
+            {'ppe_type': 'helmet', 'zone_name': '', 'language': 'ko', 'message': '안전모 착용 상태를 확인해 주세요.'}])
+        save_broadcast_settings(settings)
 
-        with patch(
-            "backend.processing.events.enqueue_event_broadcast"
-        ) as broadcast:
-            result = submit(body)
-            broadcast.assert_not_called()
+    def test_review_only_warns_but_remains_pending_without_verified_confidence(self):
+        self.prepare_broadcast()
+        body = EventSubmission(**self.payload)
+        result = submit(body)
 
         self.assertTrue(result["created"])
         self.assertTrue(result["review_only"])
-        self.assertFalse(result["broadcast"]["queued"])
+        self.assertTrue(result["broadcast"]["queued"])
 
         with get_connection() as conn:
             event = conn.execute(
@@ -80,6 +90,10 @@ class ReviewOnlySubmissionTests(unittest.TestCase):
         self.assertEqual(event["event_status"], "pending")
         self.assertEqual(event["ai_confidence"], 0.0)
         self.assertEqual(mode["review_only"], 1)
+        self.assertIsNone(self.query_event(self.event_id)['ai_confidence'])
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM event_review WHERE event_id=?',
+                (self.event_id,)).fetchone()[0], 0)
 
     def query_event(self, event_id):
         admin = login(self.client)
@@ -126,20 +140,65 @@ class ReviewOnlySubmissionTests(unittest.TestCase):
         for path in ('/api/events', '/api/events/' + self.event_id):
             self.assertEqual(self.client.get(path, headers=worker).status_code, 403)
 
-    def test_retry_never_broadcasts(self):
+    def test_retry_queues_only_one_preventive_warning(self):
+        self.prepare_broadcast()
         body = EventSubmission(**self.payload)
-
-        with patch(
-            "backend.processing.events.enqueue_event_broadcast"
-        ) as broadcast:
-            first = submit(body)
-            second = submit(body)
-            broadcast.assert_not_called()
+        first = submit(body)
+        second = submit(body)
 
         self.assertTrue(first["created"])
         self.assertFalse(second["created"])
         self.assertEqual(first["event_id"], second["event_id"])
         self.assertFalse(second["broadcast"]["queued"])
+        self.assertEqual(second['broadcast']['reason'], 'already_requested')
+        with get_connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM field_command WHERE event_id=? AND kind='broadcast'",
+                (self.event_id,)).fetchone()[0], 1)
+
+    def test_warning_respects_off_switch_and_cooldown(self):
+        self.prepare_broadcast()
+        settings = get_broadcast_settings()
+        settings['enabled'] = False
+        save_broadcast_settings(settings)
+        self.assertEqual(submit(EventSubmission(**self.payload))['broadcast']['reason'], 'broadcast_disabled')
+        settings['enabled'] = True
+        save_broadcast_settings(settings)
+        self.assertTrue(submit(EventSubmission(**self.payload))['broadcast']['queued'])
+        other = {**self.payload, 'event_id': 'EVT_' + uuid4().hex}
+        self.assertEqual(submit(EventSubmission(**other))['broadcast']['reason'], 'cooldown_active')
+
+    def test_administrator_review_remains_required_and_blocks_late_warning(self):
+        self.prepare_broadcast()
+        settings = get_broadcast_settings()
+        settings['enabled'] = False
+        save_broadcast_settings(settings)
+        submit(EventSubmission(**self.payload))
+        with ready_media(self.event_id):
+            response = self.client.post('/api/events/'+self.event_id+'/review', headers=self.admin,
+                json={'review_result': 'false_positive', 'review_reason_code': 'false_positive_other'})
+            self.assertEqual(response.status_code, 200, response.text)
+        settings['enabled'] = True
+        save_broadcast_settings(settings)
+        self.assertEqual(submit(EventSubmission(**self.payload))['broadcast']['reason'], 'event_no_longer_pending')
+        response = self.client.post('/api/events/'+self.event_id+'/broadcast', headers=self.admin)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['reason'], 'event_no_longer_pending')
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT confirmed_violation FROM event_review WHERE event_id=?',
+                (self.event_id,)).fetchone()[0], 0)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM field_command WHERE event_id=?',
+                (self.event_id,)).fetchone()[0], 0)
+
+    def test_concurrent_review_candidates_queue_one_warning(self):
+        from concurrent.futures import ThreadPoolExecutor
+        self.prepare_broadcast()
+        body = EventSubmission(**self.payload)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: submit(body), range(2)))
+        self.assertEqual(sorted(row['created'] for row in results), [False, True])
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM field_command WHERE event_id=?',
+                (self.event_id,)).fetchone()[0], 1)
 
     def test_mode_change_is_rejected(self):
         submit(EventSubmission(**self.payload))

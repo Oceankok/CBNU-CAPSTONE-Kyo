@@ -39,19 +39,21 @@ def enqueue_event_broadcast(event_id):
         raise HTTPException(404, "Event not found")
     settings = get_broadcast_settings()
     now = time.time()
-    # Keep mode checking in the same write transaction as broadcast insertion.
+    # Recheck review state in the same write transaction as queue insertion.
     with get_connection() as conn:
         begin_write(conn)
-        review_only = conn.execute(
-            "SELECT review_only FROM processing_review_only_event WHERE event_id=?",
+        current = conn.execute(
+            "SELECT event_status FROM candidate_event WHERE event_id=?",
             (event_id,),
         ).fetchone()
-        if review_only is not None and bool(review_only[0]):
-            return {"queued": False, "reason": "review_only_candidate"}
+        if current is None:
+            raise HTTPException(404, "Event not found")
         if not settings.get("enabled"):
             return {"queued": False, "reason": "broadcast_disabled"}
         if conn.execute('SELECT 1 FROM event_merge WHERE source_event_id=?', (event_id,)).fetchone():
             return {'queued': False, 'reason': 'event_merged'}
+        if current["event_status"] != "pending":
+            return {"queued": False, "reason": "event_no_longer_pending"}
         node = conn.execute("""SELECT n.* FROM field_node n JOIN camera_node c ON c.output_node_id=n.node_id
                                WHERE c.camera_id=? AND n.is_active=1""", (event["camera_id"],)).fetchone()
         if not node:
