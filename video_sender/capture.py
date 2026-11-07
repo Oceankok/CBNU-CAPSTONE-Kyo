@@ -5,11 +5,12 @@ import subprocess
 from pathlib import Path
 import time
 from datetime import datetime,timezone
+from uuid import uuid4
 
 if __package__:
-    from .chunks import next_sequence
+    from .chunks import next_sequence, publish_completed_segments
 else:
-    from chunks import next_sequence
+    from chunks import next_sequence, publish_completed_segments
 
 CAMERA_INDEX = int(os.getenv("VIDEO_CAMERA_INDEX", "0"))
 FPS = 15
@@ -20,6 +21,7 @@ SEGMENT_SECONDS = 1
 OUTPUT_DIR = Path(os.getenv("VIDEO_OUTPUT_DIR", "video_sender/output"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 START_SEQUENCE = next_sequence(OUTPUT_DIR)
+SEGMENT_LIST = OUTPUT_DIR / f".capture-{uuid4().hex}.list"
 
 cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
 
@@ -42,6 +44,7 @@ command = [
     "-video_size", f"{width}x{height}",
     "-framerate", str(FPS),
     "-i", "-",
+    "-map", "0:v:0",
     "-an",
     "-c:v", "libx264",
     "-preset", "ultrafast",
@@ -49,10 +52,14 @@ command = [
     "-g", str(FPS),
     "-sc_threshold", "0",
     "-f", "segment",
+    "-segment_format", "mp4",
+    "-segment_list", str(SEGMENT_LIST),
+    "-segment_list_type", "flat",
+    "-segment_list_size", "8",
     "-segment_time", str(SEGMENT_SECONDS),
     "-segment_start_number", str(START_SEQUENCE),
     "-reset_timestamps", "1",
-    str(OUTPUT_DIR / "chunk_%05d.mp4"),
+    str(OUTPUT_DIR / "chunk_%05d.mp4.part"),
 ]
 
 process = subprocess.Popen(command, stdin=subprocess.PIPE)
@@ -68,6 +75,7 @@ try:
     frame_count = 0
 
     while True:
+        publish_completed_segments(OUTPUT_DIR, SEGMENT_LIST)
         success, frame = cap.read()
 
         if not success:
@@ -121,4 +129,6 @@ finally:
         process.stdin.close()
 
     process.wait()
+    publish_completed_segments(OUTPUT_DIR, SEGMENT_LIST)
+    SEGMENT_LIST.unlink(missing_ok=True)
     print("프로그램 종료")

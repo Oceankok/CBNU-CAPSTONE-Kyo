@@ -24,6 +24,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File video_sender/Start-Camera.ps
 
 두 번째 PowerShell에서 송신합니다.
 
+촬영 중인 영상은 `chunk_*.mp4.part`로 저장하고, FFmpeg 완료 목록에 기록된 뒤에만 `.mp4`로 전환합니다. 송신기는 `.part` 파일을 읽지 않습니다. 강제 종료 후 남은 `.part`는 재시작 시 덮어쓰거나 자동 전송하지 않습니다. 이 변경을 받을 때는 기존 촬영·송신을 모두 종료한 뒤 두 프로그램을 다시 실행합니다.
+
 ```powershell
 Set-Location (Join-Path $env:USERPROFILE 'KyoCamera')
 powershell -NoProfile -ExecutionPolicy Bypass -File video_sender/Start-Camera.ps1 -Mode Send

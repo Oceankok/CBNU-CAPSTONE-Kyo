@@ -9,7 +9,7 @@ def next_sequence(directory):
         int(match.group(1))
         for path in directory.iterdir()
         if path.is_file()
-        and (match := re.fullmatch(r"chunk_(\d+)\.(?:mp4|txt)", path.name))
+        and (match := re.fullmatch(r"chunk_(\d+)\.(?:mp4(?:\.part)?|txt)", path.name))
     )
     return max(numbers, default=-1) + 1
 
@@ -20,6 +20,33 @@ def completed_chunks(directory):
          if path.is_file() and re.fullmatch(r"chunk_\d+\.mp4", path.name)),
         key=lambda path: int(path.stem.removeprefix("chunk_")),
     )
-    # FFmpeg closes the preceding segment before opening the next one. Capture
-    # resumes above all existing numbers, so the greatest one is the active tail.
+    # Preserve the legacy sender's tail exclusion for folders written by older
+    # capture versions. New capture publishes finalized .part files separately.
     return chunks[:-1]
+
+
+def publish_completed_segments(directory, manifest):
+    """Expose only segments whose trailer FFmpeg has finished writing.
+
+    The bounded flat list may be replaced while we read it. Only complete,
+    strictly named lines are used; a transient sharing violation is retried on
+    the next capture iteration, after FFmpeg closes its file handle.
+    """
+    try:
+        entries = manifest.read_text(encoding="utf-8").splitlines(keepends=True)
+    except (FileNotFoundError, PermissionError):
+        return
+    for entry in entries:
+        if not entry.endswith('\n'):
+            continue
+        name = entry.rstrip('\r\n')
+        if not re.fullmatch(r"chunk_\d+\.mp4\.part", name):
+            continue
+        pending = directory / name
+        ready = pending.with_suffix('')
+        if ready.exists():
+            continue
+        try:
+            pending.rename(ready)
+        except (FileNotFoundError, PermissionError):
+            continue
