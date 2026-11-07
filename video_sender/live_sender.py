@@ -10,6 +10,11 @@ from datetime import datetime,timezone
 from email.utils import parsedate_to_datetime
 import math
 
+if __package__:
+    from .chunks import completed_chunks
+else:
+    from chunks import completed_chunks
+
 # 서버 연결 설정
 SERVER_URL = os.getenv(
     "VIDEO_SERVER_URL", "http://127.0.0.1:8000"
@@ -230,10 +235,7 @@ def watch_and_send():
 
     try:
         while True:
-            chunks = sorted(OUTPUT_DIR.glob("chunk_*.mp4"))
-
-            # 마지막 파일은 FFmpeg가 작성 중일 수 있으므로 제외
-            completed = chunks[:-1]
+            completed = completed_chunks(OUTPUT_DIR)
 
             for path in completed:
                 match = CHUNK_PATTERN.fullmatch(path.name)
