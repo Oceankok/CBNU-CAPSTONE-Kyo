@@ -105,6 +105,65 @@ class VideoClientContractTests(unittest.TestCase):
             self.client.submit_event(event)
         self.assertEqual(raised.exception.response.status_code, 422)
 
+    def test_camera_policy_without_roi_preserves_camera_wide_rules(self):
+        policy = self.client.get_ppe_policy("CAM_001")
+        legacy = self.api.get("/api/cameras/CAM_001/ppe-policy",
+                              headers=self.admin).json()
+        for key, value in legacy.items():
+            self.assertEqual(policy[key], value)
+        self.assertEqual(policy["areas"], [])
+        self.assertTrue(policy["policy_version"])
+        self.assertIn(("GET", "/api/processing/cameras/CAM_001/work-area-policy"),
+                      self.requests)
+        self.api.put("/api/processing/workers/inference-contract", headers=self.admin,
+                     json={"enabled": False}).raise_for_status()
+        with self.assertRaises(httpx.HTTPStatusError) as error:
+            self.client.get_ppe_policy("CAM_001")
+        self.assertEqual(error.exception.response.status_code, 403)
+
+    def test_roi_policy_reaches_person_resolver_and_invalid_roi_fails_closed(self):
+        from inference_worker.work_area_policy import resolve_person_policy
+
+        root = "/api/cameras/CAM_001"
+        self.api.put("/api/zones/프레스 구역", headers=self.admin,
+                     json={"required_ppe": [], "rules": []}).raise_for_status()
+        equipment = self.api.post("/api/equipment", headers=self.admin,
+            json={"name": "ROI contract", "zone_name": "프레스 구역",
+                  "required_ppe": ["helmet"]})
+        equipment.raise_for_status()
+        self.api.put(root + "/equipment", headers=self.admin,
+            json={"equipment_ids": [equipment.json()["equipment_id"]]}).raise_for_status()
+        area = self.api.post(root + "/work-areas", headers=self.admin,
+            json={"name": "ROI", "equipment_id": equipment.json()["equipment_id"],
+                  "points": [[0.6, 0], [1, 0], [1, 1], [0.6, 1]]})
+        area.raise_for_status()
+        version = self.api.get(root + "/work-areas", headers=self.admin).json()["version"]
+        self.api.put(root + "/work-area-config", headers=self.admin,
+            json={"enabled": True, "expected_version": version}).raise_for_status()
+
+        policy = self.client.get_ppe_policy("CAM_001")
+        self.assertTrue(policy["configured"])
+        self.assertEqual(policy["scope"], "work_area")
+        outside = resolve_person_policy(policy, [10, 10, 30, 80], 100, 100)
+        inside = resolve_person_policy(policy, [70, 10, 90, 80], 100, 100)
+        self.assertEqual(outside["required_ppe"], [])
+        self.assertEqual(outside["area_ids"], [])
+        self.assertEqual(inside["required_ppe"], ["helmet"])
+        self.assertEqual(inside["area_ids"], [area.json()["area_id"]])
+        legacy = self.api.get("/api/processing/cameras/CAM_001/ppe-policy",
+                              headers=self.client.client.headers).json()
+        self.assertFalse(legacy["configured"])
+
+        self.api.delete(root + "/work-areas/" + area.json()["area_id"],
+            headers=self.admin, params={"expected_version": area.json()["version"]}).raise_for_status()
+        invalid = self.client.get_ppe_policy("CAM_001")
+        self.assertFalse(invalid["configured"])
+        self.assertIn("work_areas_empty", invalid["configuration_issues"])
+        with self.assertRaises(ValueError):
+            resolve_person_policy(invalid, [70, 10, 90, 80], 100, 100)
+        self.assertNotIn(("GET", "/api/processing/cameras/CAM_001/ppe-policy"),
+                         self.requests)
+
 
     def test_reference_collector_attaches_peer_without_second_event(self):
         from datetime import timedelta
