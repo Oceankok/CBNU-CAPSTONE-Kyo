@@ -6,6 +6,11 @@ from pathlib import Path
 import time
 from datetime import datetime,timezone
 
+if __package__:
+    from .chunks import next_sequence
+else:
+    from chunks import next_sequence
+
 CAMERA_INDEX = int(os.getenv("VIDEO_CAMERA_INDEX", "0"))
 FPS = 15
 WIDTH = 640
@@ -14,6 +19,7 @@ SEGMENT_SECONDS = 1
 
 OUTPUT_DIR = Path(os.getenv("VIDEO_OUTPUT_DIR", "video_sender/output"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+START_SEQUENCE = next_sequence(OUTPUT_DIR)
 
 cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
 
@@ -44,6 +50,7 @@ command = [
     "-sc_threshold", "0",
     "-f", "segment",
     "-segment_time", str(SEGMENT_SECONDS),
+    "-segment_start_number", str(START_SEQUENCE),
     "-reset_timestamps", "1",
     str(OUTPUT_DIR / "chunk_%05d.mp4"),
 ]
@@ -77,7 +84,7 @@ try:
 
         try:
             if frame_count % (FPS * SEGMENT_SECONDS) == 0:
-                sequence = frame_count // (FPS *SEGMENT_SECONDS)
+                sequence = START_SEQUENCE + frame_count // (FPS *SEGMENT_SECONDS)
 
                 capture_start = datetime.now(timezone.utc)
                 timestamp_file = OUTPUT_DIR / f"chunk_{sequence:05d}.txt"
