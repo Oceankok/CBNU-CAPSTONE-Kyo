@@ -497,7 +497,10 @@ def main():
                     if chunk_evictions:
                         print(f"[BUFFER LIMIT] camera={args.camera_id} evicted={chunk_evictions} bytes={clip_buffer.bytes_used}")
                     priority.release()
-                    time.sleep(args.poll)  # Give queued redaction work an idle boundary.
+                    # Poll waits belong to empty input. A full poll after every
+                    # 1s chunk adds analysis time on top and makes live lag grow.
+                    # Keep a short lease-free boundary for redaction to progress.
+                    time.sleep(min(args.poll, 0.1))
                     last_sequence = sequence
                     previous_chunk = chunk
                     processed += 1
