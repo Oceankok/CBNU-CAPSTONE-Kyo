@@ -31,7 +31,7 @@
   padding: 10px 14px;
   background: #f7fafc;
   border-bottom: 2px solid #e2e8f0;
-  color: #718096;
+  color: var(--text-muted);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -61,7 +61,7 @@
 .eventId {
   font-family: monospace;
   font-size: 11px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 /* PPE type tags */
@@ -103,13 +103,13 @@
 
 .empty {
   text-align: center;
-  color: #a0aec0;
+  color: var(--text-faint);
   padding: 24px;
 }
 
 .count {
   font-size: 12px;
-  color: #a0aec0;
+  color: var(--text-faint);
   text-align: right;
   margin: 0;
 }
@@ -152,7 +152,7 @@
 
   .table td[data-label='발생 일시'] {
     order: 3;
-    color: #718096;
+    color: var(--text-muted);
     font-size: 12px;
   }
 
@@ -164,7 +164,7 @@
   .table td[data-label='신뢰도']::before {
     content: '신뢰도 ';
     font-size: 12px;
-    color: #a0aec0;
+    color: var(--text-faint);
   }
 }
 

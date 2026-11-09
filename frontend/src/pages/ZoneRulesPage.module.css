@@ -8,7 +8,7 @@
 .desc {
   margin: 0;
   font-size: 13px;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 .errorMsg {
@@ -61,7 +61,7 @@
   border: 2px solid #e2e8f0;
   border-radius: 999px;
   background: #f7fafc;
-  color: #718096;
+  color: var(--text-muted);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
@@ -180,13 +180,13 @@
 
 .notDetected {
   margin-left: 2px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .ppeNote {
   margin: -6px 0 0;
   font-size: 12px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 /* ─── Zone members (workers / cameras) ─────────────── */
@@ -222,7 +222,7 @@
 }
 
 .memberOff {
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .memberRemove {
@@ -231,7 +231,7 @@
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: #718096;
+  color: var(--text-muted);
   font-size: 15px;
   line-height: 1;
   cursor: pointer;

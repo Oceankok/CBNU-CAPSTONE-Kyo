@@ -12,7 +12,7 @@
 
 .label {
   font-size: 13px;
-  color: #718096;
+  color: var(--text-muted);
   font-weight: 500;
 }
 
@@ -32,7 +32,7 @@
 
 .sub {
   font-size: 12px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .trend {

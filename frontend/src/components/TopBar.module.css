@@ -52,7 +52,7 @@
   display: none;
   background: none;
   border: none;
-  color: #718096;
+  color: var(--text-muted);
   font-size: 13px;
   cursor: pointer;
   padding: 8px 0;
@@ -82,4 +82,12 @@
 
 .back:hover {
   background: #f7fafc;
+}
+
+@media (max-width: 768px) {
+  .back {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
 }

@@ -34,7 +34,7 @@
   display: block;
   margin-top: 2px;
   font-size: 13px;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 .arrow {

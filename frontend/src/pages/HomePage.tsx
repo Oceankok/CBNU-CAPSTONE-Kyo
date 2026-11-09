@@ -36,7 +36,7 @@ export default function HomePage() {
   return (
     <div className={styles.page}>
       {error && <p style={{ color: '#e53e3e' }}>⚠ API 오류: {error}</p>}
-      {loading && <p style={{ color: '#718096' }}>데이터를 불러오는 중...</p>}
+      {loading && <p style={{ color: 'var(--text-muted)' }}>데이터를 불러오는 중...</p>}
 
       {/* Primary action: events waiting for a human decision */}
       {pending && (

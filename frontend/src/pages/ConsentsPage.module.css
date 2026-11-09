@@ -8,7 +8,7 @@
 .desc {
   margin: 0;
   font-size: 13px;
-  color: #718096;
+  color: var(--text-muted);
   line-height: 1.5;
 }
 
@@ -71,12 +71,12 @@
 .metaMono {
   margin: 0;
   font-size: 12px;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 .metaMono {
   font-family: ui-monospace, monospace;
-  color: #a0aec0;
+  color: var(--text-faint);
   word-break: break-all;
 }
 
@@ -94,7 +94,7 @@
 
 .off {
   background: #edf2f7;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 .actions {

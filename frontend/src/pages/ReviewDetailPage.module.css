@@ -28,7 +28,7 @@
 /* Technical ID — the headline card carries the meaning */
 .eventLabel {
   font-family: monospace;
-  color: #a0aec0;
+  color: var(--text-faint);
   font-size: 12px;
 }
 
@@ -89,7 +89,7 @@
 }
 
 .techDetails summary {
-  color: #a0aec0;
+  color: var(--text-faint);
   cursor: pointer;
 }
 
@@ -98,7 +98,7 @@
 }
 
 .techDetails .dl dd {
-  color: #718096;
+  color: var(--text-muted);
   font-weight: 400;
 }
 
@@ -112,7 +112,7 @@
 }
 
 .dl dt {
-  color: #718096;
+  color: var(--text-muted);
   align-self: center;
 }
 
@@ -157,7 +157,7 @@
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s;
   background: #f7fafc;
   color: #4a5568;
 }
@@ -187,7 +187,7 @@
   opacity: 0.4;
   cursor: not-allowed;
   border-color: transparent;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 /* Active / selected state */
@@ -242,7 +242,7 @@
 
 .optional {
   font-weight: 400;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .select,
@@ -259,7 +259,7 @@
 
 .select:disabled {
   background: #f7fafc;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .textarea {
@@ -364,7 +364,7 @@
   align-items: center;
   gap: 12px;
   padding: 48px;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 /* Tablet/mobile: stack media above the form */

@@ -114,7 +114,7 @@ export default function RecommendPage() {
         <p style={{ color: '#e53e3e', marginBottom: '1rem' }}>⚠ {error}</p>
       )}
       {loading && (
-        <p style={{ color: '#718096', marginBottom: '1rem' }}>
+        <p style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>
           데이터를 불러오는 중...
         </p>
       )}

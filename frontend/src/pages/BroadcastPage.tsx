@@ -142,7 +142,7 @@ export default function BroadcastPage() {
   }
 
   if (loading) {
-    return <p style={{ color: '#718096' }}>설정을 불러오는 중...</p>;
+    return <p style={{ color: 'var(--text-muted)' }}>설정을 불러오는 중...</p>;
   }
 
   return (
@@ -259,7 +259,7 @@ export default function BroadcastPage() {
         </p>
 
         {settings.templates.length === 0 && (
-          <p style={{ color: '#718096', fontSize: 13 }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
             등록된 템플릿이 없습니다.
           </p>
         )}

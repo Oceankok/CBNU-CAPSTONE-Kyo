@@ -91,6 +91,6 @@
 .hint {
   margin: 0;
   font-size: 12px;
-  color: #a0aec0;
+  color: var(--text-faint);
   text-align: center;
 }
