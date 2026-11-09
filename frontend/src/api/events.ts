@@ -1,4 +1,5 @@
 import { apiFetch } from './client';
+import { cached, invalidate } from './apiCache';
 import type {
   CandidateEvent,
   EventReview,
@@ -9,6 +10,20 @@ import type {
   RedactionMode,
   ReviewAvailability,
 } from '../types';
+
+// How long a read is reused. Writes below invalidate, so a shorter wait is only for changes made elsewhere
+const LIST_TTL_MS = 15_000;
+const DETAIL_TTL_MS = 30_000;
+const MEDIA_TTL_MS = 15_000;
+
+// A write changed these events: drop what we hold so the next read is fresh
+const afterWrite = <T>(result: Promise<T>, eventId?: string): Promise<T> =>
+  result.then((value) => {
+    invalidate('events:');
+    invalidate(eventId ? `event:${eventId}` : 'event:');
+    invalidate(eventId ? `media:${eventId}` : 'media:');
+    return value;
+  });
 
 export interface EventListResponse {
   total: number;
@@ -30,7 +45,10 @@ export function fetchEvents(
   if (dateFrom) q.set('date_from', dateFrom);
   if (dateTo) q.set('date_to', dateTo);
   const qs = q.toString();
-  return apiFetch<EventListResponse>(`/api/events${qs ? `?${qs}` : ''}`);
+  // The same list feeds the review page, the alert poller and the merge panel; share one read
+  return cached(`events:${dateFrom ?? ''}:${dateTo ?? ''}`, LIST_TTL_MS, () =>
+    apiFetch<EventListResponse>(`/api/events${qs ? `?${qs}` : ''}`),
+  );
 }
 
 export interface MergeRequest {
@@ -44,24 +62,32 @@ export function mergeEvents(
   eventId: string,
   body: MergeRequest,
 ): Promise<unknown> {
-  return apiFetch(`/api/events/${encodeURIComponent(eventId)}/merge`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
+  // A merge changes the representative and every source event
+  return afterWrite(
+    apiFetch(`/api/events/${encodeURIComponent(eventId)}/merge`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  );
 }
 
 export function fetchEvent(eventId: string): Promise<EventDetailResponse> {
-  return apiFetch<EventDetailResponse>(`/api/events/${eventId}`);
+  return cached(`event:${eventId}`, DETAIL_TTL_MS, () =>
+    apiFetch<EventDetailResponse>(`/api/events/${eventId}`),
+  );
 }
 
 export function submitReview(
   eventId: string,
   body: ReviewRequest,
 ): Promise<unknown> {
-  return apiFetch(`/api/events/${eventId}/review`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
+  return afterWrite(
+    apiFetch(`/api/events/${eventId}/review`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+    eventId,
+  );
 }
 
 // PUT endpoint — used to overwrite an existing review for hold / second_review_needed events
@@ -69,27 +95,38 @@ export function updateReview(
   eventId: string,
   body: ReviewRequest,
 ): Promise<unknown> {
-  return apiFetch(`/api/events/${eventId}/review`, {
-    method: 'PUT',
-    body: JSON.stringify(body),
-  });
+  return afterWrite(
+    apiFetch(`/api/events/${eventId}/review`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+    eventId,
+  );
 }
 
-export function fetchEventMedia(eventId: string): Promise<{
+// `fresh` skips the stored copy; use it when polling for a processing state to change
+export function fetchEventMedia(
+  eventId: string,
+  options: { fresh?: boolean } = {},
+): Promise<{
   items: EventMedia[];
   retention: EventRetention;
   review_availability?: ReviewAvailability;
 }> {
-  return apiFetch(`/api/events/${encodeURIComponent(eventId)}/media`);
+  return cached(`media:${eventId}`, options.fresh ? 0 : MEDIA_TTL_MS, () =>
+    apiFetch(`/api/events/${encodeURIComponent(eventId)}/media`),
+  );
 }
 
 export function reprocessMedia(
   mediaId: string,
   mode: RedactionMode = 'scrfd',
 ): Promise<EventMedia> {
-  return apiFetch(
-    `/api/media/${encodeURIComponent(mediaId)}/redact?redaction_mode=${mode}`,
-    { method: 'POST' },
+  return afterWrite(
+    apiFetch(
+      `/api/media/${encodeURIComponent(mediaId)}/redact?redaction_mode=${mode}`,
+      { method: 'POST' },
+    ),
   );
 }
 
@@ -106,13 +143,13 @@ export function uploadEventMedia(
     camera_id: cameraId,
     redaction_mode: mode,
   });
-  return apiFetch(
-    `/api/events/${encodeURIComponent(eventId)}/media?${params}`,
-    {
+  return afterWrite(
+    apiFetch(`/api/events/${encodeURIComponent(eventId)}/media?${params}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream' },
       body: file,
-    },
+    }),
+    eventId,
   );
 }
 
@@ -127,15 +164,21 @@ export function saveEventRetention(
     retain_until?: string;
   },
 ): Promise<EventRetention> {
-  return apiFetch(`/api/events/${encodeURIComponent(eventId)}/retention`, {
-    method: 'PUT',
-    body: JSON.stringify(body),
-  });
+  return afterWrite(
+    apiFetch<EventRetention>(
+      `/api/events/${encodeURIComponent(eventId)}/retention`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    ),
+    eventId,
+  );
 }
 
 export function retryMediaDeletion(eventId: string): Promise<EventRetention> {
-  return apiFetch(
-    `/api/events/${encodeURIComponent(eventId)}/retention/retry`,
-    { method: 'POST' },
+  return afterWrite(
+    apiFetch<EventRetention>(
+      `/api/events/${encodeURIComponent(eventId)}/retention/retry`,
+      { method: 'POST' },
+    ),
+    eventId,
   );
 }
