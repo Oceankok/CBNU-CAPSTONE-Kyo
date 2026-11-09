@@ -5,6 +5,7 @@ import StatusBadge from '../components/StatusBadge';
 import { fetchEvents } from '../api/events';
 import type { FilterState, CandidateEvent } from '../types';
 import { formatEventTime } from '../time';
+import { useSeenEvents } from '../seenEvents';
 import {
   REVIEW_NEEDED_HINT,
   confidenceLevel,
@@ -48,6 +49,7 @@ export default function ReviewListPage() {
   const [events, setEvents] = useState<CandidateEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { isUnseen, markSeen } = useSeenEvents();
 
   // The date range is filtered by the server so it uses Korea calendar days
   const { dateFrom, dateTo } = filters;
@@ -73,6 +75,7 @@ export default function ReviewListPage() {
 
   const visibleEvents = useMemo(() => sortEvents(applyFilters(events, filters)), [events, filters]);
   const pendingCount = events.filter((e) => e.event_status === 'pending').length;
+  const unseenEvents = events.filter(isUnseen);
   // Extract unique zone names from fetched events for dynamic filter options
   const availableZones = useMemo(
     () => [...new Set(events.map((e) => e.zone_name))].sort(),
@@ -86,6 +89,19 @@ export default function ReviewListPage() {
       {!loading && pendingCount > 0 && (
         <div className={styles.pendingBanner}>
           미검토 이벤트가 <strong>{pendingCount}건</strong> 있습니다. 확인 후 검토해 주세요.
+          {unseenEvents.length > 0 && (
+            <>
+              {' '}
+              아직 열어 보지 않은 이벤트는 <strong>{unseenEvents.length}건</strong>입니다.
+              <button
+                type="button"
+                className={styles.markAllBtn}
+                onClick={() => markSeen(unseenEvents.map((e) => e.event_id))}
+              >
+                모두 확인함으로 표시
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -115,10 +131,13 @@ export default function ReviewListPage() {
               visibleEvents.map((event) => (
                 <tr
                   key={event.event_id}
-                  className={`${styles.row} ${event.event_status === 'pending' ? styles.pendingRow : ''}`}
+                  className={`${styles.row} ${event.event_status === 'pending' ? styles.pendingRow : ''} ${isUnseen(event) ? styles.unseenRow : ''}`}
                   onClick={() => navigate(`/review/${event.event_id}`)}
                 >
-                  <td className={styles.eventId}>{event.event_id}</td>
+                  <td className={styles.eventId}>
+                    {event.event_id}
+                    {isUnseen(event) && <span className={styles.unseenTag}>미확인</span>}
+                  </td>
                   <td data-label="발생 일시">{formatEventTime(event.timestamp_start, event.timestamp_timezone)}</td>
                   <td data-label="구역">{event.zone_name}</td>
                   <td data-label="PPE 유형">
