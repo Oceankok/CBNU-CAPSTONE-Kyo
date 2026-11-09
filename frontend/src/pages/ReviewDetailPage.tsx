@@ -15,6 +15,7 @@ import type {
   ReviewAvailability,
 } from '../types';
 import { formatEventTime, formatSeoul } from '../time';
+import { markEventsSeen } from '../seenEvents';
 import {
   REVIEW_NEEDED_HINT,
   confidenceLevel,
@@ -128,6 +129,8 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
     if (!event_id) return;
     fetchEvent(event_id)
       .then(({ event: ev, review, review_history = [] }) => {
+        // Opening an event counts as checking it, whether or not it gets reviewed
+        markEventsSeen([ev.event_id]);
         setEvent(ev);
         setReviewHistory(review_history);
         setExistingReview(review);
