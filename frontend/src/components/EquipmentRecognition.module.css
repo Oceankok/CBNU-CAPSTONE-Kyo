@@ -18,7 +18,7 @@
 .hint {
   margin: 0;
   font-size: 12px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .label {
@@ -109,7 +109,7 @@
 .reason {
   display: block;
   font-size: 12px;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 .actions {

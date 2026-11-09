@@ -78,7 +78,7 @@
 .notice {
   margin: 0;
   font-size: 12px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .error {
@@ -162,7 +162,7 @@
 .muted {
   margin: 0;
   font-size: 13px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .check {
@@ -245,7 +245,7 @@
 }
 
 .details summary {
-  color: #a0aec0;
+  color: var(--text-faint);
   cursor: pointer;
 }
 
@@ -298,4 +298,13 @@
   font-size: 13px;
   cursor: pointer;
   text-decoration: underline;
+}
+
+/* The download link looks like a button; give it the same 44px tap height on touch screens */
+@media (max-width: 768px) {
+  a.btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
 }

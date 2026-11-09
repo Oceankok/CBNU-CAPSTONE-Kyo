@@ -41,7 +41,7 @@
 
 .dateSep {
   font-size: 13px;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 .sliderWrapper {
@@ -52,7 +52,7 @@
 
 .sliderLabel {
   font-size: 12px;
-  color: #718096;
+  color: var(--text-muted);
   white-space: nowrap;
   min-width: 80px;
 }
@@ -104,5 +104,5 @@
 
 .sliderNote {
   font-size: 11px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }

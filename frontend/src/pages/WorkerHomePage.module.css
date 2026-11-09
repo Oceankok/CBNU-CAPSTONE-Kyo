@@ -51,13 +51,13 @@
 .muted {
   margin: 0;
   font-size: 14px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .zoneLabel {
   margin: 0;
   font-size: 13px;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 .zoneName {
@@ -116,7 +116,7 @@
 .quarter {
   font-size: 13px;
   font-weight: 400;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .education {

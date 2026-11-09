@@ -8,7 +8,7 @@
 .desc {
   margin: 0;
   font-size: 13px;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 .errorMsg,
@@ -73,7 +73,7 @@
 .id {
   font-family: monospace;
   font-size: 12px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .role {
@@ -131,7 +131,7 @@
 
 .select:disabled {
   background: #f7fafc;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .card {
@@ -213,7 +213,7 @@
 
 .self {
   font-size: 12px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .dangerLink {

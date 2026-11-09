@@ -9,12 +9,12 @@
 .hint {
   margin: 0;
   font-size: 13px;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 .hint {
   font-size: 12px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .errorMsg,
@@ -148,7 +148,7 @@
 
 .nodeMeta {
   font-size: 12px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .nodeLang {
@@ -159,7 +159,7 @@
 
 .chevron {
   font-size: 10px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .detail {

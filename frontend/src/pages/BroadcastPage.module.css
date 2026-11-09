@@ -9,7 +9,7 @@
 .desc {
   margin: 0;
   font-size: 13px;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 /* ─── Status messages ─────────────────────────────── */
@@ -60,7 +60,7 @@
 .sectionDesc {
   margin: 0;
   font-size: 12px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 /* ─── Global settings fields ──────────────────────── */
@@ -81,7 +81,7 @@
 
 .fieldHint {
   font-size: 12px;
-  color: #a0aec0;
+  color: var(--text-faint);
 }
 
 .fieldInline {
@@ -114,7 +114,7 @@
 
 .toggleOff {
   background: #e2e8f0;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 /* ─── Generic inputs ──────────────────────────────── */
@@ -209,7 +209,7 @@
 .metaLabel {
   font-size: 11px;
   font-weight: 600;
-  color: #718096;
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }

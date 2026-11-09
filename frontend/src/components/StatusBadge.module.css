@@ -10,7 +10,7 @@
 /* pending: gray */
 .pending {
   background-color: #edf2f7;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 /* confirmed: red */
@@ -40,5 +40,5 @@
 /* merged: gray, folded into another event */
 .merged {
   background-color: #f7fafc;
-  color: #718096;
+  color: var(--text-muted);
 }

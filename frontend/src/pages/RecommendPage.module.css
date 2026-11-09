@@ -10,7 +10,7 @@
 .desc {
   margin: 0;
   font-size: 13px;
-  color: #718096;
+  color: var(--text-muted);
 }
 
 .cardList {
@@ -78,7 +78,7 @@
 .breakdownTitle {
   font-size: 12px;
   font-weight: 600;
-  color: #718096;
+  color: var(--text-muted);
   cursor: pointer;
 }
 
