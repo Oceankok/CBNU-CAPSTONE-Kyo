@@ -39,26 +39,30 @@ class ReviewDetector:
 
 
 class WorkAreaVideoClient(FakeVideoClient):
-    def __init__(self, *, required=True, invalid=False, roi=True, count=9):
+    def __init__(self, *, required=True, invalid=False, roi=True, count=9, ppe_types=("helmet",)):
         super().__init__(count=count)
         self.required = required
+        self.ppe_types = list(ppe_types)
         self.invalid = invalid
         self.roi = roi
 
     def get_ppe_policy(self, camera_id):
         if not self.roi:
-            return super().get_ppe_policy(camera_id)
+            policy = super().get_ppe_policy(camera_id)
+            policy['required_ppe'] = self.ppe_types if self.required else []
+            policy['detectable_ppe'] = ['helmet', 'vest']
+            return policy
         return {
             "configured": True,
             "scope": "work_area",
             "policy_version": "test-roi-v1",
             "configuration_issues": ["invalid_area"] if self.invalid else [],
             "zone_required_ppe": [],
-            "event_supported_ppe": ["helmet"],
+            "event_supported_ppe": ["helmet", "vest"],
             "areas": [{
                 "area_id": "ROI-A",
                 "points": [[0, 0], [0.5, 0], [0.5, 1], [0, 1]],
-                "equipment_required_ppe": ["helmet"] if self.required else [],
+                "equipment_required_ppe": self.ppe_types if self.required else [],
             }],
         }
 
@@ -68,8 +72,8 @@ class StopPolicyPolling(Exception):
 
 
 class ROIRunnerEndToEndTests(unittest.TestCase):
-    def run_case(self, *, required=True, invalid=False, present_from_start=False, roi=True, count=9):
-        client = WorkAreaVideoClient(required=required, invalid=invalid, roi=roi, count=count)
+    def run_case(self, *, required=True, invalid=False, present_from_start=False, roi=True, count=9, ppe_types=("helmet",)):
+        client = WorkAreaVideoClient(required=required, invalid=invalid, roi=roi, count=count, ppe_types=ppe_types)
         self.last_client = client
         output = io.StringIO()
         frame = np.zeros((64, 64, 3), dtype=np.uint8)
@@ -146,6 +150,18 @@ class ROIRunnerEndToEndTests(unittest.TestCase):
         self.assertEqual(len(self.last_client.submitted_events), 1)
         self.assertTrue(self.last_client.submitted_events[0]['review_only'])
         self.assertIsNone(self.last_client.submitted_events[0]['confidence'])
+
+    def test_vest_only_and_dual_ppe_review_delivery(self):
+        for roi in (True, False):
+            for kinds in (("vest",), ("helmet", "vest")):
+                with self.subTest(roi=roi, kinds=kinds):
+                    output, delivery = self.run_case(roi=roi, ppe_types=kinds)
+                    self.assertEqual(delivery.call_count, len(kinds))
+                    events = [call.args[1] for call in delivery.call_args_list]
+                    self.assertEqual({e['ppe_type'] for e in events}, set(kinds))
+                    self.assertEqual(len({e['event_id'] for e in events}), len(kinds))
+                    self.assertTrue(all(e['review_only'] and e['confidence'] is None for e in events))
+                    self.assertEqual(len({e['tracking_id'] for e in events}), 1)
 
     def test_helmet_optional_roi_never_submits(self):
         output, delivery = self.run_case(required=False)

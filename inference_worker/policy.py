@@ -2,8 +2,11 @@
 """Validate camera PPE policies before evaluating violations."""
 
 
-def helmet_policy_status(policy):
-    """Return (enabled, reason) for helmet violation evaluation."""
+def ppe_policy_status(policy, ppe_type):
+    """Return (enabled, reason) for a supported PPE requirement."""
+
+    if ppe_type not in {"helmet", "vest"}:
+        return False, "unsupported_ppe"
 
     if not isinstance(policy, dict):
         return False, "invalid_policy"
@@ -20,10 +23,14 @@ def helmet_policy_status(policy):
     if not isinstance(required, list) or not isinstance(detectable, list):
         return False, "invalid_ppe_lists"
 
-    if "helmet" not in required:
-        return False, "helmet_not_required"
+    if ppe_type not in required:
+        return False, f"{ppe_type}_not_required"
 
-    if "helmet" not in detectable:
-        return False, "helmet_not_detectable"
+    if ppe_type not in detectable:
+        return False, f"{ppe_type}_not_detectable"
 
-    return True, "helmet_required"
+    return True, f"{ppe_type}_required"
+
+
+def helmet_policy_status(policy):
+    return ppe_policy_status(policy, "helmet")
