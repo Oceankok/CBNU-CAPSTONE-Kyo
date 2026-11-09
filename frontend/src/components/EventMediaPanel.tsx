@@ -176,7 +176,7 @@ export default function EventMediaPanel({
     [onAvailability],
   );
   const reload = useCallback(
-    () => fetchEventMedia(eventId).then(apply),
+    () => fetchEventMedia(eventId, { fresh: true }).then(apply),
     [eventId, apply],
   );
 

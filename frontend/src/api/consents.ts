@@ -1,4 +1,5 @@
 import { apiBlob, apiFetch } from './client';
+import { cached, invalidate } from './apiCache';
 
 export interface ConsentRecord {
   record_id: string;
@@ -54,7 +55,9 @@ export function fetchConsents(
 ): Promise<{ items: ConsentRecord[] }> {
   const q = new URLSearchParams({ limit: '100' });
   if (siteCode) q.set('site_code', siteCode);
-  return apiFetch(`/api/consent-records?${q}`);
+  return cached(`consents:${siteCode ?? ''}`, 60_000, () =>
+    apiFetch<{ items: ConsentRecord[] }>(`/api/consent-records?${q}`),
+  );
 }
 
 export function uploadConsent(
@@ -64,7 +67,13 @@ export function uploadConsent(
   const form = new FormData();
   form.append('metadata', JSON.stringify(metadata));
   form.append('file', file);
-  return apiFetch('/api/consent-records', { method: 'POST', body: form });
+  return apiFetch<ConsentRecord>('/api/consent-records', {
+    method: 'POST',
+    body: form,
+  }).then((record) => {
+    invalidate('consents:');
+    return record;
+  });
 }
 
 export function revokeConsent(
@@ -72,13 +81,20 @@ export function revokeConsent(
   expectedVersion: number,
   reason: string,
 ): Promise<ConsentRecord> {
-  return apiFetch(
+  return apiFetch<ConsentRecord>(
     `/api/consent-records/${encodeURIComponent(recordId)}/revoke`,
     {
       method: 'POST',
       body: JSON.stringify({ expected_version: expectedVersion, reason }),
     },
-  );
+  ).then((record) => {
+    // Revoking deletes the media of every event kept under this consent
+    invalidate('consents:');
+    invalidate('events:');
+    invalidate('event:');
+    invalidate('media:');
+    return record;
+  });
 }
 
 // The file needs the Bearer header, so fetch it as a blob and open that
