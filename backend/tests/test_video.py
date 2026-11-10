@@ -3,6 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from backend.tests.support import isolated_api, login
@@ -81,6 +82,52 @@ class VideoIngestTests(unittest.TestCase):
         with patch.object(service, 'cleanup', side_effect=AssertionError('cleanup must be scheduled separately')):
             response = self.upload(stream)
         self.assertEqual(response.status_code, 202, response.text)
+
+    def test_sender_only_keeps_uploading_past_maintenance_interval(self):
+        now = time.time()
+        with patch.object(service, 'time', SimpleNamespace(time=lambda: now)):
+            stream = self.start()
+            with patch.object(service, 'cleanup', side_effect=AssertionError('no polling or housekeeping')):
+                for sequence in range(91):
+                    response = self.upload(stream, sequence=sequence)
+                    self.assertEqual(response.status_code, 202, (sequence, response.text))
+                    now += 1
+            with get_connection() as conn:
+                self.assertLessEqual(conn.execute('SELECT COUNT(*) FROM video_chunk').fetchone()[0], 40)
+            self.assertLessEqual(len(list(service.ROOT.glob('*.mp4'))), 40)
+
+    def test_expired_deletion_failure_preserves_quota_then_recovers(self):
+        stream = self.start()
+        with patch.object(service, 'TOTAL_BYTES', len(self.data)):
+            key = self.upload(stream).json()['chunk_id']
+            path = service.chunk_path(key)
+            with get_connection() as conn:
+                conn.execute('UPDATE video_chunk SET expires_at=?', (time.time()-1,))
+            original_unlink = Path.unlink
+
+            def blocked_unlink(target, *args, **kwargs):
+                if target == path:
+                    raise PermissionError('synthetic file lock')
+                return original_unlink(target, *args, **kwargs)
+
+            with patch.object(Path, 'unlink', autospec=True, side_effect=blocked_unlink):
+                response = self.upload(stream, sequence=1)
+            self.assertEqual(response.status_code, 429, response.text)
+            self.assertTrue(path.exists())
+            with get_connection() as conn:
+                self.assertEqual(conn.execute('SELECT COUNT(*) FROM video_chunk').fetchone()[0], 1)
+            self.assertEqual(self.upload(stream, sequence=1).status_code, 202)
+            self.assertFalse(path.exists())
+
+    def test_quota_recovery_never_removes_unexpired_chunks(self):
+        stream = self.start()
+        with patch.object(service, 'TOTAL_BYTES', len(self.data)):
+            key = self.upload(stream).json()['chunk_id']
+            response = self.upload(stream, sequence=1)
+        self.assertEqual(response.status_code, 429, response.text)
+        self.assertTrue(service.chunk_path(key).exists())
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT last_sequence FROM video_stream WHERE stream_id=?', (stream,)).fetchone()[0], 0)
 
     def test_session_replacement_and_camera_revocation(self):
         old = self.start()

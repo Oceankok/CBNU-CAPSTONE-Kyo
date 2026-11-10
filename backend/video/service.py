@@ -51,19 +51,32 @@ def stream(conn, ident, node_id=None):
     return row
 
 
+def _delete_expired_chunks(conn, timestamp):
+    removed = 0
+    for row in conn.execute('SELECT chunk_id FROM video_chunk WHERE expires_at<=?', (timestamp,)).fetchall():
+        try:
+            chunk_path(row['chunk_id']).unlink(missing_ok=True)
+        except (OSError, HTTPException):
+            continue  # Failed file deletion must continue consuming quota.
+        conn.execute('DELETE FROM video_chunk WHERE chunk_id=?', (row['chunk_id'],))
+        removed += 1
+    return removed
+
+
+def _buffer_full(conn, camera_id, size):
+    total = conn.execute('SELECT COALESCE(SUM(byte_size),0) FROM video_chunk').fetchone()[0]
+    camera = conn.execute('''SELECT COALESCE(SUM(c.byte_size),0),COUNT(*) FROM video_chunk c
+        JOIN video_stream s ON s.stream_id=c.stream_id WHERE s.camera_id=?''', (camera_id,)).fetchone()
+    return total+size > TOTAL_BYTES or camera[0]+size > CAMERA_BYTES or camera[1] >= 40
+
+
 def cleanup():
     timestamp = time.time()
     removed = 0
     with get_connection() as conn:
         begin_write(conn)
         conn.execute("UPDATE video_stream SET status='expired' WHERE status='active' AND last_seen_at<=?", (timestamp-BUFFER_SECONDS,))
-        for row in conn.execute('SELECT chunk_id FROM video_chunk WHERE expires_at<=?', (timestamp,)).fetchall():
-            try:
-                chunk_path(row['chunk_id']).unlink(missing_ok=True)
-            except (OSError, HTTPException):
-                continue  # Retain metadata and quota until a later cleanup succeeds.
-            conn.execute('DELETE FROM video_chunk WHERE chunk_id=?', (row['chunk_id'],))
-            removed += 1
+        removed += _delete_expired_chunks(conn, timestamp)
         referenced = {row[0] for row in conn.execute('SELECT chunk_id FROM video_chunk')}
         # Orphan files may remain after a process dies between file publish and DB commit.
         if ROOT.exists():
@@ -143,11 +156,12 @@ def accept(ident, node_id, sequence, capture_start, duration_ms, source):
             previous = current['last_sequence']
             if sequence <= previous:
                 raise HTTPException(409, 'video_sequence_out_of_order')
-            total = conn.execute('SELECT COALESCE(SUM(byte_size),0) FROM video_chunk').fetchone()[0]
-            camera = conn.execute('''SELECT COALESCE(SUM(c.byte_size),0),COUNT(*) FROM video_chunk c
-                JOIN video_stream s ON s.stream_id=c.stream_id WHERE s.camera_id=?''', (current['camera_id'],)).fetchone()
-            if total+size > TOTAL_BYTES or camera[0]+size > CAMERA_BYTES or camera[1] >= 40:
-                raise HTTPException(429, 'video_buffer_full', headers={'Retry-After':'1'})
+            if _buffer_full(conn, current['camera_id'], size):
+                # Reclaim expired payloads only on quota pressure, under the same
+                # write lock. Do not scan orphan files on the upload hot path.
+                _delete_expired_chunks(conn, time.time())
+                if _buffer_full(conn, current['camera_id'], size):
+                    raise HTTPException(429, 'video_buffer_full', headers={'Retry-After':'1'})
             key, timestamp = str(uuid4()), time.time()
             target = chunk_path(key)
             source.replace(target)
