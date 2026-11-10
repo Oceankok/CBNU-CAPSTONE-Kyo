@@ -7,12 +7,7 @@ import hashlib
 from ultralytics import YOLO
 
 
-DEFAULT_MODEL = (
-    Path(__file__).resolve().parents[1]
-    / "Exp01_yolov8n_640_clean_3class-13"
-    / "weights"
-    / "best.pt"
-)
+DEFAULT_MODEL = Path(__file__).resolve().parents[1] / "best.pt"
 
 
 class PPEDetector:
@@ -24,6 +19,10 @@ class PPEDetector:
 
         self.model = YOLO(str(model_path))
         self.confidence = confidence
+        names = set(self.model.names.values())
+        if not {"person", "helmet"}.issubset(names):
+            raise ValueError(f"PPE model must contain person and helmet: {self.model.names}")
+        self.supported_ppe = {ppe for ppe in ("helmet", "vest") if ppe in names}
         with model_path.open("rb") as weights:
             digest = hashlib.file_digest(weights, "sha256").hexdigest()
         self.model_version = "ppe-" + digest[:16]

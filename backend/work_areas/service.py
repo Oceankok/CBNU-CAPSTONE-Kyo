@@ -92,7 +92,7 @@ def policy(camera_id):
                   'area_config_version': current['version'], 'zone_required_ppe': baseline,
                   'required_ppe': None, 'areas': resolved, 'overlap_allowed': True,
                   'person_anchor': 'bbox_bottom_center', 'boundary_included': True,
-                  'event_supported_ppe': ['helmet']}
+                  'event_supported_ppe': ['helmet', 'vest']}
         result['policy_version'] = fingerprint(result)
         return result
 
