@@ -58,6 +58,23 @@ class EventPaginationApiTests(unittest.TestCase):
         self.assertEqual(filtered.json()["total"], 1)
         self.assertEqual(filtered.json()["items"][0]["ppe_type"], "vest")
 
+    def test_default_limit_caps_response_and_all_pages_cover_the_filtered_set(self):
+        with get_connection() as conn:
+            conn.executemany('''INSERT INTO candidate_event
+                (event_id,camera_id,tracking_id,ppe_type,timestamp_start,timestamp_end,event_status)
+                VALUES(?,?,?,?,?,?,?)''', [
+                    (f'EVT_DEFAULT_{i:03}', 'CAM_001', str(i), 'helmet',
+                     '2026-11-10T03:00:00.000000+00:00', '2026-11-10T03:00:00.000000+00:00', 'pending')
+                    for i in range(60)])
+        first = self.client.get('/api/events', headers=self.admin).json()
+        second = self.client.get('/api/events?offset=50', headers=self.admin).json()
+        self.assertEqual((first['total'], first['limit'], len(first['items']), first['has_more']), (63, 50, 50, True))
+        self.assertEqual((second['total'], second['limit'], len(second['items']), second['has_more']), (63, 50, 13, False))
+        ids = [item['event_id'] for page in (first, second) for item in page['items']]
+        self.assertEqual(len(set(ids)), 63)
+        maximum = self.client.get('/api/events?limit=100', headers=self.admin).json()
+        self.assertEqual(len(maximum['items']), 63)
+
     def test_pending_events_are_first_and_review_only_survives_confidence_filter(self):
         review_only_id = f"EVT_REVIEW_ONLY_{uuid4().hex[:6]}"
         insert_candidate_event({

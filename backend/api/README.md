@@ -97,15 +97,15 @@ http://127.0.0.1:8000/docs
 
 DB에 저장된 후보 이벤트 목록을 최신 발생 시각 순으로 조회함.
 
-페이지 단위 조회와 서버 측 필터를 제공함. `limit`(1~100)과 `offset`으로 페이지를 나누며,
+페이지 단위 조회와 서버 측 필터를 제공함. `limit`(기본 50, 1~100)과 `offset`으로 페이지를 나누며,
 `date_from`·`date_to`는 한국 시각(Asia/Seoul)의 양 끝 포함 날짜로 처리함.
-추가 필터는 `status`, `ppe_type`, `zone`, `min_confidence`임. 기존처럼 파라미터를 생략하면
-병합되지 않은 후보 전체를 반환함.
+추가 필터는 `status`, `ppe_type`, `zone`, `min_confidence`임. 파라미터를 생략하면
+병합되지 않은 후보의 첫 50건을 반환함.
 
 서버 정렬은 `pending`(검토 대기) 우선, 이후 `timestamp_start` 내림차순과
 `event_id` 내림차순으로 고정한다. `min_confidence`를 지정해도 신뢰도가 없는
-검토 전용 후보(`review_only=true`)는 제외하지 않는다. `limit`을 생략하는 기존 호출은
-호환성을 위해 전체 목록을 반환하며, 프론트 전환 후 `limit`을 사용한다.
+검토 전용 후보(`review_only=true`)는 제외하지 않는다. 전체 목록이 필요한 클라이언트는
+`has_more`를 확인하며 페이지를 순회한다. 프론트 페이지네이션·요약 API 전환 후 배포해야 한다.
 
 시간대가 있는 기록은 한국 시각으로 환산해 정렬하고, 시간대가 없는 과거 기록은
 기록된 벽시계 시각으로 비교한다. 과거 기록의 시간대를 추정하거나 DB 값을 변경하지 않는다.
@@ -123,7 +123,7 @@ GET /api/events
 GET /api/events?limit=50&offset=0&status=pending&ppe_type=helmet&zone=프레스%20구역&min_confidence=0.8&date_from=2026-04-01&date_to=2026-04-30
 ```
 
-응답의 `total`은 현재 필터와 일치하는 전체 건수이며, `offset`·`limit`은 요청값을 그대로 반환한다.
+응답의 `total`은 현재 필터와 일치하는 전체 건수이며, `offset`·`limit`은 기본값을 포함한 실제 조회값이다.
 `has_more`는 다음 페이지가 있는지 나타낸다.
 
 ## 후보 이벤트 요약 조회

@@ -167,7 +167,7 @@ def read_root() -> dict[str, str]:
 def read_events(
     date_from: date | None = None,
     date_to: date | None = None,
-    limit: int | None = Query(default=None, ge=1, le=100),
+    limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     status: str | None = Query(default=None, min_length=1, max_length=30),
     ppe_type: str | None = Query(default=None, min_length=1, max_length=30),
