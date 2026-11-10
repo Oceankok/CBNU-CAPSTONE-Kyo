@@ -1,0 +1,139 @@
+{
+  "variant": "paged",
+  "revision": "9fdf67eb53c41dd4fb55a14d00d4995ffcb4f0ec",
+  "tracked_changes": false,
+  "platform": "Windows-11-10.0.26300-SP0",
+  "python": "3.12.10",
+  "repeats": 3,
+  "transport": "FastAPI TestClient; PostgreSQL on localhost; no TLS/Cloudflare/browser",
+  "fixture": "metadata-only image for 10% of events; 10% review-only; 60% pending",
+  "cases": [
+    {
+      "event_count": 1000,
+      "requests": [
+        {
+          "endpoint": "/api/events",
+          "name": "default_page",
+          "samples": [
+            {
+              "seconds": 0.23074280004948378,
+              "response_bytes": 56973,
+              "application_sql_calls": 17,
+              "connections": 10
+            },
+            {
+              "seconds": 0.21552920015528798,
+              "response_bytes": 56973,
+              "application_sql_calls": 17,
+              "connections": 10
+            },
+            {
+              "seconds": 0.2452433998696506,
+              "response_bytes": 56973,
+              "application_sql_calls": 17,
+              "connections": 10
+            }
+          ],
+          "median_seconds": 0.23074280004948378,
+          "min_seconds": 0.21552920015528798,
+          "max_seconds": 0.2452433998696506,
+          "response_bytes": 56973,
+          "bytes_per_minute_at_20s_poll": 170919
+        },
+        {
+          "endpoint": "/api/events/summary",
+          "name": "summary",
+          "samples": [
+            {
+              "seconds": 0.03632549988105893,
+              "response_bytes": 3453,
+              "application_sql_calls": 3,
+              "connections": 2
+            },
+            {
+              "seconds": 0.06160240015015006,
+              "response_bytes": 3453,
+              "application_sql_calls": 3,
+              "connections": 2
+            },
+            {
+              "seconds": 0.06171999988146126,
+              "response_bytes": 3453,
+              "application_sql_calls": 3,
+              "connections": 2
+            }
+          ],
+          "median_seconds": 0.06160240015015006,
+          "min_seconds": 0.03632549988105893,
+          "max_seconds": 0.06171999988146126,
+          "response_bytes": 3453,
+          "bytes_per_minute_at_20s_poll": 10359
+        }
+      ]
+    },
+    {
+      "event_count": 10000,
+      "requests": [
+        {
+          "endpoint": "/api/events",
+          "name": "default_page",
+          "samples": [
+            {
+              "seconds": 0.28624970000237226,
+              "response_bytes": 57024,
+              "application_sql_calls": 17,
+              "connections": 10
+            },
+            {
+              "seconds": 0.34270159993320704,
+              "response_bytes": 57024,
+              "application_sql_calls": 17,
+              "connections": 10
+            },
+            {
+              "seconds": 0.25890989997424185,
+              "response_bytes": 57024,
+              "application_sql_calls": 17,
+              "connections": 10
+            }
+          ],
+          "median_seconds": 0.28624970000237226,
+          "min_seconds": 0.25890989997424185,
+          "max_seconds": 0.34270159993320704,
+          "response_bytes": 57024,
+          "bytes_per_minute_at_20s_poll": 171072
+        },
+        {
+          "endpoint": "/api/events/summary",
+          "name": "summary",
+          "samples": [
+            {
+              "seconds": 0.06173250009305775,
+              "response_bytes": 3460,
+              "application_sql_calls": 3,
+              "connections": 2
+            },
+            {
+              "seconds": 0.09223109995946288,
+              "response_bytes": 3460,
+              "application_sql_calls": 3,
+              "connections": 2
+            },
+            {
+              "seconds": 0.08915320015512407,
+              "response_bytes": 3460,
+              "application_sql_calls": 3,
+              "connections": 2
+            }
+          ],
+          "median_seconds": 0.08915320015512407,
+          "min_seconds": 0.06173250009305775,
+          "max_seconds": 0.09223109995946288,
+          "response_bytes": 3460,
+          "bytes_per_minute_at_20s_poll": 10380
+        }
+      ]
+    }
+  ],
+  "postgres": "PostgreSQL 17.11 (Debian 17.11-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit"
+}
