@@ -28,7 +28,7 @@ import sqlite3
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Optional
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from uuid import uuid4
 
 
@@ -165,6 +165,134 @@ def get_all_candidate_events() -> list[dict[str, Any]]:
     with get_connection() as conn:
         rows = conn.execute(query).fetchall()
         return _attach_event_media([dict(row) for row in rows], conn)
+
+
+def _candidate_event_filters(
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    status: str | None = None,
+    ppe_type: str | None = None,
+    zone: str | None = None,
+    min_confidence: float | None = None,
+) -> tuple[str, list[Any]]:
+    """Build the shared, bound filter clause for list and summary queries."""
+    clauses = ["ce.event_status != 'merged'"]
+    parameters: list[Any] = []
+    local_start = local_time_sql("ce.timestamp_start")
+    if date_from is not None:
+        clauses.append(f"{local_start} >= ?")
+        parameters.append(date_from.isoformat())
+    if date_to is not None:
+        clauses.append(f"{local_start} < ?")
+        parameters.append((date_to + timedelta(days=1)).isoformat())
+    if status:
+        clauses.append("ce.event_status = ?")
+        parameters.append(status)
+    if ppe_type:
+        clauses.append("ce.ppe_type = ?")
+        parameters.append(ppe_type)
+    if zone:
+        clauses.append("ci.zone_name = ?")
+        parameters.append(zone)
+    if min_confidence is not None:
+        clauses.append("ce.ai_confidence >= ?")
+        parameters.append(min_confidence)
+    return " AND ".join(clauses), parameters
+
+
+def get_candidate_events_page(
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    status: str | None = None,
+    ppe_type: str | None = None,
+    zone: str | None = None,
+    min_confidence: float | None = None,
+) -> tuple[int, list[dict[str, Any]]]:
+    """Return a filtered candidate-event page and the matching total count.
+
+    The legacy full-list function remains unchanged for callers that do not need
+    pagination. Filters are applied in SQL so large event tables do not require
+    loading every event and its media before the response can be returned.
+    """
+    where, parameters = _candidate_event_filters(
+        date_from=date_from, date_to=date_to, status=status, ppe_type=ppe_type,
+        zone=zone, min_confidence=min_confidence,
+    )
+    query = f"""
+        SELECT ce.event_id, ce.camera_id, ci.zone_name, ci.process_type,
+               ce.tracking_id, ce.ppe_type, ce.timestamp_start, ce.timestamp_end,
+               ce.duration_sec, ce.frame_sample_count, ce.thumbnail_path,
+               ce.video_clip_path, ce.ai_confidence, ce.person_detected,
+               ce.ppe_detected, ce.model_version, ce.event_status
+        FROM candidate_event ce
+        LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+        WHERE {where}
+        ORDER BY ce.timestamp_start DESC, ce.event_id DESC
+    """
+    count_query = f"""
+        SELECT COUNT(*)
+        FROM candidate_event ce
+        LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+        WHERE {where}
+    """
+    with get_connection() as conn:
+        total = conn.execute(count_query, parameters).fetchone()[0]
+        page_parameters = list(parameters)
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            page_parameters.extend([limit, offset])
+        elif offset:
+            # Use a portable upper bound instead of SQLite's LIMIT -1; PostgreSQL
+            # rejects negative LIMIT values.
+            query += " LIMIT ? OFFSET ?"
+            page_parameters.extend([9223372036854775807, offset])
+        rows = conn.execute(query, page_parameters).fetchall()
+        return total, _attach_event_media([dict(row) for row in rows], conn)
+
+
+def get_candidate_event_summary(
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    status: str | None = None,
+    ppe_type: str | None = None,
+    zone: str | None = None,
+    min_confidence: float | None = None,
+) -> dict[str, Any]:
+    """Return compact counts for dashboard/filter summaries without media joins."""
+    where, parameters = _candidate_event_filters(
+        date_from=date_from, date_to=date_to, status=status, ppe_type=ppe_type,
+        zone=zone, min_confidence=min_confidence,
+    )
+    with get_connection() as conn:
+        rows = conn.execute(f"""
+            SELECT ce.event_status, ce.ppe_type, ci.zone_name, COUNT(*) AS count
+            FROM candidate_event ce
+            LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+            WHERE {where}
+            GROUP BY ce.event_status, ce.ppe_type, ci.zone_name
+        """, parameters).fetchall()
+    by_status: dict[str, int] = {}
+    by_ppe_type: dict[str, int] = {}
+    by_zone: dict[str, int] = {}
+    total = 0
+    for row in rows:
+        count = int(row["count"])
+        total += count
+        by_status[row["event_status"]] = by_status.get(row["event_status"], 0) + count
+        by_ppe_type[row["ppe_type"]] = by_ppe_type.get(row["ppe_type"], 0) + count
+        zone_name = row["zone_name"] or ""
+        by_zone[zone_name] = by_zone.get(zone_name, 0) + count
+    return {
+        "total": total,
+        "by_status": by_status,
+        "by_ppe_type": by_ppe_type,
+        "by_zone": by_zone,
+    }
 
 
 def get_candidate_event_by_id(event_id: str) -> Optional[dict[str, Any]]:
