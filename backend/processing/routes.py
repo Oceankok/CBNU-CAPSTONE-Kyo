@@ -244,7 +244,8 @@ def source(job_id: str, node: dict = Depends(processor), x_processing_lease: str
 class Failure(BaseModel):
     error_code: Literal['source_file_missing', 'source_expired', 'invalid_frame', 'video_decode_failed',
                         'incomplete_video_decode', 'scrfd_model_missing', 'face_model_missing',
-                        'media_processing_failed', 'gpu_unavailable']
+                        'media_processing_failed', 'gpu_unavailable', 'face_verification_failed',
+                        'face_verifier_model_invalid', 'face_verifier_configuration_invalid']
 
 
 @router.post('/jobs/{job_id}/failure')

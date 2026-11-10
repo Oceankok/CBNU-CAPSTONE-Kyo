@@ -34,6 +34,9 @@ class FaceRedactor:
         if mode not in {"enhanced", "scrfd"}:
             raise MediaError("invalid_redaction_mode")
         self.mode = mode
+        from backend.media.retinaface import configured_detector
+        self.verifier = configured_detector()
+        self.verification = {'model': None, 'status': 'disabled'}
         path = scrfd_model_path() if mode == "scrfd" else model_path()
         if not path.is_file():
             raise MediaError("scrfd_model_missing" if mode == "scrfd" else "face_model_missing")
@@ -97,6 +100,8 @@ class FaceRedactor:
 
             # Rotated passes may find the same face more than once. Keep the
             # strongest overlapping box so the reported count is not inflated.
+            if getattr(self, 'verifier', None) is not None:
+                candidates.extend(self.verifier.detect(frame))
             return self._deduplicate_faces(candidates)
         except cv2.error as exc:
             raise MediaError("face_detection_failed") from exc
@@ -175,6 +180,9 @@ def redact_image(source: Path, output: Path, mode="scrfd") -> dict:
     redacted, faces = detector.redact(image)
     if not cv2.imwrite(str(output), redacted):
         raise MediaError("image_encode_failed")
+    if getattr(detector, 'verifier', None) is not None:
+        from backend.media.verification import verify_image
+        detector.verification = verify_image(output, detector.verifier)
     return _details(detector, faces, 1, started)
 
 
@@ -184,6 +192,9 @@ def redact_frame(frame, output: Path, mode="scrfd") -> dict:
     redacted, faces = detector.redact(frame)
     if not cv2.imwrite(str(output), redacted):
         raise MediaError("image_encode_failed")
+    if getattr(detector, 'verifier', None) is not None:
+        from backend.media.verification import verify_image
+        detector.verification = verify_image(output, detector.verifier)
     return _details(detector, faces, 1, started)
 
 
@@ -194,7 +205,8 @@ def _details(detector, faces, frames, started):
             "profile": {"revision": "tracking-v2", "face_model": "scrfd-10g" if detector.mode == "scrfd" else "yunet-2023mar", "trace_id": detector.trace_id,
                         "cache_reused": detector.cache_reused,
                         "detection_passes": detector.detection_passes, **detector.metrics,
-                        **getattr(detector, "tracking_stats", {})}}
+                        **getattr(detector, "tracking_stats", {}),
+                        "verification": getattr(detector, "verification", {'model': None, 'status': 'disabled'})}}
 
 
 def _ffmpeg() -> str:
@@ -269,6 +281,9 @@ def redact_video(source: Path, output: Path, work_dir: Path, mode="scrfd") -> di
     detector.metrics["encoding_seconds"] += time.perf_counter() - stage_started
     if not output.is_file() or output.stat().st_size == 0:
         raise MediaError("video_encode_failed")
+    if getattr(detector, 'verifier', None) is not None:
+        from backend.media.verification import verify_video
+        detector.verification = verify_video(output, detector.verifier, work_dir, frames)
     if mode in {"enhanced", "scrfd"}:
         detector.tracking_stats = processor.stats
     return _details(detector, total_faces, frames, started)

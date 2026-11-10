@@ -147,7 +147,8 @@ class Worker:
         except Exception as error:
             code = str(error) if isinstance(error, MediaError) else 'media_processing_failed'
             allowed = {'source_file_missing', 'source_expired', 'invalid_frame', 'video_decode_failed',
-                       'incomplete_video_decode', 'scrfd_model_missing', 'face_model_missing', 'gpu_unavailable'}
+                       'incomplete_video_decode', 'scrfd_model_missing', 'face_model_missing', 'gpu_unavailable',
+                       'face_verification_failed', 'face_verifier_model_invalid', 'face_verifier_configuration_invalid'}
             for _ in range(2):
                 try:
                     self.client.post(f'/api/processing/jobs/{ident}/failure', headers=headers,
