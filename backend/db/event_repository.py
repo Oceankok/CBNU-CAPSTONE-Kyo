@@ -24,11 +24,12 @@ SQLite DB에서 조회/삽입하기 위한 함수들을 모아둔 파일이다.
 - ppe_system.db 파일은 로컬 실행 시 생성되는 파일이며 GitHub에는 업로드하지 않는다.
 """
 
+import json
 import sqlite3
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Optional
-from datetime import datetime
+from datetime import date, datetime
 from uuid import uuid4
 
 
@@ -87,6 +88,9 @@ def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, An
     from backend.media.service import public_media, review_availability
     event_ids = [event["event_id"] for event in events]
     rows, retention, review_modes = [], {}, {}
+    merge_parent: dict[str, str | None] = {}
+    merge_children: dict[str, list[dict[str, Any]]] = {event_id: [] for event_id in event_ids}
+    clip_requests: dict[str, list[dict[str, Any]]] = {event_id: [] for event_id in event_ids}
     for offset in range(0, len(event_ids), 500):
         ids = event_ids[offset:offset + 500]
         placeholders = ",".join("?" for _ in ids)
@@ -95,6 +99,15 @@ def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, An
             retention[row["event_id"]] = dict(row)
         for row in conn.execute(f"SELECT event_id,review_only FROM processing_review_only_event WHERE event_id IN ({placeholders})", ids):
             review_modes[row["event_id"]] = bool(row["review_only"])
+        for row in conn.execute(f"SELECT source_event_id,target_event_id FROM event_merge WHERE source_event_id IN ({placeholders})", ids):
+            merge_parent[row["source_event_id"]] = row["target_event_id"]
+        for row in conn.execute(f"SELECT * FROM event_merge WHERE target_event_id IN ({placeholders}) ORDER BY merged_at,source_event_id", ids):
+            item = dict(row)
+            item["media_ids"] = json.loads(item.pop("media_ids_json"))
+            item["request_ids"] = json.loads(item.pop("request_ids_json"))
+            merge_children.setdefault(item["target_event_id"], []).append(item)
+        for row in conn.execute(f"SELECT * FROM event_clip_request WHERE event_id IN ({placeholders}) ORDER BY created_at,request_id", ids):
+            clip_requests.setdefault(row["event_id"], []).append(dict(row))
     by_event: dict[str, list[dict[str, Any]]] = {event_id: [] for event_id in event_ids}
     for row in rows:
         by_event[row["event_id"]].append(public_media(dict(row), retention.get(row["event_id"], {}).get("decision", "pending")))
@@ -109,10 +122,15 @@ def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, An
         event['reporting_timezone'] = REPORTING_TIMEZONE
         event['timestamp_start'] = public_timestamp(event['timestamp_start'])
         event['timestamp_end'] = public_timestamp(event['timestamp_end'])
-        from backend.event_merge.service import metadata
-        event.update(metadata(conn, event['event_id']))
+        children = merge_children.get(event["event_id"], [])
+        event.update({
+            "merged_into_event_id": merge_parent.get(event["event_id"]),
+            "merged_event_ids": [row["source_event_id"] for row in children],
+            "merge_version": len(children),
+            "merge_history": children,
+        })
         event["media"] = by_event[event["event_id"]]
-        requests = [dict(row) for row in conn.execute("SELECT * FROM event_clip_request WHERE event_id=? ORDER BY created_at", (event["event_id"],))]
+        requests = clip_requests.get(event["event_id"], [])
         event["clip_requests"] = requests
         event["review_availability"] = review_availability(event["media"], requests)
         event["retention"] = retention.get(event["event_id"], {"event_id": event["event_id"], "decision": "pending", "version": 0})
@@ -165,6 +183,176 @@ def get_all_candidate_events() -> list[dict[str, Any]]:
     with get_connection() as conn:
         rows = conn.execute(query).fetchall()
         return _attach_event_media([dict(row) for row in rows], conn)
+
+
+def _candidate_event_filters(
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    status: str | None = None,
+    ppe_type: str | None = None,
+    zone: str | None = None,
+    min_confidence: float | None = None,
+) -> tuple[str, list[Any]]:
+    """Build the shared, bound filter clause for list and summary queries."""
+    clauses = ["ce.event_status != 'merged'"]
+    parameters: list[Any] = []
+    local_start = local_time_sql("ce.timestamp_start")
+    if date_from is not None:
+        clauses.append(f"{local_start} >= ?")
+        parameters.append(date_from.isoformat())
+    if date_to is not None:
+        clauses.append(f"substr({local_start},1,10) <= ?")
+        parameters.append(date_to.isoformat())
+    if status:
+        clauses.append("ce.event_status = ?")
+        parameters.append(status)
+    if ppe_type:
+        clauses.append("ce.ppe_type = ?")
+        parameters.append(ppe_type)
+    if zone:
+        clauses.append("ci.zone_name = ?")
+        parameters.append(zone)
+    if min_confidence is not None:
+        # Review-only candidates intentionally have no measured confidence and
+        # must remain visible when the screen applies a confidence filter.
+        clauses.append("(ce.ai_confidence >= ? OR EXISTS (SELECT 1 FROM processing_review_only_event rof WHERE rof.event_id=ce.event_id AND rof.review_only=1))")
+        parameters.append(min_confidence)
+    return " AND ".join(clauses), parameters
+
+
+def _candidate_event_sort_time() -> str:
+    """Compare Korean wall clocks, leaving timezone-unknown legacy values as recorded.
+
+    local_time_sql intentionally drops fractions for safe date conversion. Restore
+    six fractional digits separately so subsecond event ordering is not lost.
+    """
+    column = "ce.timestamp_start"
+    fraction = (
+        f"CASE WHEN substr({column},20,1)='.' "
+        f"THEN substr(substr({column},20,7)||'000000',1,7) ELSE '.000000' END"
+    )
+    return f"({local_time_sql(column)} || ({fraction}))"
+
+
+def get_candidate_events_page(
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    status: str | None = None,
+    ppe_type: str | None = None,
+    zone: str | None = None,
+    min_confidence: float | None = None,
+) -> tuple[int, list[dict[str, Any]]]:
+    """Return a filtered candidate-event page and the matching total count.
+
+    The legacy full-list function remains unchanged for callers that do not need
+    pagination. Filters are applied in SQL so large event tables do not require
+    loading every event and its media before the response can be returned.
+    """
+    where, parameters = _candidate_event_filters(
+        date_from=date_from, date_to=date_to, status=status, ppe_type=ppe_type,
+        zone=zone, min_confidence=min_confidence,
+    )
+    query = f"""
+        SELECT ce.event_id, ce.camera_id, ci.zone_name, ci.process_type,
+               ce.tracking_id, ce.ppe_type, ce.timestamp_start, ce.timestamp_end,
+               ce.duration_sec, ce.frame_sample_count, ce.thumbnail_path,
+               ce.video_clip_path, ce.ai_confidence, ce.person_detected,
+               ce.ppe_detected, ce.model_version, ce.event_status
+        FROM candidate_event ce
+        LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+        WHERE {where}
+        ORDER BY CASE WHEN ce.event_status='pending' THEN 0 ELSE 1 END,
+                 {_candidate_event_sort_time()} DESC, ce.event_id DESC
+    """
+    count_query = f"""
+        SELECT COUNT(*)
+        FROM candidate_event ce
+        LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+        WHERE {where}
+    """
+    with get_connection() as conn:
+        total = conn.execute(count_query, parameters).fetchone()[0]
+        page_parameters = list(parameters)
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            page_parameters.extend([limit, offset])
+        elif offset:
+            # Use a portable upper bound instead of SQLite's LIMIT -1; PostgreSQL
+            # rejects negative LIMIT values.
+            query += " LIMIT ? OFFSET ?"
+            page_parameters.extend([9223372036854775807, offset])
+        rows = conn.execute(query, page_parameters).fetchall()
+        return total, _attach_event_media([dict(row) for row in rows], conn)
+
+
+def get_candidate_event_summary(
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    status: str | None = None,
+    ppe_type: str | None = None,
+    zone: str | None = None,
+    min_confidence: float | None = None,
+    recent_limit: int = 10,
+) -> dict[str, Any]:
+    """Return compact counts for dashboard/filter summaries without media joins."""
+    where, parameters = _candidate_event_filters(
+        date_from=date_from, date_to=date_to, status=status, ppe_type=ppe_type,
+        zone=zone, min_confidence=min_confidence,
+    )
+    with get_connection() as conn:
+        rows = conn.execute(f"""
+            SELECT ce.event_status, ce.ppe_type, ci.zone_name, COUNT(*) AS count
+            FROM candidate_event ce
+            LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+            WHERE {where}
+            GROUP BY ce.event_status, ce.ppe_type, ci.zone_name
+        """, parameters).fetchall()
+        recent_where = f"{where} AND ce.event_status='pending'"
+        recent_rows = conn.execute(f"""
+            SELECT ce.event_id, ce.camera_id, ci.zone_name, ce.ppe_type,
+                   ce.timestamp_start, ce.event_status, ce.ai_confidence,
+                   EXISTS (SELECT 1 FROM processing_review_only_event rof
+                           WHERE rof.event_id=ce.event_id AND rof.review_only=1) AS review_only
+            FROM candidate_event ce
+            LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+            WHERE {recent_where}
+            ORDER BY {_candidate_event_sort_time()} DESC, ce.event_id DESC
+            LIMIT ?
+        """, [*parameters, recent_limit]).fetchall()
+    by_status: dict[str, int] = {}
+    by_ppe_type: dict[str, int] = {}
+    by_zone: dict[str, int] = {}
+    total = 0
+    for row in rows:
+        count = int(row["count"])
+        total += count
+        by_status[row["event_status"]] = by_status.get(row["event_status"], 0) + count
+        by_ppe_type[row["ppe_type"]] = by_ppe_type.get(row["ppe_type"], 0) + count
+        zone_name = row["zone_name"] or ""
+        by_zone[zone_name] = by_zone.get(zone_name, 0) + count
+    recent_pending = []
+    for row in recent_rows:
+        item = dict(row)
+        item["review_only"] = bool(item.get("review_only"))
+        if item["review_only"]:
+            item["ai_confidence"] = None
+        item["event_date_local"] = local_date(item["timestamp_start"])
+        item["timestamp_timezone"] = REPORTING_TIMEZONE if item["event_date_local"] else None
+        item["reporting_timezone"] = REPORTING_TIMEZONE
+        item["timestamp_start"] = public_timestamp(item["timestamp_start"])
+        recent_pending.append(item)
+    return {
+        "total": total,
+        "by_status": by_status,
+        "by_ppe_type": by_ppe_type,
+        "by_zone": by_zone,
+        "recent_pending": recent_pending,
+    }
 
 
 def get_candidate_event_by_id(event_id: str) -> Optional[dict[str, Any]]:

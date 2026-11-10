@@ -10,7 +10,7 @@ PPE 분석 시스템 초기 FastAPI 서버 파일.
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, APIRouter, Depends, Request
+from fastapi import FastAPI, HTTPException, APIRouter, Depends, Request, Query
 from fastapi.responses import FileResponse, JSONResponse
 import os
 from backend.auth.service import require_admin, decode_user
@@ -19,7 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.db.event_repository import (
-    get_all_candidate_events,
+    get_candidate_events_page,
+    get_candidate_event_summary,
     get_candidate_event_by_id,
     get_review_by_event_id,
     get_review_history_by_event_id,
@@ -163,26 +164,52 @@ def read_root() -> dict[str, str]:
 
 
 @admin_router.get("/api/events")
-def read_events(date_from: date | None = None, date_to: date | None = None) -> dict:
+def read_events(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int | None = Query(default=None, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    status: str | None = Query(default=None, min_length=1, max_length=30),
+    ppe_type: str | None = Query(default=None, min_length=1, max_length=30),
+    zone: str | None = Query(default=None, min_length=1, max_length=100),
+    min_confidence: float | None = Query(default=None, ge=0, le=1),
+) -> dict:
     """
     후보 이벤트 전체 목록 조회.
     """
     if date_from and date_to and date_from > date_to:
         raise HTTPException(400, 'invalid_event_date_range')
-    events = get_all_candidate_events()
-    if date_from or date_to:
-        from backend.event_time import parse
-        filtered = []
-        for event in events:
-            if not event['timestamp_start']:
-                continue
-            # Unknown legacy timezone: use only its recorded calendar date.
-            event_day = date.fromisoformat(event['event_date_local']) if event['event_date_local'] else parse(event['timestamp_start']).date()
-            if (not date_from or event_day >= date_from) and (not date_to or event_day <= date_to):
-                filtered.append(event)
-        events = filtered
-    return {"total": len(events), "items": events,
+    total, events = get_candidate_events_page(
+        limit=limit, offset=offset, date_from=date_from, date_to=date_to,
+        status=status, ppe_type=ppe_type, zone=zone,
+        min_confidence=min_confidence,
+    )
+    return {"total": total, "offset": offset, "limit": limit, "has_more": offset + len(events) < total, "items": events,
             "reporting_timezone": "Asia/Seoul", "legacy_time_policy": "as_recorded"}
+
+
+@admin_router.get("/api/events/summary")
+def read_event_summary(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    status: str | None = Query(default=None, min_length=1, max_length=30),
+    ppe_type: str | None = Query(default=None, min_length=1, max_length=30),
+    zone: str | None = Query(default=None, min_length=1, max_length=100),
+    min_confidence: float | None = Query(default=None, ge=0, le=1),
+    recent_limit: int = Query(default=10, ge=0, le=50),
+) -> dict:
+    """Return server-side counts for the same filters as the event list."""
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(400, 'invalid_event_date_range')
+    return {
+        **get_candidate_event_summary(
+            date_from=date_from, date_to=date_to, status=status,
+            ppe_type=ppe_type, zone=zone, min_confidence=min_confidence,
+            recent_limit=recent_limit,
+        ),
+        "reporting_timezone": "Asia/Seoul",
+        "legacy_time_policy": "as_recorded",
+    }
 
 
 @admin_router.get("/api/events/{event_id}")
