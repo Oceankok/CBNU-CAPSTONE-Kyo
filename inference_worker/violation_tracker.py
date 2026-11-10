@@ -15,11 +15,22 @@ class ViolationTracker:
         candidates = []
         active_ids = set()
 
+        observations = []
         for person in assessments:
-            track_id = person["tracking_id"]
+            if "ppe" in person:
+                for ppe_type, assessment in person["ppe"].items():
+                    observations.append({**person, **assessment, "ppe_type": ppe_type,
+                                         "absence_rule": True})
+            else:
+                observations.append(person)
+
+        for person in observations:
+            ppe_type = person.get("ppe_type", "helmet")
+            track_id = ((person["tracking_id"], ppe_type) if person.get("absence_rule")
+                        else person["tracking_id"])
             active_ids.add(track_id)
 
-            if person["status"] != "suspected_no_helmet":
+            if person["status"] != f"suspected_no_{ppe_type}":
                 self.states.pop(track_id, None)
                 continue
 
@@ -40,7 +51,7 @@ class ViolationTracker:
 
             if (state is None or state["verified"] != verified
                     or timestamp < state["last"]
-                    or (verified and timestamp - state["last"] > 0.5)):
+                    or ((verified or person.get("absence_rule")) and timestamp - state["last"] > 0.5)):
                 alerted = bool(state and state["verified_reported"])
                 state = {
                     "start": timestamp,
@@ -69,8 +80,8 @@ class ViolationTracker:
                     state["verified_reported"] = True
 
                 candidates.append({
-                    "tracking_id": track_id,
-                    "ppe_type": "helmet",
+                    "tracking_id": person["tracking_id"],
+                    "ppe_type": ppe_type,
                     "start_time": state["start"],
                     "end_time": timestamp,
                     "duration_seconds": elapsed,

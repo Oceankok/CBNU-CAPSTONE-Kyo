@@ -9,7 +9,7 @@ import cv2
 
 from inference_worker.ppe_detector import PPEDetector
 from inference_worker.video_decoder import decode_mp4
-from inference_worker.ppe_rules import assess_helmets
+from inference_worker.ppe_rules import assess_ppe
 from inference_worker.person_tracker import PersonTracker
 from inference_worker.violation_tracker import ViolationTracker
 
@@ -75,7 +75,7 @@ def main():
             total_frames += 1
 
             detections = detector.detect(frame)
-            assessments = tracker.update(assess_helmets(detections))
+            assessments = tracker.update(assess_ppe(detections, frame.shape, detector.supported_ppe))
             candidates = violations.update(assessments, timestamp)
 
             for candidate in candidates:
