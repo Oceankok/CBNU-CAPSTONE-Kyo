@@ -130,7 +130,6 @@ def validate_video(path, duration_ms):
 def accept(ident, node_id, sequence, capture_start, duration_ms, source):
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     size = source.stat().st_size
-    cleanup()
     moved = None
     try:
         with get_connection() as conn:

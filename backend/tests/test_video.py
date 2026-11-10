@@ -76,6 +76,12 @@ class VideoIngestTests(unittest.TestCase):
         self.assertEqual(self.upload(stream,sequence=0).status_code,409)
         self.assertEqual(self.upload(stream,sequence=3).status_code,202)
 
+    def test_upload_does_not_run_full_cleanup_for_every_chunk(self):
+        stream = self.start()
+        with patch.object(service, 'cleanup', side_effect=AssertionError('cleanup must be scheduled separately')):
+            response = self.upload(stream)
+        self.assertEqual(response.status_code, 202, response.text)
+
     def test_session_replacement_and_camera_revocation(self):
         old = self.start()
         new = self.start()
