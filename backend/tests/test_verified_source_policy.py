@@ -100,10 +100,11 @@ class VerifiedSourcePolicyTests(unittest.TestCase):
         response = self.client.post('/api/processing/jobs/'+job['job_id']+'/failure', headers=headers,
                                     json={'error_code': 'face_verification_failed'})
         self.assertEqual(response.status_code, 200, response.text)
+        self.client.post('/api/processing/jobs/'+job['job_id']+'/cleanup', headers=self.node).raise_for_status()
         public = self.client.get('/api/events/EVT_0001/media', headers=self.admin).json()['items']
         item = next(x for x in public if x['media_id'] == media['media_id'])
         self.assertIsNone(item['url'])
-        self.assertEqual(item['face_verification']['available_actions'], ['retry', 'delete'])
+        self.assertEqual(item['face_verification']['available_actions'], ['retry', 'discard_source'])
         self.assertEqual(self.client.get(job['source_url'], headers=self.admin).status_code, 401)
         self.assertTrue(private_source_path(self.media(media['media_id'])['source_path']).exists())
 

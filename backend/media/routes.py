@@ -44,6 +44,22 @@ class ClipRequestRegistration(BaseModel):
     camera_id: str
 
 
+class FailedSourceDisposition(BaseModel):
+    expected_generation: int = Field(ge=0)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+@router.post('/media/{media_id}/discard-failed-source')
+def discard_failed_source(media_id: str, body: FailedSourceDisposition, user: dict = Depends(require_admin)):
+    from backend.media.verification_policy import discard_failed_source as discard
+    from backend.media.service import get_media
+    try:
+        discard(media_id, body.expected_generation, user['user_id'], body.reason)
+    except ValueError as exc:
+        state_error(exc)
+    return get_media(media_id)
+
+
 @router.post("/events/{event_id}/clip-requests", status_code=201)
 def register_clip_request(event_id: str, body: ClipRequestRegistration):
     """Record delivery progress; transport dispatch is owned by the field integration."""

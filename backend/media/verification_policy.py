@@ -76,3 +76,31 @@ def purge_verified_source(media_id):
         conn.execute("UPDATE event_media SET source_path='',source_expires_at=NULL,source_deleted_at=? WHERE media_id=?",
                      (time.time(), media_id))
     return True
+
+
+def discard_failed_source(media_id, generation, actor, reason):
+    """Explicit administrator disposition; never turns a failed result into ready."""
+    if not reason.strip():
+        raise ValueError('invalid_disposition_reason')
+    with get_connection() as conn:
+        begin_write(conn)
+        row = conn.execute('SELECT * FROM event_media WHERE media_id=?', (media_id,)).fetchone()
+        if not row:
+            raise ValueError('media_not_found')
+        if row['processing_generation'] != generation:
+            raise ValueError('processing_generation_conflict')
+        if row['status'] != 'failed' or row['error_code'] != 'face_verification_failed' or row['processing_started_at'] is not None:
+            raise ValueError('failed_verification_required')
+        if conn.execute("SELECT 1 FROM processing_job WHERE media_id=? AND (status IN ('queued','running') OR local_cleanup_status!='confirmed') LIMIT 1", (media_id,)).fetchone():
+            raise ValueError('worker_cleanup_required')
+        if not row['source_path']:
+            return  # Same-generation repeat is harmless; no publication is granted.
+        try:
+            private_source_path(row['source_path']).unlink(missing_ok=True)
+        except (OSError, ValueError) as exc:
+            raise ValueError('source_delete_failed') from exc
+        decided_at = time.time()
+        audit = json.dumps({'status': 'failed', 'disposition': 'source_discarded',
+                           'actor': actor, 'decided_at': decided_at, 'reason': reason.strip()})
+        conn.execute("UPDATE event_media SET source_path='',source_expires_at=NULL,source_deleted_at=?,verification_json=? WHERE media_id=?",
+                     (decided_at, audit, media_id))

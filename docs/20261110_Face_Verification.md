@@ -66,9 +66,15 @@ worker는 검사 모델·통과 상태·횟수·프레임 수·최종 결과 SHA
 
 API의 각 미디어에 `face_verification`과 `source_deleted_at`을 제공한다. 기존 자료는
 `not_run`이고 검사 통과로 소급 처리하지 않는다. 반복 실패는 `failed`,
-`action_required=true`, `available_actions=[retry,delete]`를 제공한다.
-**실패 결과와 원본은 관리자에게 미리보기로 제공하지 않는다.** 기존 관리자 재처리/삭제
-흐름을 쓸 수 있으며 새 상태를 친절하게 보여주는 UI는 프론트 후속 작업이다.
+정리 완료 뒤 `action_required=true`, `available_actions=[retry,discard_source]`를 제공한다.
+**실패 결과와 원본은 관리자에게 미리보기로 제공하지 않는다.** 기존 관리자 재처리
+흐름을 쓸 수 있으며, 실패 원본 파기 선택과 새 상태 표시는 프론트 후속 작업이다.
+
+관리자가 재처리를 포기할 때는 `POST /api/media/{media_id}/discard-failed-source`에
+`expected_generation`과 비어 있지 않은 `reason`을 전달한다. 이 API는 실패 원본만 파기하며
+이벤트를 확정/오탐으로 바꾸지 않는다. 재처리 세대가 달라졌거나 worker 정리가 끝나지
+않았으면 409로 거절한다. 파기한 관리자·사유·시각은 검사 기록에 남기며 반복 요청은
+같은 세대에서만 안전하게 처리한다. 실패 영상과 원본을 내려받는 API는 제공하지 않는다.
 
 서버의 선택 정책:
 
