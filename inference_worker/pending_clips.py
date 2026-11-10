@@ -22,6 +22,7 @@ class PendingClips:
 
         job = {
             "camera_id": camera_id,
+            "ppe_type": candidate.get("ppe_type", "helmet"),
             "event": event,
             "tracking_id": candidate["tracking_id"],
             "clip_start": clip_start,

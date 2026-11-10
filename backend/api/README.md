@@ -74,6 +74,7 @@ http://127.0.0.1:8000/docs
 | ------ | ------------------------------- | ---------------------------- |
 | GET    | `/`                             | API 서버 상태 확인                 |
 | GET    | `/api/events`                   | 후보 이벤트 전체 목록 조회              |
+| GET    | `/api/events/summary`            | 현재 필터 조건의 후보 이벤트 요약 조회   |
 | GET    | `/api/events/{event_id}`        | 후보 이벤트 단건 및 검토 결과 조회         |
 | POST   | `/api/events/{event_id}/review` | 후보 이벤트 최초 검토 결과 저장           |
 | PUT    | `/api/events/{event_id}/review` | 보류 또는 2차 검토 대상 이벤트 재검토 결과 갱신 |
@@ -96,12 +97,46 @@ http://127.0.0.1:8000/docs
 
 DB에 저장된 후보 이벤트 목록을 최신 발생 시각 순으로 조회함.
 
-현재 API는 서버 측 필터 query parameter를 제공하지 않으며, 프론트엔드 목록 화면에서 전체 이벤트를 조회한 뒤 표시 단계에서 필터링함.
+페이지 단위 조회와 서버 측 필터를 제공함. `limit`(1~100)과 `offset`으로 페이지를 나누며,
+`date_from`·`date_to`는 한국 시각(Asia/Seoul)의 양 끝 포함 날짜로 처리함.
+추가 필터는 `status`, `ppe_type`, `zone`, `min_confidence`임. 기존처럼 파라미터를 생략하면
+병합되지 않은 후보 전체를 반환함.
+
+서버 정렬은 `pending`(검토 대기) 우선, 이후 `timestamp_start` 내림차순과
+`event_id` 내림차순으로 고정한다. `min_confidence`를 지정해도 신뢰도가 없는
+검토 전용 후보(`review_only=true`)는 제외하지 않는다. `limit`을 생략하는 기존 호출은
+호환성을 위해 전체 목록을 반환하며, 프론트 전환 후 `limit`을 사용한다.
+
+시간대가 있는 기록은 한국 시각으로 환산해 정렬하고, 시간대가 없는 과거 기록은
+기록된 벽시계 시각으로 비교한다. 과거 기록의 시간대를 추정하거나 DB 값을 변경하지 않는다.
+소수 초를 유지하며, 동일한 시각은 `event_id` 내림차순으로 비교한다.
+offset 조회는 요청 사이의 신규 생성·검토·병합으로 항목이 이동할 수 있으므로
+프론트는 데이터 변경 시 첫 페이지부터 다시 조회해야 한다.
 
 ### 요청 예시
 
 ```http
 GET /api/events
+```
+
+```http
+GET /api/events?limit=50&offset=0&status=pending&ppe_type=helmet&zone=프레스%20구역&min_confidence=0.8&date_from=2026-04-01&date_to=2026-04-30
+```
+
+응답의 `total`은 현재 필터와 일치하는 전체 건수이며, `offset`·`limit`은 요청값을 그대로 반환한다.
+`has_more`는 다음 페이지가 있는지 나타낸다.
+
+## 후보 이벤트 요약 조회
+
+### `GET /api/events/summary`
+
+목록과 동일한 날짜·상태·PPE·구역·최소 신뢰도 필터를 적용해 `total`, `by_status`,
+`by_ppe_type`, `by_zone` 집계와 최근 검토 대기 이벤트 `recent_pending`을 반환함.
+`recent_limit`(기본 10, 최대 50)으로 최근 목록 수를 조절할 수 있다. 미디어를 조회하지 않아
+대시보드 배지와 페이지 수 계산에 사용함.
+
+```http
+GET /api/events/summary?date_from=2026-04-01&date_to=2026-04-30
 ```
 
 ### 응답 예시

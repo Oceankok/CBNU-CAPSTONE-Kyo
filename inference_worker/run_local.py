@@ -8,7 +8,7 @@ import cv2
 
 from inference_worker.ppe_detector import PPEDetector
 from inference_worker.video_decoder import decode_mp4
-from inference_worker.ppe_rules import assess_helmets
+from inference_worker.ppe_rules import assess_ppe
 from inference_worker.person_tracker import PersonTracker
 from inference_worker.violation_tracker import ViolationTracker
 
@@ -62,7 +62,7 @@ def main():
 
         # 사람별 안전모 판정 및 Tracking
         assessments = tracker.update(
-            assess_helmets(detections)
+            assess_ppe(detections, frame.shape, detector.supported_ppe)
         )
 
         # 3초 이상 연속 의심 상태인지 확인
@@ -77,7 +77,7 @@ def main():
             for person in assessments:
                 print(
                     f"  id={person['tracking_id']}, "
-                    f"status={person['status']}, "
+                    f"status={person['ppe']}, "
                     f"confidence={person['person_confidence']:.2f}"
                 )
 
@@ -91,7 +91,7 @@ def main():
             print(f"Start: {candidate['start_time']:.2f}s")
             print(f"End: {candidate['end_time']:.2f}s")
             print(f"Duration: {candidate['duration_seconds']:.2f}s")
-            print(f"Confidence: {candidate['confidence']:.2f}")
+            print("Evidence: sustained PPE absence (review required)")
 
     # 4. 최종 결과
     print("\n========== 분석 결과 ==========")

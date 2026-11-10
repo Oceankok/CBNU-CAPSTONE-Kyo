@@ -20,10 +20,10 @@ from uuid import uuid4
 
 from inference_worker.video_client import VideoClient
 from inference_worker.video_decoder import decode_mp4
-from inference_worker.ppe_rules import assess_helmets
+from inference_worker.ppe_rules import assess_helmets, assess_ppe
 from inference_worker.person_tracker import PersonTracker
 from inference_worker.violation_tracker import ViolationTracker
-from inference_worker.policy import helmet_policy_status
+from inference_worker.policy import helmet_policy_status, ppe_policy_status
 from inference_worker.work_area_policy import resolve_person_policy
 from inference_worker.time_utils import (
     frame_timestamp,
@@ -51,7 +51,7 @@ def build_review_candidate_event(candidate, *, camera_id, start_time, end_time, 
         "event_id": "EVT_" + uuid4().hex,
         "camera_id": camera_id,
         "tracking_id": str(candidate["tracking_id"]),
-        "ppe_type": "helmet",
+        "ppe_type": candidate["ppe_type"],
         "timestamp_start": start_time.isoformat(timespec="microseconds"),
         "timestamp_end": end_time.isoformat(timespec="microseconds"),
         "confidence": None,
@@ -181,7 +181,8 @@ def main():
                                    and isinstance(policy.get("event_supported_ppe"), list))
                         reason = "work_area_ready" if enabled else "invalid_work_area_policy"
                     else:
-                        enabled, reason = helmet_policy_status(policy)
+                        enabled = any(ppe_policy_status(policy, ppe)[0] for ppe in ("helmet", "vest"))
+                        reason = "ppe_required" if enabled else "no_supported_ppe_required"
                     # Covers ROI geometry, membership and rule changes as well as version changes.
                     policy_signature = json.dumps(policy, sort_keys=True, default=str)
 
@@ -317,7 +318,7 @@ def main():
                                 continue
 
                             clip_name = (
-                                f"{job['camera_id']}_{job['tracking_id']}_"
+                                f"{job['camera_id']}_{job['tracking_id']}_{job['ppe_type']}_"
                                 f"{int(job['clip_end'].timestamp() * 1000)}.mp4"
                             )
                             clip_path = create_clip(
@@ -344,9 +345,11 @@ def main():
                         priority.refresh()
                         detections = detector.detect(frame)
 
-                        # Person-level helmet assessment and tracking.
+                        # Person-level PPE assessment and tracking.
                         assessments = tracker.update(
-                            assess_helmets(detections)
+                            assess_ppe(detections, frame.shape, getattr(detector, "supported_ppe", ("helmet", "vest")))
+                            if getattr(detector, "supports_no_helmet", None) is False
+                            else assess_helmets(detections)
                         )
                         # Apply PPE requirements for each person's *current* ROI.
                         # The ViolationTracker uses policy_scope_key to prevent carrying
@@ -362,7 +365,14 @@ def main():
                                     frame_width,
                                     frame_height,
                                 )
-                                person_enabled, _ = helmet_policy_status(effective_policy)
+                                if "ppe" in assessment:
+                                    for ppe_type, state in assessment["ppe"].items():
+                                        if not ppe_policy_status(effective_policy, ppe_type)[0]:
+                                            state["status"] = "unknown"
+                                    person_enabled = any(ppe_policy_status(effective_policy, p)[0]
+                                                         for p in assessment["ppe"])
+                                else:
+                                    person_enabled, _ = helmet_policy_status(effective_policy)
                             except (ValueError, KeyError, TypeError, IndexError, ZeroDivisionError) as error:
                                 # Malformed or out-of-frame geometry cannot generate a candidate.
                                 print(f"[ROI SKIP] track={track_id} reason={error}")
@@ -371,6 +381,8 @@ def main():
 
                             if not person_enabled:
                                 assessment["status"] = "unknown"
+                                for state in assessment.get("ppe", {}).values():
+                                    state["status"] = "unknown"
                                 assessment["verified_ppe_confidence"] = None
                                 continue
 
@@ -390,6 +402,8 @@ def main():
                             for assessment in assessments:
                                 if args.submit_review_candidates:
                                     assessment["status"] = "unknown"
+                                    for state in assessment.get("ppe", {}).values():
+                                        state["status"] = "unknown"
                                 assessment["verified_ppe_confidence"] = None
 
                         # Detect sustained suspected violations.
@@ -411,7 +425,7 @@ def main():
                             print(
                                 f"[LOCAL CANDIDATE] "
                                 f"camera={args.camera_id} "
-                                f"track={candidate['tracking_id']} "
+                                f"track={candidate['tracking_id']} ppe={candidate['ppe_type']} "
                                 f"duration={candidate['duration_seconds']:.2f}s"
                             )
 
@@ -432,6 +446,9 @@ def main():
                             )
 
                             if args.submit_review_candidates:
+                                if not ppe_policy_status(candidate_policy, candidate["ppe_type"])[0]:
+                                    blocked_count += 1
+                                    continue
                                 # The three-class detector cannot prove non-compliance.
                                 # Keep it explicitly review-only, with no fabricated confidence.
                                 # The policy was checked above; preserve the existing
