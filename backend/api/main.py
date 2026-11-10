@@ -167,7 +167,7 @@ def read_root() -> dict[str, str]:
 def read_events(
     date_from: date | None = None,
     date_to: date | None = None,
-    limit: int | None = Query(default=None, ge=1, le=200),
+    limit: int | None = Query(default=None, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     status: str | None = Query(default=None, min_length=1, max_length=30),
     ppe_type: str | None = Query(default=None, min_length=1, max_length=30),
@@ -184,7 +184,7 @@ def read_events(
         status=status, ppe_type=ppe_type, zone=zone,
         min_confidence=min_confidence,
     )
-    return {"total": total, "offset": offset, "limit": limit, "items": events,
+    return {"total": total, "offset": offset, "limit": limit, "has_more": offset + len(events) < total, "items": events,
             "reporting_timezone": "Asia/Seoul", "legacy_time_policy": "as_recorded"}
 
 
@@ -196,6 +196,7 @@ def read_event_summary(
     ppe_type: str | None = Query(default=None, min_length=1, max_length=30),
     zone: str | None = Query(default=None, min_length=1, max_length=100),
     min_confidence: float | None = Query(default=None, ge=0, le=1),
+    recent_limit: int = Query(default=10, ge=0, le=50),
 ) -> dict:
     """Return server-side counts for the same filters as the event list."""
     if date_from and date_to and date_from > date_to:
@@ -204,6 +205,7 @@ def read_event_summary(
         **get_candidate_event_summary(
             date_from=date_from, date_to=date_to, status=status,
             ppe_type=ppe_type, zone=zone, min_confidence=min_confidence,
+            recent_limit=recent_limit,
         ),
         "reporting_timezone": "Asia/Seoul",
         "legacy_time_policy": "as_recorded",

@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS candidate_event (
     event_status TEXT DEFAULT 'pending',
     FOREIGN KEY (camera_id) REFERENCES camera_info(camera_id)
 );
+CREATE INDEX IF NOT EXISTS idx_candidate_event_status_time ON candidate_event(event_status,timestamp_start,event_id);
+CREATE INDEX IF NOT EXISTS idx_candidate_event_ppe_time ON candidate_event(ppe_type,timestamp_start,event_id);
+CREATE INDEX IF NOT EXISTS idx_camera_info_zone ON camera_info(zone_name,camera_id);
 
 -- An event can contain its trigger camera media and reference media from peers.
 -- Legacy path columns remain temporarily for API/UI compatibility.
