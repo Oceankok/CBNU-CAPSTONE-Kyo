@@ -609,7 +609,6 @@ python -m backend.run_verification --include-audio
 ## 후속 확장 대상
 
 * 실제 AI 탐지 코드에서 후보 이벤트 저장 서비스 호출 연결
-* 안전조끼(`vest`) 미착용 이벤트 생성 흐름 직접 연결
 * 이벤트 발생 구간 기준 실제 짧은 영상 클립 생성
 * 방송 실행 이력 DB 저장 및 관리자 조회
 * 서버 재시작 이후에도 유지되는 cooldown 관리
@@ -619,8 +618,11 @@ python -m backend.run_verification --include-audio
 
 ## 주의 사항
 
-* 현재 실제 후보 이벤트 생성 서비스와 직접 연결된 PPE 유형은 안전모(`helmet`) 미착용임.
-* 안전조끼(`vest`)는 메시지 템플릿 선택 구조와 TTS 출력 테스트 범위에서 사용할 수 있으나, AI 탐지 결과 기반 이벤트 생성 흐름은 후속 확장 대상임.
+* `create_no_helmet_candidate_event()`는 기존 로컬 호출과의 호환성을 위해 안전모(`helmet`) 전용으로 유지함.
+* 서버 원격 추론 경로의 `EventSubmission`은 `helmet`·`vest`를 모두 허용하며, 3클래스
+  `helmet`/`vest`/`person` 모델의 미착용 결과는 검토 전용 후보(`review_only=true`)로 저장함.
+  검증된 `no_helmet` 가중치를 사용하는 일반 이벤트 경로와 혼동하지 않도록 실제 모델 모드와
+  정책을 함께 확인해야 함.
 * 현재 영상 경로 저장은 실제 클립 생성보다 원본 영상 또는 참조 영상 경로 보존을 우선함.
 * 생성된 썸네일 및 영상 파일은 로컬 실행 산출물이므로 Git에 포함하지 않음.
 * 실제 AI 코드 연동 전에는 수동 테스트 스크립트로 저장·방송·TTS 동작을 검증함.
