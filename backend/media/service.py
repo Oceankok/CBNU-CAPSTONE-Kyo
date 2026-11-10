@@ -2,6 +2,7 @@ from backend.db.connection import begin_write
 """Media publication and deletion use the same DB lock as retention decisions."""
 
 import os
+import hashlib
 import json
 import logging
 import tempfile
@@ -63,6 +64,14 @@ def public_media(row: dict, decision: str = "pending") -> dict:
     result['clip_request_id'] = row.get('request_id')
     result.pop("processing_started_at", None)
     result.pop("source_path", None)
+    proof = result.pop('verification_json', '')
+    try:
+        result['face_verification'] = json.loads(proof) if proof else {'status': 'not_run'}
+    except (ValueError, TypeError):
+        result['face_verification'] = {'status': 'unknown'}
+    if row.get('error_code') == 'face_verification_failed':
+        result['face_verification'] = {'status': 'failed', 'action_required': True,
+                                       'available_actions': ['retry', 'delete']}
     safe = False
     try:
         safe = owned_path(path).is_file()
@@ -136,7 +145,9 @@ def _preserve_source(media_id: str, source=None, frame=None, consume_source: boo
     suffix = ".png" if frame is not None else Path(source).suffix
     key = media_id + suffix
     target = private_source_path(key)
-    ttl = int(os.environ.get("PPE_MEDIA_SOURCE_TTL_SECONDS", "86400"))
+    from backend.media.verification_policy import enabled
+    privacy_policy = enabled('PPE_MEDIA_REQUIRE_FACE_VERIFICATION') or enabled('PPE_MEDIA_DELETE_VERIFIED_SOURCE')
+    ttl = int(os.environ.get("PPE_MEDIA_SOURCE_TTL_SECONDS") or ("3600" if privacy_policy else "86400"))
     if ttl <= 0:
         raise ValueError("invalid_source_ttl")
     try:
@@ -238,12 +249,16 @@ def _publish(media_id: str, output: Path, details: dict):
             retention = conn.execute("SELECT decision FROM event_retention WHERE event_id=?", (row["event_id"],)).fetchone()
             if row["status"] != "processing" or retention["decision"] == "delete":
                 return
+            from backend.media.verification_policy import record as verification_record
+            report = details.get('profile', {}).get('verification', {})
+            verified = verification_record(report if report.get('status') == 'passed' else None,
+                                           details['processed_frames'], hashlib.sha256(output.read_bytes()).hexdigest())
             publish_file(output, target)
             moved = True
             conn.execute("""UPDATE event_media SET storage_path=?,status='ready',redaction_status='complete',
-                error_code=NULL,faces_detected=?,processed_frames=?,redaction_mode=?,inference_backend=?,processing_seconds=? WHERE media_id=?""",
+                error_code=NULL,faces_detected=?,processed_frames=?,redaction_mode=?,inference_backend=?,processing_seconds=?,verification_json=? WHERE media_id=?""",
                 (storage_key(target), details["faces_detected"], details["processed_frames"], details["redaction_mode"],
-                 details["inference_backend"], details["processing_seconds"], media_id))
+                 details["inference_backend"], details["processing_seconds"], verified, media_id))
     except Exception:
         if moved:
             target.unlink(missing_ok=True)
@@ -286,6 +301,8 @@ def _finish_if_clean(media_id: str, work: Path | None):
             conn.execute("UPDATE event_media SET error_code='private_cleanup_pending' WHERE media_id=?", (media_id,))
     else:
         _finish_processing(media_id)
+        from backend.media.verification_policy import purge_verified_source
+        purge_verified_source(media_id)
 
 
 def ingest_frame(event_id: str, camera_id: str, frame) -> dict:
@@ -315,7 +332,7 @@ def reprocess_media(media_id: str, mode: str = "scrfd") -> dict:
             raise ValueError(reason)
         source = private_source_path(row["source_path"]) if row["source_path"] else owned_path(row["storage_path"])
         legacy = not row["source_path"]
-        conn.execute("UPDATE event_media SET status='processing',redaction_status='unprocessed',processing_started_at=?,error_code=NULL,redaction_mode=?,inference_backend=NULL,processing_seconds=NULL WHERE media_id=?",
+        conn.execute("UPDATE event_media SET status='processing',redaction_status='unprocessed',verification_json='',processing_started_at=?,error_code=NULL,redaction_mode=?,inference_backend=NULL,processing_seconds=NULL WHERE media_id=?",
                      (time.time(), mode, media_id))
     work = None
     try:

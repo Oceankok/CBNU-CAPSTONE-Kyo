@@ -16,6 +16,8 @@ from backend.db.connection import begin_write
 from backend.db.event_repository import get_connection
 from backend.field.routes import current_node
 from backend.media.paths import WORK_ROOT, PROCESSED_ROOT, private_source_path, storage_key, publish_file
+from backend.media.verification_policy import VerificationReport, record as verification_record
+from backend.media.redaction import MediaError
 from backend.processing import service
 from backend.processing.events import EventSubmission, submit
 
@@ -244,7 +246,8 @@ def source(job_id: str, node: dict = Depends(processor), x_processing_lease: str
 class Failure(BaseModel):
     error_code: Literal['source_file_missing', 'source_expired', 'invalid_frame', 'video_decode_failed',
                         'incomplete_video_decode', 'scrfd_model_missing', 'face_model_missing',
-                        'media_processing_failed', 'gpu_unavailable']
+                        'media_processing_failed', 'gpu_unavailable', 'face_verification_failed',
+                        'face_verifier_model_invalid', 'face_verifier_configuration_invalid']
 
 
 @router.post('/jobs/{job_id}/failure')
@@ -265,6 +268,7 @@ class ResultMetadata(BaseModel):
     redaction_mode: Literal['enhanced', 'scrfd']
     inference_backend: str = Field(min_length=1, max_length=100)
     processing_seconds: float = Field(ge=0, le=86400, allow_inf_nan=False)
+    verification: 'VerificationReport | None' = None
 
 
 def validate_result(path, kind, meta):
@@ -306,6 +310,10 @@ def publish(job_id, node_id, token, path, meta):
                 return service.public(row)
             if row['redaction_mode'] != meta.redaction_mode:
                 raise HTTPException(422, 'processing_mode_mismatch')
+            try:
+                verified = verification_record(meta.verification, meta.processed_frames, digest)
+            except MediaError as exc:
+                raise HTTPException(422, str(exc)) from exc
             PROCESSED_ROOT.mkdir(parents=True, exist_ok=True)
             target = PROCESSED_ROOT / (row['media_id'] + path.suffix)
             if target.resolve().parent != PROCESSED_ROOT.resolve():
@@ -314,9 +322,9 @@ def publish(job_id, node_id, token, path, meta):
             moved = target
             conn.execute('''UPDATE event_media SET storage_path=?,status='ready',redaction_status='complete',
                 processing_started_at=NULL,error_code=NULL,faces_detected=?,processed_frames=?,redaction_mode=?,
-                inference_backend=?,processing_seconds=? WHERE media_id=?''',
+                inference_backend=?,processing_seconds=?,verification_json=? WHERE media_id=?''',
                          (storage_key(target), meta.faces_detected, meta.processed_frames, meta.redaction_mode,
-                          meta.inference_backend, meta.processing_seconds, row['media_id']))
+                          meta.inference_backend, meta.processing_seconds, verified, row['media_id']))
             conn.execute("UPDATE processing_job SET status='succeeded',result_sha256=?,finished_at=?,updated_at=? WHERE job_id=?",
                          (digest, time.time(), time.time(), job_id))
             return service.public(service.job(conn, job_id))

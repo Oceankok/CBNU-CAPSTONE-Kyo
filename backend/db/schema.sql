@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS event_media (
     storage_path TEXT NOT NULL DEFAULT '',
     source_path TEXT NOT NULL DEFAULT '',
     source_expires_at REAL,
+    verification_json TEXT NOT NULL DEFAULT '',
+    source_deleted_at REAL,
     status TEXT NOT NULL DEFAULT 'registered'
         CHECK(status IN ('registered','processing','ready','failed','missing','delete_pending','deleted')),
     redaction_status TEXT NOT NULL DEFAULT 'unprocessed'

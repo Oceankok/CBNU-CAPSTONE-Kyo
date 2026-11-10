@@ -138,6 +138,9 @@ class Worker:
             if lost.is_set():
                 raise MediaError('media_processing_failed')
             metadata = {key: details[key] for key in ('faces_detected', 'processed_frames', 'redaction_mode', 'inference_backend', 'processing_seconds')}
+            verification = details.get('profile', {}).get('verification', {})
+            if verification.get('status') == 'passed':
+                metadata['verification'] = verification
             with output.open('rb') as file:
                 response = self.client.post(f'/api/processing/jobs/{ident}/result', content=file,
                     headers={**headers, 'X-Processing-Metadata': json.dumps(metadata),
@@ -147,7 +150,8 @@ class Worker:
         except Exception as error:
             code = str(error) if isinstance(error, MediaError) else 'media_processing_failed'
             allowed = {'source_file_missing', 'source_expired', 'invalid_frame', 'video_decode_failed',
-                       'incomplete_video_decode', 'scrfd_model_missing', 'face_model_missing', 'gpu_unavailable'}
+                       'incomplete_video_decode', 'scrfd_model_missing', 'face_model_missing', 'gpu_unavailable',
+                       'face_verification_failed', 'face_verifier_model_invalid', 'face_verifier_configuration_invalid'}
             for _ in range(2):
                 try:
                     self.client.post(f'/api/processing/jobs/{ident}/failure', headers=headers,

@@ -54,7 +54,7 @@ def enqueue(media_id):
         generation = media['processing_generation'] + 1
         ident = str(uuid4())
         parent = conn.execute('SELECT job_id FROM processing_job WHERE media_id=? ORDER BY created_at DESC LIMIT 1', (media_id,)).fetchone()
-        conn.execute('UPDATE event_media SET processing_generation=?,processing_started_at=NULL WHERE media_id=?', (generation, media_id))
+        conn.execute("UPDATE event_media SET processing_generation=?,processing_started_at=NULL,verification_json='' WHERE media_id=?", (generation, media_id))
         conn.execute('''INSERT INTO processing_job(job_id,media_id,generation,parent_job_id,status,redaction_mode,kind,created_at,updated_at)
             VALUES(?,?,?,?,'queued',?,?,?,?)''', (ident, media_id, generation, parent[0] if parent else None,
                                                media['redaction_mode'], media['kind'], time.time(), time.time()))
@@ -155,6 +155,8 @@ def cleanup(job_id, node_id):
     from backend.media.service import get_retention, delete_event_media
     if get_retention(event)['decision'] == 'delete':
         delete_event_media(event)
+    from backend.media.verification_policy import purge_verified_source
+    purge_verified_source(row['media_id'])
     with get_connection() as conn:
         return public(job(conn, job_id))
 
