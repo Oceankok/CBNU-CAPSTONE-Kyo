@@ -15,6 +15,7 @@ import type {
   ReviewAvailability,
 } from '../types';
 import { formatEventTime, formatSeoul } from '../time';
+import { markEventsSeen } from '../seenEvents';
 import {
   REVIEW_NEEDED_HINT,
   confidenceLevel,
@@ -128,6 +129,8 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
     if (!event_id) return;
     fetchEvent(event_id)
       .then(({ event: ev, review, review_history = [] }) => {
+        // Opening an event counts as checking it, whether or not it gets reviewed
+        markEventsSeen([ev.event_id]);
         setEvent(ev);
         setReviewHistory(review_history);
         setExistingReview(review);
@@ -227,6 +230,18 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
       <div className={styles.grid}>
         {/* Left: redacted media first, retention below (all cameras share one policy) */}
         <div className={styles.mediaCol}>
+          {event.event_status === 'merged' && event.merged_into_event_id ? (
+            // A merged source keeps no media of its own: it all moved to the representative event
+            <div className={styles.card}>
+              <p className={styles.headlineSub}>
+                이 이벤트의 영상은 대표 이벤트로 옮겨졌습니다. 모든 카메라의 영상은
+                대표 이벤트에서 볼 수 있습니다.
+              </p>
+              <Link to={`/review/${event.merged_into_event_id}`}>
+                {event.merged_into_event_id}의 영상 보기 →
+              </Link>
+            </div>
+          ) : (
           <EventMediaPanel
             key={`${event.event_id}-${mediaKey}`}
             eventId={event.event_id}
@@ -240,6 +255,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
             onAvailability={setAvailability}
             onChange={reloadEvent}
           />
+          )}
         </div>
 
         {/* Right: event details + review form */}

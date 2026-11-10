@@ -93,7 +93,7 @@ export default function StatsPage() {
         <p style={{ color: '#276749', marginBottom: '1rem' }}>✓ {refreshMsg}</p>
       )}
       {loading && (
-        <p style={{ color: '#718096', marginBottom: '1rem' }}>
+        <p style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>
           데이터를 불러오는 중...
         </p>
       )}

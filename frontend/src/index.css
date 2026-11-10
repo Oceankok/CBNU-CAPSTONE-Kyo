@@ -1,3 +1,9 @@
+/* Muted text colors that keep at least 4.5:1 contrast on white and on the page background */
+:root {
+  --text-muted: #566175;
+  --text-faint: #667085;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
 }
@@ -17,4 +23,28 @@ a {
 
 button {
   font-family: inherit;
+}
+
+/* Keyboard focus: show where focus is for anything clickable (mouse clicks do not trigger this) */
+:focus-visible {
+  outline: 2px solid #2b6cb0;
+  outline-offset: 2px;
+}
+
+/* Touch screens: keep tap targets at least 44px high (icon-only buttons carry an aria-label and stay compact) */
+@media (max-width: 768px) {
+  button:not([aria-label]),
+  select,
+  summary,
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']) {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

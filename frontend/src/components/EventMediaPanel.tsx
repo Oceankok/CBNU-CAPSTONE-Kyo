@@ -83,22 +83,47 @@ const MODE_LABEL: Record<string, string> = {
   legacy: '기존 CPU 처리',
 };
 
-// Representative image / clip for one camera; prefers thumbnails, then anything viewable
-function cameraMedia(items: EventMedia[], camera: string) {
+const ROLE_LABEL: Record<EventMedia['role'], string> = {
+  thumbnail: '대표',
+  clip: '클립',
+  reference: '참고',
+};
+
+// Label for one choice, e.g. "영상 2 · 참고" (numbered within its kind)
+function mediaChoiceLabel(choices: EventMedia[], m: EventMedia): string {
+  const same = choices.filter((c) => c.kind === m.kind);
+  const n = same.findIndex((c) => c.media_id === m.media_id) + 1;
+  return `${m.kind === 'video' ? '영상' : '이미지'} ${n} · ${ROLE_LABEL[m.role]}`;
+}
+
+// Image / clip to show for one camera. Normally one of each; after a merge a camera can hold
+// several clips (its own plus reference ones), so those are offered as choices (#219)
+function cameraMedia(items: EventMedia[], camera: string, pickedId?: string) {
   const own = items.filter((m) => m.camera_id === camera);
   const viewable = own.filter((m) => m.url);
-  const image =
-    viewable.find((m) => m.kind === 'image' && m.role === 'thumbnail') ??
-    viewable.find((m) => m.kind === 'image');
-  const video =
-    viewable.find((m) => m.kind === 'video' && m.role === 'clip') ??
-    viewable.find((m) => m.kind === 'video');
+  const videos = viewable.filter((m) => m.kind === 'video');
+  const images = viewable.filter((m) => m.kind === 'image');
+  const choices =
+    videos.length > 1 || images.length > 1 ? [...videos, ...images] : [];
+  const picked = choices.find((m) => m.media_id === pickedId) ?? choices[0];
+  const image = choices.length
+    ? picked?.kind === 'image'
+      ? picked
+      : undefined
+    : (viewable.find((m) => m.kind === 'image' && m.role === 'thumbnail') ??
+      images[0]);
+  const video = choices.length
+    ? picked?.kind === 'video'
+      ? picked
+      : undefined
+    : (viewable.find((m) => m.kind === 'video' && m.role === 'clip') ??
+      videos[0]);
   // Most relevant non-viewable state, shown when nothing can be displayed yet
   const pending =
     own.find((m) => m.status === 'processing') ??
     own.find((m) => m.status === 'failed') ??
     own[0];
-  return { image, video, pending };
+  return { image, video, pending, choices, picked };
 }
 
 /**
@@ -127,6 +152,10 @@ export default function EventMediaPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [camera, setCamera] = useState(cameraId);
+  // Chosen media per camera when a camera has several
+  const [pickedByCamera, setPickedByCamera] = useState<Record<string, string>>(
+    {},
+  );
   const [playing, setPlaying] = useState(false);
   const [consent, setConsent] = useState(false);
   const [consents, setConsents] = useState<ConsentRecord[]>([]);
@@ -147,7 +176,7 @@ export default function EventMediaPanel({
     [onAvailability],
   );
   const reload = useCallback(
-    () => fetchEventMedia(eventId).then(apply),
+    () => fetchEventMedia(eventId, { fresh: true }).then(apply),
     [eventId, apply],
   );
 
@@ -218,7 +247,11 @@ export default function EventMediaPanel({
   }
 
   const cameras = [...new Set([cameraId, ...items.map((m) => m.camera_id)])];
-  const { image, video, pending } = cameraMedia(items, camera);
+  const { image, video, pending, choices, picked } = cameraMedia(
+    items,
+    camera,
+    pickedByCamera[camera],
+  );
   const anyViewable = items.some((m) => m.url);
 
   return (
@@ -272,6 +305,29 @@ export default function EventMediaPanel({
               onClick={() => setCamera(c)}
             >
               {c}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {choices.length > 1 && (
+        <div
+          className={styles.cameraTabs}
+          role="tablist"
+          aria-label="영상 선택"
+        >
+          {choices.map((m) => (
+            <button
+              key={m.media_id}
+              role="tab"
+              aria-selected={m.media_id === picked?.media_id}
+              className={`${styles.cameraTab} ${m.media_id === picked?.media_id ? styles.cameraTabOn : ''}`}
+              onClick={() => {
+                setPlaying(false);
+                setPickedByCamera((p) => ({ ...p, [camera]: m.media_id }));
+              }}
+            >
+              {mediaChoiceLabel(choices, m)}
             </button>
           ))}
         </div>

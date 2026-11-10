@@ -7,6 +7,7 @@ import type { LayoutContext } from '../components/AppLayout';
 import type { QuarterlyStats } from '../types';
 import { formatEventTime } from '../time';
 import { formatConfidence } from '../confidence';
+import { useSeenEvents } from '../seenEvents';
 import styles from './HomePage.module.css';
 
 // Number of pending events previewed on the home screen; the rest are on /review
@@ -24,6 +25,7 @@ export default function HomePage() {
   const [stats, setStats] = useState<QuarterlyStats | null>(null);
   const [statsMissing, setStatsMissing] = useState(false);
   const pendingEvents = pending ?? [];
+  const { isUnseen } = useSeenEvents();
   const loading = pending === null && !error;
 
   useEffect(() => {
@@ -36,7 +38,7 @@ export default function HomePage() {
   return (
     <div className={styles.page}>
       {error && <p style={{ color: '#e53e3e' }}>⚠ API 오류: {error}</p>}
-      {loading && <p style={{ color: '#718096' }}>데이터를 불러오는 중...</p>}
+      {loading && <p style={{ color: 'var(--text-muted)' }}>데이터를 불러오는 중...</p>}
 
       {/* Primary action: events waiting for a human decision */}
       {pending && (
@@ -74,6 +76,9 @@ export default function HomePage() {
                         {event.ppe_type === 'helmet' ? '안전모' : '안전조끼'}{' '}
                         미착용
                       </strong>
+                      {isUnseen(event) && (
+                        <span className={styles.unseenTag}>미확인</span>
+                      )}
                       <span className={styles.pendingZone}>
                         {event.zone_name}
                       </span>

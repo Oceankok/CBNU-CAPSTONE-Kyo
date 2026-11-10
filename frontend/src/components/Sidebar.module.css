@@ -126,7 +126,7 @@
 
   .navItem {
     flex: 1;
-    padding: 12px 2px;
+    padding: 15px 2px;
     font-size: 12px;
     text-align: center;
     white-space: nowrap;
@@ -138,4 +138,9 @@
     right: 6px;
     margin: 0;
   }
+}
+
+.sidebar a:focus-visible,
+.sidebar button:focus-visible {
+  outline-color: #90cdf4;
 }
