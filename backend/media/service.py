@@ -69,9 +69,6 @@ def public_media(row: dict, decision: str = "pending") -> dict:
         result['face_verification'] = json.loads(proof) if proof else {'status': 'not_run'}
     except (ValueError, TypeError):
         result['face_verification'] = {'status': 'unknown'}
-    if row.get('error_code') == 'face_verification_failed':
-        result['face_verification'] = {'status': 'failed', 'action_required': True,
-                                       'available_actions': ['retry', 'delete']}
     safe = False
     try:
         safe = owned_path(path).is_file()
@@ -83,9 +80,19 @@ def public_media(row: dict, decision: str = "pending") -> dict:
     result["reprocess_unavailable_reason"] = reason
     result["failure_category"] = failure_category(row.get("error_code"))
     with get_connection() as conn:
-        job = conn.execute('SELECT job_id,status FROM processing_job WHERE media_id=? ORDER BY created_at DESC LIMIT 1', (row['media_id'],)).fetchone()
+        job = conn.execute('SELECT job_id,status,local_cleanup_status FROM processing_job WHERE media_id=? ORDER BY created_at DESC LIMIT 1', (row['media_id'],)).fetchone()
     result['job_id'] = job['job_id'] if job else None
     result['processing_state'] = job['status'] if job else None
+    if row.get('error_code') == 'face_verification_failed':
+        actions = []
+        clean = row.get('processing_started_at') is None and (not job or job['local_cleanup_status'] == 'confirmed')
+        if clean and result['can_reprocess']:
+            actions.append('retry')
+        if clean and row.get('source_path') and row['status'] == 'failed' and decision != 'delete':
+            actions.append('discard_source')
+        audit = result['face_verification'] if isinstance(result['face_verification'], dict) else {}
+        result['face_verification'] = {**audit, 'status': 'failed', 'action_required': bool(actions),
+                                       'available_actions': actions}
     return result
 
 
