@@ -120,6 +120,91 @@ class EventPaginationApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_latest_supported_date_does_not_overflow(self):
+        for endpoint in ('/api/events', '/api/events/summary'):
+            with self.subTest(endpoint=endpoint):
+                response = self.client.get(endpoint + '?date_to=9999-12-31', headers=self.admin)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()['total'], 3)
+
+    def test_list_and_summary_sort_mixed_time_formats_consistently(self):
+        stamps = {
+            'PAGE_A': '2026-11-10T00:30:00.000000+00:00',  # Korean 09:30
+            'PAGE_B': '2026-11-10 09:00:00',  # Unknown legacy timezone
+            'PAGE_C': '2026-11-09T23:45:00.000000+00:00',  # Korean 08:45
+        }
+        with get_connection() as conn:
+            for key, stamp in stamps.items():
+                conn.execute("UPDATE candidate_event SET timestamp_start=?,event_status='pending' WHERE event_id=?",
+                             (stamp, self.event_ids[key]))
+        expected = [self.event_ids[key] for key in ('PAGE_A', 'PAGE_B', 'PAGE_C')]
+        listed = self.client.get('/api/events?limit=3', headers=self.admin).json()['items']
+        recent = self.client.get('/api/events/summary', headers=self.admin).json()['recent_pending']
+        self.assertEqual([item['event_id'] for item in listed], expected)
+        self.assertEqual([item['event_id'] for item in recent], expected)
+        with get_connection() as conn:
+            stored = conn.execute('SELECT timestamp_start FROM candidate_event WHERE event_id=?',
+                                  (self.event_ids['PAGE_B'],)).fetchone()[0]
+        self.assertEqual(stored, stamps['PAGE_B'])
+
+    def test_sort_keeps_subseconds_and_event_id_tie_break(self):
+        with get_connection() as conn:
+            for key, stamp in (
+                ('PAGE_A', '2026-11-10T14:59:59.999999+00:00'),
+                ('PAGE_B', '2026-11-10 23:59:59.999999'),
+                ('PAGE_C', '2026-11-10T14:59:59.999998+00:00'),
+            ):
+                conn.execute("UPDATE candidate_event SET timestamp_start=?,event_status='pending' WHERE event_id=?",
+                             (stamp, self.event_ids[key]))
+        expected = sorted([self.event_ids['PAGE_A'], self.event_ids['PAGE_B']], reverse=True)
+        expected.append(self.event_ids['PAGE_C'])
+        for endpoint, field in (('/api/events', 'items'), ('/api/events/summary', 'recent_pending')):
+            with self.subTest(endpoint=endpoint):
+                response = self.client.get(endpoint, headers=self.admin)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual([item['event_id'] for item in response.json()[field]], expected)
+
+    def test_pagination_boundaries_and_access_control(self):
+        response = self.client.get('/api/events?limit=2&offset=3', headers=self.admin)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['total'], 3)
+        self.assertEqual(response.json()['items'], [])
+        self.assertFalse(response.json()['has_more'])
+        for query in ('limit=0', 'limit=101', 'offset=-1', 'min_confidence=1.1'):
+            with self.subTest(query=query):
+                self.assertEqual(self.client.get('/api/events?' + query, headers=self.admin).status_code, 422)
+        worker = login(self.client, 'worker01')
+        for endpoint in ('/api/events', '/api/events/summary'):
+            with self.subTest(endpoint=endpoint):
+                self.assertEqual(self.client.get(endpoint).status_code, 401)
+                self.assertEqual(self.client.get(endpoint, headers=worker).status_code, 403)
+
+    def test_v18_upgrade_adds_indexes_and_preserves_events(self):
+        from backend.db.connection import schema_version
+        from backend.db.migrations import LATEST_VERSION, apply_migrations
+        from backend.db.postgres import initialize
+        indexes = ('idx_candidate_event_status_time', 'idx_candidate_event_ppe_time', 'idx_camera_info_zone')
+        with get_connection() as conn:
+            for name in indexes:
+                conn.execute(f'DROP INDEX IF EXISTS {name}')
+            postgres = getattr(conn, 'dialect', 'sqlite') == 'postgresql'
+            if postgres:
+                conn.execute('UPDATE app_schema_version SET version=18 WHERE singleton=1')
+            else:
+                conn.execute('PRAGMA user_version=18')
+        if postgres:
+            initialize()
+        else:
+            with get_connection() as conn:
+                apply_migrations(conn)
+        with get_connection() as conn:
+            self.assertEqual(schema_version(conn), LATEST_VERSION)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM candidate_event').fetchone()[0], 3)
+            query = ("SELECT indexname FROM pg_indexes WHERE schemaname=current_schema()"
+                     if postgres else "SELECT name FROM sqlite_master WHERE type='index'")
+            found = {row[0] for row in conn.execute(query).fetchall()}
+        self.assertTrue(set(indexes).issubset(found))
+
 
 if __name__ == "__main__":
     unittest.main()

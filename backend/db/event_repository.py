@@ -29,7 +29,7 @@ import sqlite3
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Optional
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from uuid import uuid4
 
 
@@ -202,8 +202,8 @@ def _candidate_event_filters(
         clauses.append(f"{local_start} >= ?")
         parameters.append(date_from.isoformat())
     if date_to is not None:
-        clauses.append(f"{local_start} < ?")
-        parameters.append((date_to + timedelta(days=1)).isoformat())
+        clauses.append(f"substr({local_start},1,10) <= ?")
+        parameters.append(date_to.isoformat())
     if status:
         clauses.append("ce.event_status = ?")
         parameters.append(status)
@@ -219,6 +219,20 @@ def _candidate_event_filters(
         clauses.append("(ce.ai_confidence >= ? OR EXISTS (SELECT 1 FROM processing_review_only_event rof WHERE rof.event_id=ce.event_id AND rof.review_only=1))")
         parameters.append(min_confidence)
     return " AND ".join(clauses), parameters
+
+
+def _candidate_event_sort_time() -> str:
+    """Compare Korean wall clocks, leaving timezone-unknown legacy values as recorded.
+
+    local_time_sql intentionally drops fractions for safe date conversion. Restore
+    six fractional digits separately so subsecond event ordering is not lost.
+    """
+    column = "ce.timestamp_start"
+    fraction = (
+        f"CASE WHEN substr({column},20,1)='.' "
+        f"THEN substr(substr({column},20,7)||'000000',1,7) ELSE '.000000' END"
+    )
+    return f"({local_time_sql(column)} || ({fraction}))"
 
 
 def get_candidate_events_page(
@@ -252,7 +266,7 @@ def get_candidate_events_page(
         LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
         WHERE {where}
         ORDER BY CASE WHEN ce.event_status='pending' THEN 0 ELSE 1 END,
-                 ce.timestamp_start DESC, ce.event_id DESC
+                 {_candidate_event_sort_time()} DESC, ce.event_id DESC
     """
     count_query = f"""
         SELECT COUNT(*)
@@ -307,7 +321,7 @@ def get_candidate_event_summary(
             FROM candidate_event ce
             LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
             WHERE {recent_where}
-            ORDER BY ce.timestamp_start DESC, ce.event_id DESC
+            ORDER BY {_candidate_event_sort_time()} DESC, ce.event_id DESC
             LIMIT ?
         """, [*parameters, recent_limit]).fetchall()
     by_status: dict[str, int] = {}
