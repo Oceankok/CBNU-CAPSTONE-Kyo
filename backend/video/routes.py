@@ -8,7 +8,6 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from backend.db.connection import begin_write
 from backend.db.event_repository import get_connection
 from backend.field.routes import current_node
 from backend.processing.routes import processor
@@ -16,6 +15,12 @@ from backend.video import service
 
 router = APIRouter(tags=['video ingest'])
 uploads = BoundedSemaphore(8)
+
+
+def _validate_stream_access(stream_id, node_id):
+    """Run the synchronous stream and camera checks outside the event loop."""
+    with get_connection() as conn:
+        service.stream(conn, stream_id, node_id)
 
 
 class StreamInput(BaseModel):
@@ -40,8 +45,7 @@ async def upload_chunk(stream_id: str, request: Request,
     difference = (datetime.now(timezone.utc)-datetime.fromisoformat(captured)).total_seconds()
     if not -10 <= difference <= 60:
         raise HTTPException(422, 'capture_start_clock_or_backlog_invalid')
-    with get_connection() as conn:
-        service.stream(conn, stream_id, node['node_id'])
+    await run_in_threadpool(_validate_stream_access, stream_id, node['node_id'])
     if not uploads.acquire(blocking=False):
         raise HTTPException(429, 'video_upload_capacity_reached', headers={'Retry-After':'1'})
     source = None
@@ -99,8 +103,6 @@ def list_chunks(stream_id: str, after_sequence: int = Query(default=-1, ge=-1), 
 @router.get('/api/processing/video/chunks/{chunk_id}')
 def download_chunk(chunk_id: str, node: dict = Depends(processor)):
     with get_connection() as conn:
-        # Serialize file reads against cleanup; the bounded bytes outlive the DB lock.
-        begin_write(conn)
         row = conn.execute('''SELECT c.*,s.camera_id,s.node_id FROM video_chunk c
             JOIN video_stream s ON s.stream_id=c.stream_id WHERE c.chunk_id=?''', (chunk_id,)).fetchone()
         if not row or row['expires_at'] <= service.time.time():
