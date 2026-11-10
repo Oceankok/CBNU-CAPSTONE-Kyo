@@ -95,6 +95,16 @@ class ReviewOnlySubmissionTests(unittest.TestCase):
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM event_review WHERE event_id=?',
                 (self.event_id,)).fetchone()[0], 0)
 
+    def test_vest_review_candidate_is_stored_without_verified_confidence(self):
+        body = EventSubmission(**{**self.payload, 'ppe_type': 'vest'})
+        result = submit(body)
+        self.assertTrue(result['created'])
+        event = self.query_event(self.event_id)
+        self.assertEqual(event['ppe_type'], 'vest')
+        self.assertTrue(event['review_only'])
+        self.assertIsNone(event['ai_confidence'])
+        self.assertEqual(event['event_status'], 'pending')
+
     def query_event(self, event_id):
         admin = login(self.client)
         detail = self.client.get('/api/events/' + event_id, headers=admin)
