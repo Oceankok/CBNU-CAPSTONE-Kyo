@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-LATEST_VERSION = 19
+LATEST_VERSION = 20
 
 
 def _now() -> str:
@@ -369,6 +369,20 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_candidate_event_ppe_time ON candidate_event(ppe_type,timestamp_start,event_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_camera_info_zone ON camera_info(zone_name,camera_id)")
             conn.execute('PRAGMA user_version=19')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 20:
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            columns = {row[1] for row in conn.execute('PRAGMA table_info(event_media)')}
+            if 'verification_json' not in columns:
+                conn.execute("ALTER TABLE event_media ADD COLUMN verification_json TEXT NOT NULL DEFAULT ''")
+            if 'source_deleted_at' not in columns:
+                conn.execute('ALTER TABLE event_media ADD COLUMN source_deleted_at REAL')
+            conn.execute('PRAGMA user_version=20')
             conn.commit()
         except Exception:
             conn.rollback()

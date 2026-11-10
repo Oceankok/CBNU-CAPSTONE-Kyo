@@ -57,12 +57,32 @@ $env:PPE_RETINAFACE_MODEL_PATH = 'C:\ReviewedModels\retinaface_resnet50_640.onnx
 기존 ready/failed 공개 차단과 재처리 API를 사용한다. worker 실패 코드에는
 `face_verification_failed`, `face_verifier_model_invalid`,
 `face_verifier_configuration_invalid`가 추가됐다. 검사 통계는 로컬 처리 profile에 포함된다.
-원격 worker의 결과 업로드 메타데이터 및 DB에는 새 검사 증명 필드를 추가하지 않았다.
 현재 API의 ready만으로 보조 검사 활성 여부를 판단하면 안 된다.
 
-원본 보관 기한·삭제 정책과 DB 스키마는 이번 변경에서 수정하지 않는다.
-원본 조기 삭제, 관리자 전용 검사 결과/재시도 UI와 정책 강제는 별도 구현 대상이다.
-기존 화면의 실패/재처리 흐름으로 이 작업을 운영할 수 있으므로 프론트 변경은 필수가 아니다.
+스키마 v20은 검사 기록(`verification_json`)과 원본 삭제 시각(`source_deleted_at`)을 추가한다.
+worker는 검사 모델·통과 상태·횟수·프레임 수·최종 결과 SHA256을 서버에 전달한다.
+서버는 프레임 수와 업로드 결과 해시를 대조해 기록한다. 이 기록은 인증된 worker의 보고이며
+서버가 직접 얼굴 검사를 다시 수행한 증명이나 악성 worker에 대한 암호학적 증명은 아니다.
+
+API의 각 미디어에 `face_verification`과 `source_deleted_at`을 제공한다. 기존 자료는
+`not_run`이고 검사 통과로 소급 처리하지 않는다. 반복 실패는 `failed`,
+`action_required=true`, `available_actions=[retry,delete]`를 제공한다.
+**실패 결과와 원본은 관리자에게 미리보기로 제공하지 않는다.** 기존 관리자 재처리/삭제
+흐름을 쓸 수 있으며 새 상태를 친절하게 보여주는 UI는 프론트 후속 작업이다.
+
+서버의 선택 정책:
+
+- `PPE_MEDIA_REQUIRE_FACE_VERIFICATION=true`: 검사 보고가 없는 새 결과 공개를 차단한다.
+- `PPE_MEDIA_DELETE_VERIFIED_SOURCE=true`: 위 공개 제한도 적용하고, 성공한 결과의 worker
+  임시 파일 정리가 확인된 뒤 서버 원본을 삭제한다. 실패한 원본은 자동 성공 처리하지 않는다.
+- 두 정책 중 하나가 활성화되면 새 원본의 기본 보관 한도는 1시간이다.
+  `PPE_MEDIA_SOURCE_TTL_SECONDS`로 명시한 값이 있으면 그 값을 우선한다.
+
+두 정책의 기본값은 false로 기존 worker와의 배포 전환을 지원한다. 실제 worker 검사기를
+먼저 준비한 후 서버 정책을 활성화한다. 삭제 실패 시 원본 경로와 검사 기록을 유지하고
+주기 정리에서 재시도한다. 만료·관리자 삭제 정책은 기존처럼 적용하며, 기존 자료의 보관
+기한을 일괄 변경하거나 검사하지 않은 원본을 조기 삭제하지 않는다. DB/미디어 백업의 보관
+기한은 별도 운영 정책이므로 이 기능이 과거 백업에서 원본을 제거하는 것은 아니다.
 
 실제 CUDA 모델 호환성·누락 보완 정도·처리 시간은 가중치 등록 후 검증해야 한다.
 PPE 추론 우선권을 기존 inference guard를 통해 유지한다. 단일 프레임 모델 실행 중에는
@@ -75,3 +95,21 @@ PPE 추론 우선권을 기존 inference guard를 통해 유지한다. 단일 �
 가짜 모델 출력, 합성 이미지/영상, 실제 영상 인코더로 출력 재검사·복구 횟수 제한·
 실패 시 비공개 결과 정리·원본 탐지 합집합·출력 계약·체크섬 오류를 검증한다.
 실제 얼굴, 모델 가중치, GPU, 카메라, 외부 API는 사용하지 않는다.
+
+`backend.tests.test_verified_source_policy`는 PostgreSQL 격리 DB에서 v19→20 이관,
+검사 보고 누락/결과 불일치 차단, worker 정리 전 삭제 금지, 삭제 실패 복구,
+원본 비공개와 기존 worker 호환성을 확인한다.
+
+## 이 PC의 모델 준비 결과
+
+공식 README의 공개 가중치 폴더에서 명시적 승인 후 다운로드한 Resnet50_Final.pth를
+`torch.load(weights_only=True)`로 읽고, upstream `b984b4b775b2c4dced95c1eadd195a5c7d32a60b`
+모델 구조로 내보냈다. 체크포인트 외부 코드/불안전 pickle 로딩은 허용하지 않았다.
+
+- 원본 가중치 SHA256: `6d1de9c2944f2ccddca5f5e010ea5ae64a39845a86311af6fdf30841b0a5a16d`
+- ONNX SHA256: `4619df1d0ec99b5fa5ccde5c590222e3819d9ae76dc23c506bde47a356d0f617`
+- CUDAExecutionProvider, 640×480 인물 없는 입력 10회: 평균 약 40ms/프레임
+- SCRFD+RetinaFace 전체 경로: 인물 없는 이미지 1장과 10프레임 영상의 최종 검사·해시 통과
+
+이 수치는 해당 PC의 합성 입력 검사이며 실제 얼굴 정확도나 두 카메라 동시 처리량을
+검증한 결과가 아니다. 가중치 파일 자체와 개인용 모델 준비 스크립트는 Git에 포함하지 않는다.

@@ -183,6 +183,7 @@ def redact_image(source: Path, output: Path, mode="scrfd") -> dict:
     if getattr(detector, 'verifier', None) is not None:
         from backend.media.verification import verify_image
         detector.verification = verify_image(output, detector.verifier)
+        detector.verification['sha256'] = hashlib.sha256(output.read_bytes()).hexdigest()
     return _details(detector, faces, 1, started)
 
 
@@ -195,6 +196,7 @@ def redact_frame(frame, output: Path, mode="scrfd") -> dict:
     if getattr(detector, 'verifier', None) is not None:
         from backend.media.verification import verify_image
         detector.verification = verify_image(output, detector.verifier)
+        detector.verification['sha256'] = hashlib.sha256(output.read_bytes()).hexdigest()
     return _details(detector, faces, 1, started)
 
 
@@ -284,6 +286,7 @@ def redact_video(source: Path, output: Path, work_dir: Path, mode="scrfd") -> di
     if getattr(detector, 'verifier', None) is not None:
         from backend.media.verification import verify_video
         detector.verification = verify_video(output, detector.verifier, work_dir, frames)
+        detector.verification['sha256'] = hashlib.sha256(output.read_bytes()).hexdigest()
     if mode in {"enhanced", "scrfd"}:
         detector.tracking_stats = processor.stats
     return _details(detector, total_faces, frames, started)

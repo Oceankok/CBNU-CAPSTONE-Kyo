@@ -138,6 +138,9 @@ class Worker:
             if lost.is_set():
                 raise MediaError('media_processing_failed')
             metadata = {key: details[key] for key in ('faces_detected', 'processed_frames', 'redaction_mode', 'inference_backend', 'processing_seconds')}
+            verification = details.get('profile', {}).get('verification', {})
+            if verification.get('status') == 'passed':
+                metadata['verification'] = verification
             with output.open('rb') as file:
                 response = self.client.post(f'/api/processing/jobs/{ident}/result', content=file,
                     headers={**headers, 'X-Processing-Metadata': json.dumps(metadata),

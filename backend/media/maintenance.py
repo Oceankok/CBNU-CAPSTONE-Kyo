@@ -19,6 +19,11 @@ def maintain_once(stale_after: int = 3600) -> dict:
     maintain_ai()
     from backend.work_areas.snapshots import maintain as maintain_snapshots
     cleaned_snapshots = maintain_snapshots()
+    from backend.media.verification_policy import purge_verified_source
+    with get_connection() as conn:
+        verified_sources = conn.execute("SELECT media_id FROM event_media WHERE status='ready' AND verification_json!='' AND source_path!='' LIMIT 100").fetchall()
+    for item in verified_sources:
+        purge_verified_source(item['media_id'])
     cutoff = time.time() - stale_after
     with get_connection() as conn:
         begin_write(conn)
