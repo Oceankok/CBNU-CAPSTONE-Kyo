@@ -9,6 +9,7 @@ PPE 분석 시스템 초기 FastAPI 서버 파일.
 
 from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, APIRouter, Depends, Request, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -171,7 +172,7 @@ def read_events(
     offset: int = Query(default=0, ge=0),
     status: str | None = Query(default=None, min_length=1, max_length=30),
     ppe_type: str | None = Query(default=None, min_length=1, max_length=30),
-    zone: str | None = Query(default=None, min_length=1, max_length=100),
+    zone: list[Annotated[str, Field(min_length=1, max_length=100)]] | None = Query(default=None, max_length=50),
     min_confidence: float | None = Query(default=None, ge=0, le=1),
 ) -> dict:
     """
@@ -194,7 +195,7 @@ def read_event_summary(
     date_to: date | None = None,
     status: str | None = Query(default=None, min_length=1, max_length=30),
     ppe_type: str | None = Query(default=None, min_length=1, max_length=30),
-    zone: str | None = Query(default=None, min_length=1, max_length=100),
+    zone: list[Annotated[str, Field(min_length=1, max_length=100)]] | None = Query(default=None, max_length=50),
     min_confidence: float | None = Query(default=None, ge=0, le=1),
     recent_limit: int = Query(default=10, ge=0, le=50),
 ) -> dict:

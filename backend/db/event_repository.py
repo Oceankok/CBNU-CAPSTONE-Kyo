@@ -191,7 +191,7 @@ def _candidate_event_filters(
     date_to: date | None = None,
     status: str | None = None,
     ppe_type: str | None = None,
-    zone: str | None = None,
+    zone: str | list[str] | None = None,
     min_confidence: float | None = None,
 ) -> tuple[str, list[Any]]:
     """Build the shared, bound filter clause for list and summary queries."""
@@ -211,8 +211,9 @@ def _candidate_event_filters(
         clauses.append("ce.ppe_type = ?")
         parameters.append(ppe_type)
     if zone:
-        clauses.append("ci.zone_name = ?")
-        parameters.append(zone)
+        zones = list(dict.fromkeys([zone] if isinstance(zone, str) else zone))
+        clauses.append("ci.zone_name IN (" + ",".join("?" for _ in zones) + ")")
+        parameters.extend(zones)
     if min_confidence is not None:
         # Review-only candidates intentionally have no measured confidence and
         # must remain visible when the screen applies a confidence filter.
@@ -243,7 +244,7 @@ def get_candidate_events_page(
     date_to: date | None = None,
     status: str | None = None,
     ppe_type: str | None = None,
-    zone: str | None = None,
+    zone: str | list[str] | None = None,
     min_confidence: float | None = None,
 ) -> tuple[int, list[dict[str, Any]]]:
     """Return a filtered candidate-event page and the matching total count.
@@ -295,7 +296,7 @@ def get_candidate_event_summary(
     date_to: date | None = None,
     status: str | None = None,
     ppe_type: str | None = None,
-    zone: str | None = None,
+    zone: str | list[str] | None = None,
     min_confidence: float | None = None,
     recent_limit: int = 10,
 ) -> dict[str, Any]:

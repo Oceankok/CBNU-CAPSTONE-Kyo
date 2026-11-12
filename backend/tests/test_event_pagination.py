@@ -208,3 +208,36 @@ class EventPaginationApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MultipleZoneFilterTests(unittest.TestCase):
+    setUp = EventPaginationApiTests.setUp
+    def test_multiple_zones_match_list_count_and_summary(self):
+        with get_connection() as conn:
+            original = dict(conn.execute("SELECT * FROM camera_info WHERE camera_id=?", ("CAM_001",)).fetchone())
+            conn.execute("UPDATE camera_info SET zone_name=? WHERE camera_id=?", ("Zone A", "CAM_001"))
+            for key, zone in (("PAGE_B", "Zone B"), ("PAGE_C", "Zone C")):
+                camera = {**original, "camera_id": key, "zone_name": zone}
+                columns = list(camera)
+                conn.execute("INSERT INTO camera_info (" + ",".join(columns) + ") VALUES (" + ",".join("?" for _ in columns) + ")", list(camera.values()))
+                conn.execute("UPDATE candidate_event SET camera_id=? WHERE event_id=?", (key, self.event_ids[key]))
+        query = [("zone", "Zone A"), ("zone", "Zone B"), ("zone", "Zone A"), ("limit", "1")]
+        first = self.client.get("/api/events", params=query, headers=self.admin)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["total"], 2)
+        self.assertTrue(first.json()["has_more"])
+        second = self.client.get("/api/events", params=[*query, ("offset", "1")], headers=self.admin)
+        ids = {first.json()["items"][0]["event_id"], second.json()["items"][0]["event_id"]}
+        self.assertEqual(ids, {self.event_ids["PAGE_A"], self.event_ids["PAGE_B"]})
+        summary = self.client.get("/api/events/summary", params=query, headers=self.admin)
+        self.assertEqual(summary.json()["total"], 2)
+        self.assertEqual(summary.json()["by_zone"], {"Zone A": 1, "Zone B": 1})
+        single = self.client.get("/api/events?zone=Zone%20B", headers=self.admin)
+        self.assertEqual(single.json()["total"], 1)
+        self.assertEqual(self.client.get("/api/events?zone=unknown", headers=self.admin).json()["total"], 0)
+
+    def test_invalid_zone_values_are_rejected(self):
+        for endpoint in ("/api/events", "/api/events/summary"):
+            for values in ([""], ["x" * 101], ["x"] * 51):
+                response = self.client.get(endpoint, params=[("zone", x) for x in values], headers=self.admin)
+                self.assertEqual(response.status_code, 422, response.text)

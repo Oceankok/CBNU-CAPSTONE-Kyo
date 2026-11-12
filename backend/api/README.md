@@ -851,3 +851,8 @@ curl.exe -o NUL -w "%{http_code}`n" http://127.0.0.1:8000/storage/candidate_even
 ```
 
 세 기본 구역의 규칙은 `backend/db/seed.sql`에서 `INSERT OR IGNORE`로 초기화함. 이후 관리자가 저장한 규칙은 DB 재초기화 과정에서 덮어쓰지 않음.
+
+
+## 복수 구역 이벤트 필터
+
+목록과 요약 API는 `?zone=A&zone=B` 반복 파라미터를 지원합니다. 선택 구역은 OR, 다른 필터와는 AND로 적용하며 기존 단일 `zone=A` 호출을 유지합니다. 생략하면 전체 구역입니다. 상세 계약과 프론트 연결 방법은 [복수 구역 필터](../../docs/Multiple_Zone_Filter.md)를 참고하세요.
