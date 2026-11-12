@@ -18,6 +18,7 @@ export default function HomePage() {
   const {
     quarter,
     pending,
+    pendingCount,
     pendingError: error,
   } = useOutletContext<LayoutContext>();
   const navigate = useNavigate();
@@ -43,16 +44,16 @@ export default function HomePage() {
       {/* Primary action: events waiting for a human decision */}
       {pending && (
         <section
-          className={`${styles.section} ${pendingEvents.length ? styles.pendingSection : ''}`}
+          className={`${styles.section} ${pendingCount ? styles.pendingSection : ''}`}
         >
           <div className={styles.sectionHeader}>
             <div>
               <span className={styles.pendingLabel}>검토 대기</span>
               <span className={styles.pendingCount}>
-                {pendingEvents.length}건
+                {pendingCount}건
               </span>
             </div>
-            {pendingEvents.length > 0 && (
+            {pendingCount > 0 && (
               <button
                 className={styles.primaryBtn}
                 onClick={() => navigate('/review')}
@@ -61,7 +62,7 @@ export default function HomePage() {
               </button>
             )}
           </div>
-          {pendingEvents.length === 0 ? (
+          {pendingCount === 0 ? (
             <p className={styles.empty}>✓ 모든 이벤트의 검토가 끝났습니다.</p>
           ) : (
             <ul className={styles.pendingList}>
@@ -98,12 +99,12 @@ export default function HomePage() {
               ))}
             </ul>
           )}
-          {pendingEvents.length > PENDING_PREVIEW && (
+          {pendingCount > PENDING_PREVIEW && (
             <button
               className={styles.viewAll}
               onClick={() => navigate('/review')}
             >
-              외 {pendingEvents.length - PENDING_PREVIEW}건 더 보기 →
+              외 {pendingCount - PENDING_PREVIEW}건 더 보기 →
             </button>
           )}
         </section>

@@ -28,6 +28,9 @@ const afterWrite = <T>(result: Promise<T>, eventId?: string): Promise<T> =>
 export interface EventListResponse {
   total: number;
   items: CandidateEvent[];
+  offset?: number;
+  limit?: number | null;
+  has_more?: boolean;
 }
 
 export interface EventDetailResponse {
@@ -36,19 +39,82 @@ export interface EventDetailResponse {
   review_history?: EventReviewHistory[];
 }
 
-// Dates are YYYY-MM-DD in Korea time, both ends inclusive (filtered on the server, #194)
-export function fetchEvents(
-  dateFrom?: string,
-  dateTo?: string,
-): Promise<EventListResponse> {
-  const q = new URLSearchParams();
-  if (dateFrom) q.set('date_from', dateFrom);
-  if (dateTo) q.set('date_to', dateTo);
-  const qs = q.toString();
-  // The same list feeds the review page, the alert poller and the merge panel; share one read
-  return cached(`events:${dateFrom ?? ''}:${dateTo ?? ''}`, LIST_TTL_MS, () =>
-    apiFetch<EventListResponse>(`/api/events${qs ? `?${qs}` : ''}`),
+export interface EventPageQuery {
+  limit: number; // 1-100
+  offset?: number;
+  status?: string;
+  ppeType?: string;
+  zone?: string;
+  // YYYY-MM-DD in Korea time, both ends inclusive (#194)
+  dateFrom?: string;
+  dateTo?: string;
+  // Review-only events have no confidence and are never excluded by this (server rule)
+  minConfidence?: number;
+}
+
+const eventQuery = (q: Omit<EventPageQuery, 'limit' | 'offset'>) => {
+  const p = new URLSearchParams();
+  if (q.status) p.set('status', q.status);
+  if (q.ppeType) p.set('ppe_type', q.ppeType);
+  if (q.zone) p.set('zone', q.zone);
+  if (q.dateFrom) p.set('date_from', q.dateFrom);
+  if (q.dateTo) p.set('date_to', q.dateTo);
+  if (q.minConfidence) p.set('min_confidence', String(q.minConfidence));
+  return p;
+};
+
+// One page of events, filtered and ordered by the server (unreviewed first, then newest) (#223)
+export function fetchEventsPage(q: EventPageQuery): Promise<EventListResponse> {
+  const p = eventQuery(q);
+  p.set('limit', String(q.limit));
+  p.set('offset', String(q.offset ?? 0));
+  return cached(`events:page:${p}`, LIST_TTL_MS, () =>
+    apiFetch<EventListResponse>(`/api/events?${p}`),
   );
+}
+
+// Unreviewed events as shown in alerts and the home preview (no media or review details)
+export type PendingEvent = Pick<
+  CandidateEvent,
+  | 'event_id'
+  | 'camera_id'
+  | 'zone_name'
+  | 'ppe_type'
+  | 'timestamp_start'
+  | 'event_status'
+  | 'ai_confidence'
+  | 'review_only'
+  | 'timestamp_timezone'
+>;
+
+export interface EventSummary {
+  total: number;
+  by_status: Record<string, number>;
+  by_ppe_type: Record<string, number>;
+  by_zone: Record<string, number>;
+  recent_pending: PendingEvent[];
+}
+
+// Counts plus the newest unreviewed events: what the sidebar badge and the 20s poll need
+export function fetchEventSummary(recentLimit = 50): Promise<EventSummary> {
+  return cached(`events:summary:${recentLimit}`, LIST_TTL_MS, () =>
+    apiFetch<EventSummary>(`/api/events/summary?recent_limit=${recentLimit}`),
+  );
+}
+
+// Every unreviewed event id, read page by page (capped so a huge backlog cannot loop forever)
+export async function fetchPendingEventIds(max = 1000): Promise<string[]> {
+  const ids: string[] = [];
+  for (let offset = 0; offset < max; offset += 100) {
+    const page = await fetchEventsPage({
+      limit: 100,
+      offset,
+      status: 'pending',
+    });
+    ids.push(...page.items.map((e) => e.event_id));
+    if (!page.has_more || page.items.length === 0) break;
+  }
+  return ids;
 }
 
 export interface MergeRequest {

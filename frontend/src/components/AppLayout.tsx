@@ -3,13 +3,16 @@ import { useEffect, useState } from 'react';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import { usePendingEvents } from '../hooks/usePendingEvents';
-import type { CandidateEvent } from '../types';
+import type { PendingEvent } from '../api/events';
 import { seoulQuarterNow } from '../time';
 import styles from './AppLayout.module.css';
 
 export interface LayoutContext {
   quarter: string;
-  pending: CandidateEvent[] | null;
+  // Newest unreviewed events (at most 50); pendingCount is the real total
+  pending: PendingEvent[] | null;
+  pendingCount: number;
+  zones: string[];
   pendingError: string | null;
 }
 
@@ -17,9 +20,9 @@ export default function AppLayout() {
   const [quarter, setQuarter] = useState(() => seoulQuarterNow());
   const { pathname } = useLocation();
   // Path as trigger: re-check after navigating (e.g. returning from a submitted review)
-  const { pending, error, newCount, clearNew } = usePendingEvents(pathname);
+  const { pending, pendingCount, zones, error, newCount, clearNew } =
+    usePendingEvents(pathname);
   const navigate = useNavigate();
-  const pendingCount = pending?.length ?? 0;
 
   // Unreviewed count in the browser tab title, visible while the tab is in the background
   useEffect(() => {
@@ -43,7 +46,13 @@ export default function AppLayout() {
           <Outlet
             key={quarter}
             context={
-              { quarter, pending, pendingError: error } satisfies LayoutContext
+              {
+                quarter,
+                pending,
+                pendingCount,
+                zones,
+                pendingError: error,
+              } satisfies LayoutContext
             }
           />
         </main>
