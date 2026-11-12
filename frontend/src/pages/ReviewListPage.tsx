@@ -1,9 +1,19 @@
-import { useState, useMemo, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import {
+  useNavigate,
+  useOutletContext,
+  useSearchParams,
+} from 'react-router-dom';
 import FilterBar from '../components/FilterBar';
 import StatusBadge from '../components/StatusBadge';
-import { fetchEvents } from '../api/events';
-import type { FilterState, CandidateEvent } from '../types';
+import { fetchEventsPage, fetchPendingEventIds } from '../api/events';
+import type { LayoutContext } from '../components/AppLayout';
+import type {
+  FilterState,
+  CandidateEvent,
+  EventStatus,
+  PpeType,
+} from '../types';
 import { formatEventTime } from '../time';
 import { useSeenEvents } from '../seenEvents';
 import {
@@ -11,92 +21,133 @@ import {
   confidenceLevel,
   formatConfidence,
   isReviewOnly,
-  passesConfidenceFilter,
 } from '../confidence';
 import styles from './ReviewListPage.module.css';
 
-const DEFAULT_FILTERS: FilterState = {
-  ppeType: 'all',
-  status: 'all',
-  zone: [],
-  dateFrom: '',
-  dateTo: '',
-  minConfidence: 0,
-};
-
-// pending events always appear first, then sort by timestamp descending
-function sortEvents(events: CandidateEvent[]): CandidateEvent[] {
-  return [...events].sort((a, b) => {
-    if (a.event_status === 'pending' && b.event_status !== 'pending') return -1;
-    if (a.event_status !== 'pending' && b.event_status === 'pending') return 1;
-    return new Date(b.timestamp_start).getTime() - new Date(a.timestamp_start).getTime();
-  });
+// Filters and the page live in the address so reload and back keep the same view (#223)
+function readFilters(q: URLSearchParams): FilterState {
+  const conf = Number(q.get('conf'));
+  return {
+    status: (q.get('status') as EventStatus | null) ?? 'all',
+    ppeType: (q.get('ppe') as PpeType | null) ?? 'all',
+    zone: q.get('zone') ?? '',
+    dateFrom: q.get('from') ?? '',
+    dateTo: q.get('to') ?? '',
+    minConfidence: Number.isFinite(conf) && conf > 0 && conf <= 1 ? conf : 0,
+  };
 }
 
-function applyFilters(events: CandidateEvent[], f: FilterState): CandidateEvent[] {
-  return events.filter((e) => {
-    if (f.ppeType !== 'all' && e.ppe_type !== f.ppeType) return false;
-    if (f.status !== 'all' && e.event_status !== f.status) return false;
-    if (f.zone.length > 0 && !f.zone.includes(e.zone_name)) return false;
-    if (!passesConfidenceFilter(e, f.minConfidence)) return false;
-    return true;
-  });
+function writeFilters(f: FilterState, page: number): URLSearchParams {
+  const q = new URLSearchParams();
+  if (f.status !== 'all') q.set('status', f.status);
+  if (f.ppeType !== 'all') q.set('ppe', f.ppeType);
+  if (f.zone) q.set('zone', f.zone);
+  if (f.dateFrom) q.set('from', f.dateFrom);
+  if (f.dateTo) q.set('to', f.dateTo);
+  if (f.minConfidence > 0) q.set('conf', String(f.minConfidence));
+  if (page > 1) q.set('page', String(page));
+  return q;
 }
 
 export default function ReviewListPage() {
   const navigate = useNavigate();
-  const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+  const { pending, pendingCount, zones } = useOutletContext<LayoutContext>();
+  const [params, setParams] = useSearchParams();
+  const filters = readFilters(params);
+  const page = Math.max(1, Math.floor(Number(params.get('page'))) || 1);
+  // Phones get shorter pages; decided once so the page boundaries stay stable
+  const [pageSize] = useState(() =>
+    window.matchMedia('(max-width: 768px)').matches ? 20 : 50,
+  );
   const [events, setEvents] = useState<CandidateEvent[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { isUnseen, markSeen } = useSeenEvents();
 
-  // The date range is filtered by the server so it uses Korea calendar days
-  const { dateFrom, dateTo } = filters;
+  const setFilters = (next: FilterState) =>
+    setParams(writeFilters(next, 1), { replace: true });
+  const goToPage = (next: number) => setParams(writeFilters(filters, next));
+
+  // The server filters, orders (unreviewed first, then newest) and pages the list
+  const { status, ppeType, zone, dateFrom, dateTo, minConfidence } = filters;
   useEffect(() => {
-    // A slower, older request must not overwrite the result of the latest dates
+    // An older, slower request must not overwrite the latest view
     let stale = false;
-    fetchEvents(dateFrom, dateTo)
-      .then((data) => {
-        if (stale) return;
-        setEvents(data.items);
-        setError(null);
+    // Short wait so dragging the confidence slider does not send a request per step
+    const timer = window.setTimeout(() => {
+      fetchEventsPage({
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+        status: status === 'all' ? undefined : status,
+        ppeType: ppeType === 'all' ? undefined : ppeType,
+        zone: zone || undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        minConfidence: minConfidence || undefined,
       })
-      .catch((e) => {
-        if (!stale) setError(e.message);
-      })
-      .finally(() => {
-        if (!stale) setLoading(false);
-      });
+        .then((data) => {
+          if (stale) return;
+          setEvents(data.items);
+          setTotal(data.total);
+          setError(null);
+        })
+        .catch((e) => {
+          if (!stale) setError(e.message);
+        })
+        .finally(() => {
+          if (!stale) setLoading(false);
+        });
+    }, 150);
     return () => {
       stale = true;
+      window.clearTimeout(timer);
     };
-  }, [dateFrom, dateTo]);
+  }, [status, ppeType, zone, dateFrom, dateTo, minConfidence, page, pageSize]);
 
-  const visibleEvents = useMemo(() => sortEvents(applyFilters(events, filters)), [events, filters]);
-  const pendingCount = events.filter((e) => e.event_status === 'pending').length;
-  const unseenEvents = events.filter(isUnseen);
-  // Extract unique zone names from fetched events for dynamic filter options
-  const availableZones = useMemo(
-    () => [...new Set(events.map((e) => e.zone_name))].sort(),
-    [events]
-  );
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  // The page ran out (e.g. events were reviewed elsewhere): step back to the last one that exists
+  useEffect(() => {
+    if (!loading && page > pageCount) {
+      setParams(writeFilters(readFilters(params), pageCount), {
+        replace: true,
+      });
+    }
+  }, [loading, page, pageCount, params, setParams]);
+
+  const visibleEvents = events;
+  // Unseen is counted from the newest unreviewed events the layout already polls (at most 50)
+  const recentPending = pending ?? [];
+  const unseenCount = recentPending.filter(isUnseen).length;
+  const moreThanRecent = pendingCount > recentPending.length;
+  const markAllSeen = () => {
+    fetchPendingEventIds()
+      .then(markSeen)
+      .catch((e: Error) => setError(e.message));
+  };
 
   return (
     <div className={styles.page}>
       {error && <div className={styles.pendingBanner}>⚠ API 오류: {error}</div>}
-      {loading && <div className={styles.pendingBanner}>이벤트 목록을 불러오는 중...</div>}
+      {loading && (
+        <div className={styles.pendingBanner}>이벤트 목록을 불러오는 중...</div>
+      )}
       {!loading && pendingCount > 0 && (
         <div className={styles.pendingBanner}>
-          미검토 이벤트가 <strong>{pendingCount}건</strong> 있습니다. 확인 후 검토해 주세요.
-          {unseenEvents.length > 0 && (
+          미검토 이벤트가 <strong>{pendingCount}건</strong> 있습니다. 확인 후
+          검토해 주세요.
+          {unseenCount > 0 && (
             <>
               {' '}
-              아직 열어 보지 않은 이벤트는 <strong>{unseenEvents.length}건</strong>입니다.
+              아직 열어 보지 않은 이벤트는{' '}
+              <strong>
+                {unseenCount}건{moreThanRecent ? ' 이상' : ''}
+              </strong>
+              입니다.
               <button
                 type="button"
                 className={styles.markAllBtn}
-                onClick={() => markSeen(unseenEvents.map((e) => e.event_id))}
+                onClick={markAllSeen}
               >
                 모두 확인함으로 표시
               </button>
@@ -105,7 +156,7 @@ export default function ReviewListPage() {
         </div>
       )}
 
-      <FilterBar filters={filters} onChange={setFilters} zones={availableZones} />
+      <FilterBar filters={filters} onChange={setFilters} zones={zones} />
 
       <div className={styles.tableWrapper}>
         <table className={styles.table}>
@@ -136,16 +187,27 @@ export default function ReviewListPage() {
                 >
                   <td className={styles.eventId}>
                     {event.event_id}
-                    {isUnseen(event) && <span className={styles.unseenTag}>미확인</span>}
+                    {isUnseen(event) && (
+                      <span className={styles.unseenTag}>미확인</span>
+                    )}
                   </td>
-                  <td data-label="발생 일시">{formatEventTime(event.timestamp_start, event.timestamp_timezone)}</td>
+                  <td data-label="발생 일시">
+                    {formatEventTime(
+                      event.timestamp_start,
+                      event.timestamp_timezone,
+                    )}
+                  </td>
                   <td data-label="구역">{event.zone_name}</td>
                   <td data-label="PPE 유형">
-                    <span className={`${styles.ppeTag} ${styles[event.ppe_type]}`}>
+                    <span
+                      className={`${styles.ppeTag} ${styles[event.ppe_type]}`}
+                    >
                       {event.ppe_type === 'helmet' ? '안전모' : '안전조끼'}
                     </span>
                   </td>
-                  <td data-label="지속시간" className={styles.minor}>{event.duration_sec}초</td>
+                  <td data-label="지속시간" className={styles.minor}>
+                    {event.duration_sec}초
+                  </td>
                   <td data-label="신뢰도">
                     {isReviewOnly(event) || event.ai_confidence == null ? (
                       <span
@@ -171,9 +233,34 @@ export default function ReviewListPage() {
           </tbody>
         </table>
       </div>
-      <p className={styles.count}>
-        {visibleEvents.length}건 표시 중 (전체 {events.length}건)
-      </p>
+      <div className={styles.footer}>
+        {pageCount > 1 && (
+          <nav className={styles.pager} aria-label="페이지 이동">
+            <button
+              type="button"
+              className={styles.pageBtn}
+              disabled={page <= 1}
+              onClick={() => goToPage(page - 1)}
+            >
+              ← 이전
+            </button>
+            <span className={styles.pageInfo}>
+              {page} / {pageCount}
+            </span>
+            <button
+              type="button"
+              className={styles.pageBtn}
+              disabled={page >= pageCount}
+              onClick={() => goToPage(page + 1)}
+            >
+              다음 →
+            </button>
+          </nav>
+        )}
+        <p className={styles.count}>
+          {visibleEvents.length}건 표시 중 (전체 {total}건)
+        </p>
+      </div>
     </div>
   );
 }

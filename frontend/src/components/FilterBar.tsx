@@ -30,18 +30,11 @@ export default function FilterBar({
   const update = (patch: Partial<FilterState>) =>
     onChange({ ...filters, ...patch });
 
-  const toggleZone = (zone: string) => {
-    const next = filters.zone.includes(zone)
-      ? filters.zone.filter((z) => z !== zone)
-      : [...filters.zone, zone];
-    update({ zone: next });
-  };
-
   const advancedActive =
     !!filters.dateFrom ||
     !!filters.dateTo ||
     filters.minConfidence > 0 ||
-    filters.zone.length > 0;
+    !!filters.zone;
 
   return (
     <div className={styles.filterBar}>
@@ -117,19 +110,20 @@ export default function FilterBar({
             )}
           </div>
 
-          {/* Zone multi-select as checkboxes — dynamically derived from actual event data */}
-          <div className={styles.zoneGroup}>
+          {/* One zone at a time: the server filters the list */}
+          <select
+            className={styles.select}
+            value={filters.zone}
+            onChange={(e) => update({ zone: e.target.value })}
+            aria-label="구역"
+          >
+            <option value="">전체 구역</option>
             {zones.map((zone) => (
-              <label key={zone} className={styles.zoneLabel}>
-                <input
-                  type="checkbox"
-                  checked={filters.zone.includes(zone)}
-                  onChange={() => toggleZone(zone)}
-                />
+              <option key={zone} value={zone}>
                 {zone}
-              </label>
+              </option>
             ))}
-          </div>
+          </select>
         </div>
       </details>
     </div>

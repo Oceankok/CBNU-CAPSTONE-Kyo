@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ConfirmButton from './ConfirmButton';
-import { fetchEvents, mergeEvents } from '../api/events';
+import { fetchEventsPage, mergeEvents } from '../api/events';
 import type { CandidateEvent } from '../types';
 import { formatEventTime } from '../time';
 import styles from './EventMergePanel.module.css';
@@ -43,16 +43,12 @@ export default function EventMergePanel({
   // Loaded when first opened; only unreviewed events of the same PPE type can merge
   useEffect(() => {
     if (!open || candidates) return;
-    fetchEvents()
+    // Same PPE type and still unreviewed; the newest 100 are enough to pick from
+    fetchEventsPage({ limit: 100, status: 'pending', ppeType: event.ppe_type })
       .then((r) =>
         setCandidates(
           r.items
-            .filter(
-              (e) =>
-                e.event_id !== event.event_id &&
-                e.event_status === 'pending' &&
-                e.ppe_type === event.ppe_type,
-            )
+            .filter((e) => e.event_id !== event.event_id)
             .sort(
               (a, b) =>
                 Math.abs(
