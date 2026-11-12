@@ -12,7 +12,7 @@ def initialize(*, seed=False):
         conn.execute("""CREATE TABLE IF NOT EXISTS app_schema_version (
             singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL)""")
         row = conn.execute("SELECT version FROM app_schema_version WHERE singleton=1").fetchone()
-        if row is not None and row[0] not in (7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, LATEST_VERSION):
+        if row is not None and row[0] not in (7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, LATEST_VERSION):
             raise RuntimeError("Unsupported PostgreSQL schema version; explicit migration required")
         if row is None:
             if conn.execute("SELECT to_regclass('camera_info')").fetchone()[0] is not None:
@@ -65,6 +65,12 @@ def initialize(*, seed=False):
             conn.execute("ALTER TABLE event_media ADD COLUMN IF NOT EXISTS verification_json TEXT NOT NULL DEFAULT ''")
             conn.execute('ALTER TABLE event_media ADD COLUMN IF NOT EXISTS source_deleted_at DOUBLE PRECISION')
             conn.execute('UPDATE app_schema_version SET version=? WHERE singleton=1', (LATEST_VERSION,))
+        if row is None or row[0] < 21:
+            from backend.db.event_context_migration import migrate_event_context
+            migrate_event_context(conn, postgres=True)
+            conn.execute('UPDATE app_schema_version SET version=? WHERE singleton=1', (LATEST_VERSION,))
         if seed:
             conn.execute((root / "postgres_seed.sql").read_text(encoding="utf-8"))
             conn.execute("INSERT INTO event_retention(event_id) SELECT event_id FROM candidate_event ON CONFLICT DO NOTHING")
+            from backend.db.event_context_migration import capture_missing_context
+            capture_missing_context(conn)

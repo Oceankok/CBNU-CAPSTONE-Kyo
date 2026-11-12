@@ -91,6 +91,9 @@ CREATE TABLE IF NOT EXISTS candidate_event (
     ppe_detected INTEGER,
     model_version TEXT,
     event_status TEXT DEFAULT 'pending',
+    zone_name_snapshot TEXT,
+    process_type_snapshot TEXT,
+    context_source TEXT,
     FOREIGN KEY (camera_id) REFERENCES camera_info(camera_id)
 );
 CREATE INDEX IF NOT EXISTS idx_candidate_event_status_time ON candidate_event(event_status,timestamp_start,event_id);

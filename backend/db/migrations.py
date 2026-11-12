@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-LATEST_VERSION = 20
+LATEST_VERSION = 21
 
 
 def _now() -> str:
@@ -383,6 +383,17 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
             if 'source_deleted_at' not in columns:
                 conn.execute('ALTER TABLE event_media ADD COLUMN source_deleted_at REAL')
             conn.execute('PRAGMA user_version=20')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 21:
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            from backend.db.event_context_migration import migrate_event_context
+            migrate_event_context(conn, postgres=False)
+            conn.execute('PRAGMA user_version=21')
             conn.commit()
         except Exception:
             conn.rollback()

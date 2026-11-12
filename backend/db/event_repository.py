@@ -158,8 +158,8 @@ def get_all_candidate_events() -> list[dict[str, Any]]:
         SELECT
             ce.event_id,
             ce.camera_id,
-            ci.zone_name,
-            ci.process_type,
+            COALESCE(ce.zone_name_snapshot, ci.zone_name) AS zone_name,
+            COALESCE(ce.process_type_snapshot, ci.process_type) AS process_type,
             ce.tracking_id,
             ce.ppe_type,
             ce.timestamp_start,
@@ -211,7 +211,7 @@ def _candidate_event_filters(
         clauses.append("ce.ppe_type = ?")
         parameters.append(ppe_type)
     if zone:
-        clauses.append("ci.zone_name = ?")
+        clauses.append("COALESCE(ce.zone_name_snapshot, ci.zone_name) = ?")
         parameters.append(zone)
     if min_confidence is not None:
         # Review-only candidates intentionally have no measured confidence and
@@ -257,7 +257,7 @@ def get_candidate_events_page(
         zone=zone, min_confidence=min_confidence,
     )
     query = f"""
-        SELECT ce.event_id, ce.camera_id, ci.zone_name, ci.process_type,
+        SELECT ce.event_id, ce.camera_id, COALESCE(ce.zone_name_snapshot, ci.zone_name) AS zone_name, COALESCE(ce.process_type_snapshot, ci.process_type) AS process_type,
                ce.tracking_id, ce.ppe_type, ce.timestamp_start, ce.timestamp_end,
                ce.duration_sec, ce.frame_sample_count, ce.thumbnail_path,
                ce.video_clip_path, ce.ai_confidence, ce.person_detected,
@@ -306,15 +306,15 @@ def get_candidate_event_summary(
     )
     with get_connection() as conn:
         rows = conn.execute(f"""
-            SELECT ce.event_status, ce.ppe_type, ci.zone_name, COUNT(*) AS count
+            SELECT ce.event_status, ce.ppe_type, COALESCE(ce.zone_name_snapshot, ci.zone_name) AS zone_name, COUNT(*) AS count
             FROM candidate_event ce
             LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
             WHERE {where}
-            GROUP BY ce.event_status, ce.ppe_type, ci.zone_name
+            GROUP BY ce.event_status, ce.ppe_type, COALESCE(ce.zone_name_snapshot, ci.zone_name)
         """, parameters).fetchall()
         recent_where = f"{where} AND ce.event_status='pending'"
         recent_rows = conn.execute(f"""
-            SELECT ce.event_id, ce.camera_id, ci.zone_name, ce.ppe_type,
+            SELECT ce.event_id, ce.camera_id, COALESCE(ce.zone_name_snapshot, ci.zone_name) AS zone_name, ce.ppe_type,
                    ce.timestamp_start, ce.event_status, ce.ai_confidence,
                    EXISTS (SELECT 1 FROM processing_review_only_event rof
                            WHERE rof.event_id=ce.event_id AND rof.review_only=1) AS review_only
@@ -378,8 +378,8 @@ def get_candidate_event_by_id(event_id: str) -> Optional[dict[str, Any]]:
         SELECT
             ce.event_id,
             ce.camera_id,
-            ci.zone_name,
-            ci.process_type,
+            COALESCE(ce.zone_name_snapshot, ci.zone_name) AS zone_name,
+            COALESCE(ce.process_type_snapshot, ci.process_type) AS process_type,
             ce.tracking_id,
             ce.ppe_type,
             ce.timestamp_start,
@@ -472,7 +472,7 @@ def insert_candidate_event(event: dict[str, Any], *, connection=None) -> None:
             person_detected,
             ppe_detected,
             model_version,
-            event_status
+            event_status, zone_name_snapshot, process_type_snapshot, context_source
         ) VALUES (
             :event_id,
             :camera_id,
@@ -488,7 +488,7 @@ def insert_candidate_event(event: dict[str, Any], *, connection=None) -> None:
             :person_detected,
             :ppe_detected,
             :model_version,
-            :event_status
+            :event_status, :zone_name_snapshot, :process_type_snapshot, :context_source
         );
     """
 
@@ -496,7 +496,9 @@ def insert_candidate_event(event: dict[str, Any], *, connection=None) -> None:
         from backend.cameras.service import require_camera
         if connection is None:
             begin_write(conn)
-        require_camera(conn, event['camera_id'], active=True)
+        camera = require_camera(conn, event['camera_id'], active=True)
+        event.update(zone_name_snapshot=camera['zone_name'] or '',
+                     process_type_snapshot=camera['process_type'] or '', context_source='capture')
         conn.execute(query, event)
         conn.execute("INSERT INTO event_retention(event_id) VALUES(?)", (event["event_id"],))
         from backend.camera_groups.service import register_references
@@ -539,6 +541,7 @@ def delete_candidate_event(event_id: str) -> None:
 def _upsert_false_positive_aggregate(
     conn: sqlite3.Connection,
     event: sqlite3.Row,
+    delta: int = 1,
 ) -> None:
     """
     오탐 이벤트를 비식별 집계 테이블에 반영함.
@@ -550,23 +553,19 @@ def _upsert_false_positive_aggregate(
             오탐으로 판단된 후보 이벤트 정보.
     """
     quarter = _get_quarter_from_timestamp(event["timestamp_start"])
-    aggregate_id = (
-        f"FP_{quarter.replace('-', '')}_"
-        f"{event['zone_name'].replace(' ', '_')}_"
-        f"{event['ppe_type']}"
-    )
+    aggregate_id = str(uuid4())
     updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     existing = conn.execute(
         """
-        SELECT false_positive_count
+        SELECT aggregate_id, false_positive_count
         FROM false_positive_aggregate
-        WHERE aggregate_id = ?;
+        WHERE quarter = ? AND zone_name = ? AND ppe_type = ?;
         """,
-        (aggregate_id,),
+        (quarter, event["zone_name"] or "", event["ppe_type"]),
     ).fetchone()
 
-    if existing is None:
+    if existing is None and delta > 0:
         conn.execute(
             """
             INSERT INTO false_positive_aggregate (
@@ -588,16 +587,17 @@ def _upsert_false_positive_aggregate(
                 updated_at,
             ),
         )
-    else:
+    elif existing is not None:
+        aggregate_id = existing["aggregate_id"]
         conn.execute(
             """
             UPDATE false_positive_aggregate
             SET
-                false_positive_count = false_positive_count + 1,
+                false_positive_count = false_positive_count + ?,
                 updated_at = ?
             WHERE aggregate_id = ?;
             """,
-            (updated_at, aggregate_id),
+            (delta, updated_at, aggregate_id),
         )
 
 
@@ -683,7 +683,7 @@ def insert_event_review(review: dict[str, Any]) -> None:
                 """
                 SELECT
                     ce.event_id,
-                    ci.zone_name,
+                    COALESCE(ce.zone_name_snapshot, ci.zone_name) AS zone_name,
                     ce.ppe_type,
                     ce.timestamp_start
                 FROM candidate_event ce
@@ -785,12 +785,12 @@ def update_event_review(review: dict[str, Any]) -> None:
             ),
         )
 
-        if review["review_result"] == "false_positive":
+        if previous["review_result"] != review["review_result"] and "false_positive" in (previous["review_result"], review["review_result"]):
             event = conn.execute(
                 """
                 SELECT
                     ce.event_id,
-                    ci.zone_name,
+                    COALESCE(ce.zone_name_snapshot, ci.zone_name) AS zone_name,
                     ce.ppe_type,
                     ce.timestamp_start
                 FROM candidate_event ce
@@ -804,7 +804,7 @@ def update_event_review(review: dict[str, Any]) -> None:
             if event is None:
                 raise ValueError("Event does not exist")
 
-            _upsert_false_positive_aggregate(conn, event)
+            _upsert_false_positive_aggregate(conn, event, 1 if review["review_result"] == "false_positive" else -1)
 
         cursor = conn.execute(review_query, review)
         if cursor.rowcount == 0:
@@ -1093,6 +1093,7 @@ def generate_quarterly_stats(quarter: str) -> dict:
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     with get_connection() as conn:
+        begin_write(conn)
         candidate_count = conn.execute(
             f"""
             SELECT COUNT(*) AS count
@@ -1139,6 +1140,11 @@ def generate_quarterly_stats(quarter: str) -> dict:
             """,
             (quarter,),
         ).fetchone()["count"]
+
+        false_positive_count += conn.execute(
+            "SELECT COALESCE(SUM(false_positive_count),0) FROM legacy_false_positive_summary WHERE quarter=?",
+            (quarter,),
+        ).fetchone()[0]
 
         conn.execute(
             "DELETE FROM education_recommendation WHERE quarter = ?;",
@@ -1211,7 +1217,7 @@ def generate_quarterly_stats(quarter: str) -> dict:
                 row["confirmed_count"] * 0.5
                 + row["repeat_weeks"] * 0.2
                 + zone_concentration * 0.2
-                + 1.0 * 0.1
+                + _process_risk(conn, start_date, end_date, ppe_type=row["ppe_type"]) * 0.1
             )
 
             conn.execute(
@@ -1237,7 +1243,7 @@ def generate_quarterly_stats(quarter: str) -> dict:
         zone_rows = conn.execute(
             f"""
             SELECT
-                ci.zone_name,
+                COALESCE(ce.zone_name_snapshot, ci.zone_name) AS zone_name,
                 COUNT(*) AS confirmed_count,
                 COUNT(DISTINCT {week_expression(camera_local_start)}) AS repeat_weeks
             FROM candidate_event ce
@@ -1245,7 +1251,7 @@ def generate_quarterly_stats(quarter: str) -> dict:
             WHERE {camera_local_start} >= ?
               AND {camera_local_start} < ?
               AND ce.event_status = 'confirmed'
-            GROUP BY ci.zone_name
+            GROUP BY COALESCE(ce.zone_name_snapshot, ci.zone_name)
             ORDER BY confirmed_count DESC;
             """,
             (start_date, end_date),
@@ -1261,7 +1267,7 @@ def generate_quarterly_stats(quarter: str) -> dict:
                 row["confirmed_count"] * 0.5
                 + row["repeat_weeks"] * 0.2
                 + zone_concentration * 0.2
-                + 1.0 * 0.1
+                + _process_risk(conn, start_date, end_date, zone_name=row["zone_name"]) * 0.1
             )
 
             conn.execute(
@@ -1330,6 +1336,25 @@ def generate_quarterly_stats(quarter: str) -> dict:
 
     return stats
 
+def _process_risk(conn, start_date, end_date, *, ppe_type=None, zone_name=None):
+    """Event-weighted process risk using occurrence context, not today's camera."""
+    from backend.db.process_risk import process_risk_weight
+    stamp = local_time_sql('ce.timestamp_start')
+    clauses = [f"{stamp}>=?", f"{stamp}<?", "ce.event_status='confirmed'"]
+    params = [start_date, end_date]
+    if ppe_type is not None:
+        clauses.append("ce.ppe_type=?")
+        params.append(ppe_type)
+    if zone_name is not None:
+        clauses.append("COALESCE(ce.zone_name_snapshot,ci.zone_name)=?")
+        params.append(zone_name)
+    rows = conn.execute(f"""SELECT COALESCE(ce.process_type_snapshot,ci.process_type) AS process_type,
+        COUNT(*) AS count FROM candidate_event ce LEFT JOIN camera_info ci ON ci.camera_id=ce.camera_id
+        WHERE {' AND '.join(clauses)} GROUP BY COALESCE(ce.process_type_snapshot,ci.process_type)""", params).fetchall()
+    count = sum(row['count'] for row in rows)
+    return sum(process_risk_weight(row['process_type']) * row['count'] for row in rows) / count if count else 1.0
+
+
 def _get_education_topic(ppe_type: str, zone_name: str) -> str:
     """
     PPE 유형과 구역을 기반으로 교육 주제를 생성함.
@@ -1361,6 +1386,7 @@ def generate_education_recommendations(quarter: str) -> dict:
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     with get_connection() as conn:
+        begin_write(conn)
         total_confirmed = conn.execute(
             f"""
             SELECT COUNT(*) AS count
@@ -1376,7 +1402,7 @@ def generate_education_recommendations(quarter: str) -> dict:
             f"""
             SELECT
                 ce.ppe_type,
-                ci.zone_name,
+                COALESCE(ce.zone_name_snapshot, ci.zone_name) AS zone_name,
                 COUNT(*) AS confirmed_count,
                 COUNT(DISTINCT {week_expression(camera_local_start)}) AS repeat_weeks
             FROM candidate_event ce
@@ -1384,7 +1410,7 @@ def generate_education_recommendations(quarter: str) -> dict:
             WHERE {camera_local_start} >= ?
               AND {camera_local_start} < ?
               AND ce.event_status = 'confirmed'
-            GROUP BY ce.ppe_type, ci.zone_name
+            GROUP BY ce.ppe_type, COALESCE(ce.zone_name_snapshot, ci.zone_name)
             ORDER BY confirmed_count DESC;
             """,
             (start_date, end_date),
@@ -1404,7 +1430,7 @@ def generate_education_recommendations(quarter: str) -> dict:
                 else 0
             )
 
-            process_risk_weight = 1.0
+            process_risk_weight = _process_risk(conn, start_date, end_date, ppe_type=row["ppe_type"], zone_name=row["zone_name"])
 
             priority_score = (
                 row["confirmed_count"] * 0.5

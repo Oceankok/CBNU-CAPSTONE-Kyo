@@ -133,7 +133,8 @@ class VerifiedSourcePolicyTests(unittest.TestCase):
             with get_connection() as conn:
                 apply_migrations(conn)
         with get_connection() as conn:
-            self.assertEqual(schema_version(conn), 20)
+            from backend.db.migrations import LATEST_VERSION
+            self.assertEqual(schema_version(conn), LATEST_VERSION)
         row = self.media(media['media_id'])
         self.assertEqual(row['verification_json'], '')
         self.assertIsNone(row['source_deleted_at'])
