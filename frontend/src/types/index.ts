@@ -220,7 +220,7 @@ export interface EducationRecommendationList {
 export interface FilterState {
   ppeType: PpeType;
   status: EventStatus | 'all';
-  zone: string[];
+  zone: string; // '' = every zone (the server filters by one zone)
   dateFrom: string;
   dateTo: string;
   minConfidence: number;
