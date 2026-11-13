@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { getSession, logout } from '../api/auth';
 import { fetchMyZones } from '../api/zones';
 import { fetchMyEducation } from '../api/education';
-import type { EducationGroup, ZoneRule } from '../types';
+import { fetchMyEducationBundles } from '../api/educationBundles';
+import type { EducationGroup, WorkerEducationBundle, ZoneRule } from '../types';
 import { ppeInfo } from '../ppe';
 import styles from './WorkerHomePage.module.css';
 
@@ -12,6 +13,8 @@ export default function WorkerHomePage() {
   const [groups, setGroups] = useState<EducationGroup[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [educationError, setEducationError] = useState<string | null>(null);
+  const [bundles, setBundles] = useState<WorkerEducationBundle[] | null>(null);
+  const [bundleError, setBundleError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMyZones()
@@ -24,6 +27,9 @@ export default function WorkerHomePage() {
       .catch((e: Error) =>
         setEducationError(`교육 자료를 불러오지 못했습니다. (${e.message})`),
       );
+    fetchMyEducationBundles()
+      .then((result) => setBundles(result.items))
+      .catch((e: Error) => setBundleError(e.message));
   }, []);
 
   return (
@@ -113,6 +119,37 @@ export default function WorkerHomePage() {
             </section>
           );
         })}
+        <section className={styles.card}>
+          <p className={styles.zoneLabel}>다중 구역 통합 교육</p>
+          <h2 className={styles.sectionTitle}>통합 교육자료</h2>
+          <p className={styles.muted}>
+            배정된 구역에 해당하는 자료만 표시됩니다. 통합 자료의 본문은 해당 작업자에게 전체가 공유됩니다.
+          </p>
+          {bundles === null ? (
+            <p className={styles.muted}>{bundleError ?? '통합 자료를 불러오는 중...'}</p>
+          ) : bundles.length === 0 ? (
+            <p className={styles.muted}>현재 배정된 통합 교육자료가 없습니다.</p>
+          ) : (
+            <ul className={styles.bundleList}>
+              {bundles.map((bundle) => (
+                <li key={bundle.bundle_id} className={styles.bundleItem}>
+                  <div className={styles.bundleMeta}>
+                    <span className={styles.ppeBadge}>{bundle.ppe_type}</span>
+                    <span>{bundle.quarter}</span>
+                    <span>배정 구역: {bundle.assigned_zones.join(', ')}</span>
+                  </div>
+                  <h3 className={styles.topic}>{bundle.title}</h3>
+                  <p className={styles.material}>{bundle.body}</p>
+                  <ul className={styles.checklist}>
+                    {bundle.checklist.map((item, index) => (
+                      <li key={`${bundle.bundle_id}-${index}`}>{item}</li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </main>
     </div>
   );

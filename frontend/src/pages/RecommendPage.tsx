@@ -13,6 +13,7 @@ import { isLatestRequest } from '../api/schema31Contracts';
 import { refreshAfterScopeConflict as refreshLatestAfterScopeConflict } from '../api/schema31Interactions';
 import EducationMaterialEditor from '../components/EducationMaterialEditor';
 import type { EducationMaterialDraft } from '../components/EducationMaterialEditor';
+import EducationBundleEditor from '../components/EducationBundleEditor';
 import type { EducationMaterialScope } from '../api/materials';
 import type { LayoutContext } from '../components/AppLayout';
 import styles from './RecommendPage.module.css';
@@ -40,16 +41,31 @@ function RecommendCard({
   draft,
   onDraftChange,
   onScopeConflict,
+  selected,
+  selectionDisabled,
+  onSelectionChange,
 }: {
   item: EducationRecommendation;
   quarter: string;
   draft?: EducationMaterialDraft;
   onDraftChange: (draft: EducationMaterialDraft | null) => void;
   onScopeConflict: (scope: EducationMaterialScope) => void;
+  selected: boolean;
+  selectionDisabled: boolean;
+  onSelectionChange: (checked: boolean) => void;
 }) {
   const rankColor = RANK_COLORS[item.recommendation_rank - 1] ?? '#718096';
   return (
     <div className={styles.card}>
+      <label className={styles.selectRow}>
+        <input
+          type="checkbox"
+          checked={selected}
+          disabled={selectionDisabled}
+          onChange={(event) => onSelectionChange(event.target.checked)}
+        />
+        <span>통합 교육자료에 포함</span>
+      </label>
       <div className={styles.cardHeader}>
         <span className={styles.rank} style={{ background: rankColor }}>
           {item.recommendation_rank}순위
@@ -138,6 +154,7 @@ export default function RecommendPage() {
   const [error, setError] = useState<string | null>(null);
   const [latest, setLatest] = useState<EducationRecommendationList | null>(null);
   const [drafts, setDrafts] = useState<Record<string, EducationMaterialDraft>>({});
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const recommendationRequest = useRef(0);
   const latestRecommendationRequest = useRef(0);
 
@@ -178,6 +195,17 @@ export default function RecommendPage() {
     );
     setLatest(null);
     setError(null);
+  };
+
+  const selectedPpe = data?.items.find((item) => selectedIds.includes(item.recommendation_id))?.ppe_type;
+  const toggleSelection = (recommendationId: string, checked: boolean) => {
+    setSelectedIds((current) => {
+      if (checked) {
+        if (current.includes(recommendationId) || current.length >= 20) return current;
+        return [...current, recommendationId];
+      }
+      return current.filter((id) => id !== recommendationId);
+    });
   };
 
   // AppLayout remounts this page when the quarter changes, so this runs once per quarter
@@ -255,6 +283,14 @@ export default function RecommendPage() {
       )}
 
       {data && (
+        <EducationBundleEditor
+          key={selectedIds.join('|')}
+          quarter={data.quarter}
+          recommendationIds={selectedIds}
+        />
+      )}
+
+      {data && (
         <div className={styles.cardList}>
           {data.items.map((item) => (
               <RecommendCard
@@ -264,6 +300,12 @@ export default function RecommendPage() {
                 draft={drafts[item.recommendation_id]}
                 onDraftChange={(draft) => storeDraft(item.recommendation_id, draft)}
                 onScopeConflict={(scope) => void refreshRecommendationsAfterConflict(scope)}
+                selected={selectedIds.includes(item.recommendation_id)}
+                selectionDisabled={
+                  (!selectedIds.includes(item.recommendation_id) && selectedIds.length >= 20) ||
+                  Boolean(selectedPpe && item.ppe_type !== selectedPpe)
+                }
+                onSelectionChange={(checked) => toggleSelection(item.recommendation_id, checked)}
               />
           ))}
         </div>
