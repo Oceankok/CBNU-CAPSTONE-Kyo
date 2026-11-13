@@ -20,6 +20,7 @@ from backend.media.verification_policy import VerificationReport, record as veri
 from backend.media.redaction import MediaError
 from backend.processing import service
 from backend.processing.events import EventSubmission, submit
+from backend.processing.reference_contract import resolve_reference_context
 
 router = APIRouter(prefix='/api/processing', tags=['processing'])
 
@@ -167,6 +168,7 @@ def pending_reference_clips(node: dict = Depends(processor)):
         return stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp.astimezone(timezone.utc)
 
     with get_connection() as conn:
+        now = time.time()
         rows = conn.execute("""SELECT r.*,e.timestamp_start,e.timestamp_end,s.capture_start_at,s.capture_end_at,s.deadline_at
             FROM event_clip_request r JOIN candidate_event e ON e.event_id=r.event_id
             LEFT JOIN processing_event_segment s ON s.request_id=r.request_id
@@ -175,12 +177,48 @@ def pending_reference_clips(node: dict = Depends(processor)):
             AND NOT EXISTS(SELECT 1 FROM processing_event_lifecycle l WHERE l.event_id=r.event_id)
             AND NOT EXISTS(SELECT 1 FROM event_merge x WHERE x.source_event_id=r.event_id)
             AND NOT EXISTS(SELECT 1 FROM event_media m WHERE m.request_id=r.request_id)
-            ORDER BY r.created_at,r.request_id LIMIT 20""").fetchall()
-    return {'items': [{'request_id': row['request_id'], 'event_id': row['event_id'],
-                      'camera_id': row['camera_id'], 'role': 'reference',
-                      'clip_start_at': row['capture_start_at'] or (utc(row['timestamp_start'])-timedelta(seconds=2)).isoformat(),
-                      'clip_end_at': row['capture_end_at'] or (utc(row['timestamp_end'])+timedelta(seconds=2)).isoformat(),
-                      'deadline_at': row['deadline_at'] if row['deadline_at'] is not None else row['created_at']+30} for row in rows]}
+            ORDER BY CASE
+                WHEN COALESCE(s.deadline_at,r.created_at+30)<=? THEN 0
+                WHEN EXISTS (SELECT 1 FROM capture_context_registry c0
+                             WHERE c0.camera_id=r.camera_id AND c0.valid_until IS NULL)
+                 AND NOT EXISTS (SELECT 1 FROM capture_context_stream m0
+                                 JOIN video_stream s0 ON s0.stream_id=m0.stream_id
+                                 WHERE s0.camera_id=r.camera_id AND s0.status IN ('active','closed')) THEN 2
+                ELSE 1 END,
+                r.created_at,r.request_id LIMIT 20""", (now,)).fetchall()
+        items = []
+        for row in rows:
+            clip_start = row['capture_start_at'] or (utc(row['timestamp_start'])-timedelta(seconds=2)).isoformat()
+            clip_end = row['capture_end_at'] or (utc(row['timestamp_end'])+timedelta(seconds=2)).isoformat()
+            streams = [dict(stream) for stream in conn.execute('''SELECT s.stream_id,s.status,s.last_sequence,
+                    c.context_id AS capture_context_id,c.session_id AS capture_session_id,c.assignment_version
+                FROM video_stream s JOIN capture_context_stream m ON m.stream_id=s.stream_id
+                JOIN capture_context_registry c ON c.context_id=m.context_id
+                WHERE s.camera_id=? AND s.status IN ('active','closed')''', (row['camera_id'],)).fetchall()]
+            has_context_registry = conn.execute(
+                'SELECT 1 FROM capture_context_registry WHERE camera_id=? AND valid_until IS NULL LIMIT 1',
+                (row['camera_id'],)).fetchone() is not None
+            active_contexts = [dict(context) for context in conn.execute(
+                '''SELECT context_id,session_id,assignment_version,valid_from,valid_until
+                   FROM capture_context_registry
+                   WHERE camera_id=? AND valid_until IS NULL''',
+                (row['camera_id'],)).fetchall()]
+            chunks_by_stream = {}
+            for stream in streams:
+                chunks_by_stream[stream['stream_id']] = [dict(chunk) for chunk in conn.execute('''SELECT sequence,capture_start_at,duration_ms
+                    FROM video_chunk WHERE stream_id=? AND expires_at>? ORDER BY sequence''',
+                    (stream['stream_id'], now)).fetchall()]
+            binding = resolve_reference_context(
+                streams, chunks_by_stream, utc(clip_start), utc(clip_end),
+                has_context_registry=has_context_registry,
+                active_contexts=active_contexts,
+            )
+            items.append({'request_id': row['request_id'], 'event_id': row['event_id'],
+                          'camera_id': row['camera_id'], 'role': 'reference',
+                          'clip_start_at': clip_start, 'clip_end_at': clip_end,
+                          'deadline_at': row['deadline_at'] if row['deadline_at'] is not None else row['created_at']+30,
+                          **binding})
+    return {'items': items}
 
 
 @router.get('/events/{event_id}/clip-requests')
