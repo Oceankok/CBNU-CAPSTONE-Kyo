@@ -29,6 +29,11 @@ def metadata(conn, event_id):
 
 
 def eligible(conn, event_id):
+    from backend.processing.lifecycle import require_finalizable
+    try:
+        require_finalizable(conn, event_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     row = conn.execute('SELECT * FROM candidate_event WHERE event_id=?', (event_id,)).fetchone()
     if not row:
         raise HTTPException(404, 'event_not_found')

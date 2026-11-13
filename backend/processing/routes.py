@@ -167,23 +167,28 @@ def pending_reference_clips(node: dict = Depends(processor)):
         return stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp.astimezone(timezone.utc)
 
     with get_connection() as conn:
-        rows = conn.execute("""SELECT r.*,e.timestamp_start,e.timestamp_end
+        rows = conn.execute("""SELECT r.*,e.timestamp_start,e.timestamp_end,s.capture_start_at,s.capture_end_at,s.deadline_at
             FROM event_clip_request r JOIN candidate_event e ON e.event_id=r.event_id
+            LEFT JOIN processing_event_segment s ON s.request_id=r.request_id
             JOIN event_retention t ON t.event_id=r.event_id
             WHERE r.role='reference' AND r.status='pending' AND t.decision!='delete'
+            AND NOT EXISTS(SELECT 1 FROM processing_event_lifecycle l WHERE l.event_id=r.event_id)
             AND NOT EXISTS(SELECT 1 FROM event_merge x WHERE x.source_event_id=r.event_id)
             AND NOT EXISTS(SELECT 1 FROM event_media m WHERE m.request_id=r.request_id)
             ORDER BY r.created_at,r.request_id LIMIT 20""").fetchall()
     return {'items': [{'request_id': row['request_id'], 'event_id': row['event_id'],
                       'camera_id': row['camera_id'], 'role': 'reference',
-                      'clip_start_at': (utc(row['timestamp_start'])-timedelta(seconds=2)).isoformat(),
-                      'clip_end_at': (utc(row['timestamp_end'])+timedelta(seconds=2)).isoformat(),
-                      'deadline_at': row['created_at']+30} for row in rows]}
+                      'clip_start_at': row['capture_start_at'] or (utc(row['timestamp_start'])-timedelta(seconds=2)).isoformat(),
+                      'clip_end_at': row['capture_end_at'] or (utc(row['timestamp_end'])+timedelta(seconds=2)).isoformat(),
+                      'deadline_at': row['deadline_at'] if row['deadline_at'] is not None else row['created_at']+30} for row in rows]}
 
 
 @router.get('/events/{event_id}/clip-requests')
 def read_clip_requests(event_id: str, node: dict = Depends(processor)):
     with get_connection() as conn:
+        lifecycle = conn.execute('SELECT owner_node_id FROM processing_event_lifecycle WHERE event_id=?',(event_id,)).fetchone()
+        if lifecycle and lifecycle['owner_node_id'] != node['node_id']:
+            raise HTTPException(403,'continuous_event_owner_required')
         merged = conn.execute('SELECT target_event_id FROM event_merge WHERE source_event_id=?', (event_id,)).fetchone()
         if merged:
             raise HTTPException(409, {'code': 'event_merged', 'merged_into_event_id': merged[0]})
@@ -203,6 +208,9 @@ async def upload_clip(event_id: str, request: Request, request_id: str,
                       redaction_mode: Literal['enhanced','scrfd'] = 'scrfd'):
     from backend.media.routes import upload_media
     with get_connection() as conn:
+        lifecycle = conn.execute('SELECT owner_node_id FROM processing_event_lifecycle WHERE event_id=?', (event_id,)).fetchone()
+        if lifecycle and lifecycle['owner_node_id'] != node['node_id']:
+            raise HTTPException(403, 'continuous_event_owner_required')
         registration = conn.execute('SELECT camera_id,role FROM event_clip_request WHERE request_id=? AND event_id=?', (request_id, event_id)).fetchone()
         if not registration:
             raise HTTPException(404, 'clip_request_not_found')
@@ -220,6 +228,10 @@ class ClipDeliveryFailure(BaseModel):
 def report_clip_failure(event_id: str, request_id: str, body: ClipDeliveryFailure,
                         node: dict = Depends(processor)):
     from backend.media.routes import ClipRequestResult, report_clip_request
+    with get_connection() as conn:
+        owner = conn.execute('SELECT owner_node_id FROM processing_event_lifecycle WHERE event_id=?', (event_id,)).fetchone()
+        if owner and owner['owner_node_id'] != node['node_id']:
+            raise HTTPException(403, 'continuous_event_owner_required')
     return report_clip_request(event_id, request_id, ClipRequestResult(**body.model_dump()))
 
 
@@ -293,11 +305,12 @@ def validate_result(path, kind, meta):
                     raise HTTPException(422, 'processed_video_too_large')
             if count != meta.processed_frames:
                 raise HTTPException(422, 'processed_frame_count_mismatch')
+            return {'frame_count': count, 'fps': fps, 'duration_seconds': count/fps}
         finally:
             cap.release()
 
 
-def publish(job_id, node_id, token, path, meta):
+def publish(job_id, node_id, token, path, meta, measurement=None):
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     moved = None
     try:
@@ -308,6 +321,13 @@ def publish(job_id, node_id, token, path, meta):
                 if row['result_sha256'] != digest:
                     raise HTTPException(409, 'processing_result_conflict')
                 return service.public(row)
+            segment=conn.execute('''SELECT s.* FROM processing_event_segment s JOIN event_media m ON m.request_id=s.request_id WHERE m.media_id=?''',(row['media_id'],)).fetchone()
+            if segment:
+                retention=conn.execute('SELECT decision,retain_until FROM event_retention WHERE event_id=?',(segment['event_id'],)).fetchone()
+                if retention and (retention['decision']=='delete' or (retention['decision']=='retain' and retention['retain_until'] is not None and retention['retain_until']<=time.time())):
+                    raise HTTPException(409,'event_media_deleted_or_expired')
+                from backend.processing.lifecycle import validate_segment_measurement
+                validate_segment_measurement(segment,measurement)
             if row['redaction_mode'] != meta.redaction_mode:
                 raise HTTPException(422, 'processing_mode_mismatch')
             try:
@@ -325,8 +345,16 @@ def publish(job_id, node_id, token, path, meta):
                 inference_backend=?,processing_seconds=?,verification_json=? WHERE media_id=?''',
                          (storage_key(target), meta.faces_detected, meta.processed_frames, meta.redaction_mode,
                           meta.inference_backend, meta.processing_seconds, verified, row['media_id']))
+            if segment:
+                conn.execute('''INSERT INTO processing_segment_validation(media_id,generation,frame_count,fps,duration_seconds,result_sha256)
+                    VALUES(?,?,?,?,?,?) ON CONFLICT(media_id) DO UPDATE SET generation=excluded.generation,
+                    frame_count=excluded.frame_count,fps=excluded.fps,duration_seconds=excluded.duration_seconds,result_sha256=excluded.result_sha256''',
+                    (row['media_id'],row['generation'],measurement['frame_count'],measurement['fps'],measurement['duration_seconds'],digest))
             conn.execute("UPDATE processing_job SET status='succeeded',result_sha256=?,finished_at=?,updated_at=? WHERE job_id=?",
                          (digest, time.time(), time.time(), job_id))
+            from backend.auto_decision.writer import on_event_ready
+            event_id = conn.execute('SELECT event_id FROM event_media WHERE media_id=?', (row['media_id'],)).fetchone()[0]
+            on_event_ready(conn,event_id)
             return service.public(service.job(conn, job_id))
     except Exception:
         if moved:
@@ -358,5 +386,5 @@ async def result(job_id: str, request: Request, node: dict = Depends(processor),
                 if size > int(os.environ.get('PPE_MEDIA_MAX_UPLOAD_BYTES', 100 * 1024 * 1024)):
                     raise HTTPException(413, 'media_upload_too_large')
                 output.write(chunk)
-        await run_in_threadpool(validate_result, path, row['kind'], meta)
-        return await run_in_threadpool(publish, job_id, node['node_id'], x_processing_lease, path, meta)
+        measurement = await run_in_threadpool(validate_result, path, row['kind'], meta)
+        return await run_in_threadpool(publish, job_id, node['node_id'], x_processing_lease, path, meta, measurement)

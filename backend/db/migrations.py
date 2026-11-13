@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-LATEST_VERSION = 20
+LATEST_VERSION = 31
 
 
 def _now() -> str:
@@ -383,6 +383,140 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
             if 'source_deleted_at' not in columns:
                 conn.execute('ALTER TABLE event_media ADD COLUMN source_deleted_at REAL')
             conn.execute('PRAGMA user_version=20')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 21:
+        from backend.db.event_zones import migrate_event_zones
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            migrate_event_zones(conn)
+            conn.execute('PRAGMA user_version=21')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 22:
+        from backend.db.false_positives import rebuild_false_positive_aggregates
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            rebuild_false_positive_aggregates(conn)
+            conn.execute('PRAGMA user_version=22')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 23:
+        from pathlib import Path
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            script = (Path(__file__).resolve().parents[1] / 'processing' / 'lifecycle_schema.sql').read_text(encoding='utf-8')
+            for statement in script.split(';'):
+                if statement.strip():
+                    conn.execute(statement)
+            conn.execute('PRAGMA user_version=23')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 24:
+        from pathlib import Path
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            script = (Path(__file__).resolve().parents[1] / 'processing' / 'capture_schema.sql').read_text(encoding='utf-8')
+            for statement in script.split(';'):
+                if statement.strip(): conn.execute(statement)
+            conn.execute('PRAGMA user_version=24')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 25:
+        from pathlib import Path
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            script = (Path(__file__).resolve().parents[1] / 'processing' / 'receipt_schema.sql').read_text(encoding='utf-8')
+            for statement in script.split(';'):
+                if statement.strip(): conn.execute(statement)
+            conn.execute('PRAGMA user_version=25')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 26:
+        from pathlib import Path
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            script = (Path(__file__).resolve().parents[1] / 'event_relations' / 'schema.sql').read_text(encoding='utf-8')
+            for statement in script.split(';'):
+                if statement.strip(): conn.execute(statement)
+            conn.execute('PRAGMA user_version=26')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 27:
+        from pathlib import Path
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            script = (Path(__file__).resolve().parents[1] / 'auto_decision' / 'shadow_schema.sql').read_text(encoding='utf-8')
+            for statement in script.split(';'):
+                if statement.strip(): conn.execute(statement)
+            conn.execute('PRAGMA user_version=27')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 28:
+        from pathlib import Path
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            script = (Path(__file__).resolve().parents[1] / 'event_relations' / 'persistent_schema.sql').read_text(encoding='utf-8')
+            for statement in script.split(';'):
+                if statement.strip(): conn.execute(statement)
+            conn.execute('PRAGMA user_version=28')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 29:
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            if 'risk_level' not in {row[1] for row in conn.execute('PRAGMA table_info(zone_rule)')}:
+                conn.execute('ALTER TABLE zone_rule ADD COLUMN risk_level INTEGER CHECK (risk_level BETWEEN 1 AND 5)')
+            conn.execute('PRAGMA user_version=29')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 30:
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            if 'score_version' not in {row[1] for row in conn.execute('PRAGMA table_info(education_recommendation)')}:
+                conn.execute('ALTER TABLE education_recommendation ADD COLUMN score_version TEXT')
+            conn.execute('PRAGMA user_version=30')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 31:
+        from backend.capture_context.schema import migrate
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            migrate(conn)
+            conn.execute('PRAGMA user_version=31')
             conn.commit()
         except Exception:
             conn.rollback()

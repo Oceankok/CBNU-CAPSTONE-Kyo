@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.auth.service import require_admin
-from backend.education.models import MaterialApproval, MaterialContent, MaterialUpdate, MaterialVersion
+from backend.education.models import MaterialApproval, MaterialContent, MaterialUpdate, MaterialVersion, MaterialCreate, GenerationRequest
 from backend.education import service
 
 
@@ -15,13 +15,15 @@ def generation_availability():
 
 
 @router.post('/recommendations/{recommendation_id}/materials/generate', status_code=201)
-def generate(recommendation_id: str, user: dict = Depends(require_admin)):
-    return service.generate_draft(recommendation_id, user['user_id'])
+def generate(recommendation_id: str, body: GenerationRequest | None = None, user: dict = Depends(require_admin)):
+    scope=body.expected_scope.model_dump() if body and body.expected_scope else None
+    return service.generate_draft(recommendation_id, user['user_id'], expected_scope=scope)
 
 
 @router.post('/recommendations/{recommendation_id}/materials', status_code=201)
-def create(recommendation_id: str, body: MaterialContent, user: dict = Depends(require_admin)):
-    return service.create_draft(recommendation_id, body, user['user_id'])
+def create(recommendation_id: str, body: MaterialCreate, user: dict = Depends(require_admin)):
+    scope=body.expected_scope.model_dump() if body.expected_scope else None
+    return service.create_draft(recommendation_id, body, user['user_id'], expected_scope=scope)
 
 
 @router.get('/recommendations/{recommendation_id}/materials')

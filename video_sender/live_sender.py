@@ -134,16 +134,31 @@ def is_stale_chunk(capture_start):
 
 
 def delete_chunk_files(path):
-    """MP4와 대응하는 촬영 시각 TXT 파일을 삭제."""
-    for file_path in (path, path.with_suffix(".txt")):
+    """Delete acknowledged/discarded footage, retaining a restart-safe intent."""
+    marker = path.with_suffix(".cleanup")
+    files = (path, path.with_suffix(".txt"), path.with_suffix(".ready"))
+    try:
+        # Persist intent before removing anything, including the capture time.
+        # Sequence allocation reserves this number until cleanup completes.
+        if any(file_path.exists() for file_path in files):
+            marker.touch()
+    except OSError as error:
+        print(f"[CLEAN ERROR] {CAMERA_ID} / {marker.name}: {error}", flush=True)
+        return False
+    success = True
+    for file_path in files:
         try:
             file_path.unlink(missing_ok=True)
         except OSError as error:
-            print(
-                f"[CLEAN ERROR] {CAMERA_ID} / "
-                f"{file_path.name}: {error}",
-                flush=True,
-            )
+            success = False
+            print(f"[CLEAN ERROR] {CAMERA_ID} / {file_path.name}: {error}", flush=True)
+    if success:
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError as error:
+            print(f"[CLEAN ERROR] {CAMERA_ID} / {marker.name}: {error}", flush=True)
+            return False
+    return success
 
 
 def backpressure_delay(response):
@@ -210,11 +225,23 @@ def watch_and_send():
         print(f"[ERROR] 출력 폴더 없음: {OUTPUT_DIR}")
         return
 
-    sent = set()
+    # Only failed cleanup is retained; successful files do not grow a sent set.
+    pending_cleanup = {}
     waiting_logged = set()
+
+    def drain_cleanup():
+        # Local privacy cleanup must not wait for a successful network connection.
+        for marker in OUTPUT_DIR.glob("chunk_*.cleanup"):
+            if re.fullmatch(r"chunk_\d+\.cleanup", marker.name):
+                pending = marker.with_suffix(".mp4")
+                pending_cleanup[pending.name] = pending
+        for name, pending in list(pending_cleanup.items()):
+            if delete_chunk_files(pending):
+                del pending_cleanup[name]
 
     # 최초 서버 연결 실패 시 3초 간격으로 재시도
     while True:
+        drain_cleanup()
         try:
             stream_id = create_stream()
             break
@@ -235,12 +262,14 @@ def watch_and_send():
 
     try:
         while True:
+            drain_cleanup()
             completed = completed_chunks(OUTPUT_DIR)
+            waiting_logged.intersection_update(path.name for path in completed)
 
             for path in completed:
                 match = CHUNK_PATTERN.fullmatch(path.name)
 
-                if not match or path.name in sent:
+                if not match or path.name in pending_cleanup:
                     continue
 
                 sequence = int(match.group(1))
@@ -263,8 +292,8 @@ def watch_and_send():
                         flush=True,
                     )
 
-                    delete_chunk_files(path)
-                    sent.add(path.name)
+                    if not delete_chunk_files(path):
+                        pending_cleanup[path.name] = path
                     waiting_logged.discard(path.name)
                     continue
 
@@ -277,13 +306,20 @@ def watch_and_send():
                         capture_start,
                     )
 
-                    sent.add(path.name)
                     waiting_logged.discard(path.name)
-
-                    delete_chunk_files(path)
+                    if not delete_chunk_files(path):
+                        pending_cleanup[path.name] = path
 
                 except requests.RequestException as error:
                     response = error.response
+                    if response is not None and response.status_code in (413, 422):
+                        print(f"[DROP REJECTED] {CAMERA_ID} / {path.name} / HTTP {response.status_code}", flush=True)
+                        # Validation/size rejection cannot be repaired by reconnecting.
+                        # Follow the existing discard policy, retrying deletion only.
+                        if not delete_chunk_files(path):
+                            pending_cleanup[path.name] = path
+                        waiting_logged.discard(path.name)
+                        continue
                     if response is not None and response.status_code == 429:
                         delay = backpressure_delay(response)
                         print(
@@ -304,6 +340,7 @@ def watch_and_send():
 
                     # 서버 재연결 및 새 스트림 생성
                     while True:
+                        drain_cleanup()
                         try:
                             print(
                                 f"[RECONNECT] {CAMERA_ID} / "

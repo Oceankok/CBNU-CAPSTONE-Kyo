@@ -43,8 +43,15 @@ def init_database() -> None:
         # 외래키 제약 조건 활성화
         cursor.execute("PRAGMA foreign_keys = ON;")
 
+        # Preserve all recommendations (including an intentionally empty cache)
+        # on repeated initialization. Retired legacy IDs must not be resurrected.
+        new_recommendation_table = cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='education_recommendation'"
+        ).fetchone() is None
         run_sql_file(cursor, SCHEMA_PATH)
         run_sql_file(cursor, SEED_PATH)
+        if new_recommendation_table:
+            run_sql_file(cursor, BASE_DIR / "education_seed.sql")
 
         # New seed rows and pre-existing rows both receive media records once.
         apply_migrations(conn)

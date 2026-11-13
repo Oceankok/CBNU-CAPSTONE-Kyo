@@ -36,6 +36,20 @@ def save_state(path, state):
     temporary.replace(path)
 
 
+
+def remember_rejected_result(state_path, command_id, record, status_code):
+    """Keep bounded, content-free reporting failures separately from active work."""
+    path = state_path.with_suffix(".rejected.json")
+    records = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    records.pop(command_id, None)
+    records[command_id] = {
+        "http_status": status_code,
+        "recorded_at": time.time(),
+        "original_status": record.get("result", {}).get("original_status", record["status"]),
+    }
+    save_state(path, dict(list(records.items())[-100:]))
+
+
 def run(server, token, state_path, once=False, allow_language_install=False):
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
     # A crash may have happened after speaking. Report uncertainty rather than repeat.
@@ -63,8 +77,25 @@ def run(server, token, state_path, once=False, allow_language_install=False):
                     for key, record in list(state.items()):
                         if record["status"] == "started":
                             continue
-                        response = client.put(f"/api/field/commands/{key}/result", json=record)
-                        if response.status_code in {404, 409}:
+                        response = client.put(f"/api/field/commands/{key}/result",
+                                              json={"status": record["status"], "result": record.get("result", {})})
+                        if response.status_code in {413, 422}:
+                            # Do not replay the command. A short failure receipt lets
+                            # the server distinguish report failure from delivery success.
+                            print("Result payload rejected:", key, response.status_code)
+                            if not record.get("_report_fallback"):
+                                state[key] = {
+                                    "status": "failed", "_report_fallback": True,
+                                    "result": {"reason": "result_report_rejected",
+                                               "http_status": response.status_code,
+                                               "original_status": record["status"]},
+                                }
+                                save_state(state_path, state)
+                                continue
+                            # Even the minimal receipt was rejected. Preserve only
+                            # bounded diagnostic metadata, then allow later commands.
+                            remember_rejected_result(state_path, key, record, response.status_code)
+                        elif response.status_code in {404, 409}:
                             print("Result no longer accepted:", key, response.status_code)
                         else:
                             response.raise_for_status()

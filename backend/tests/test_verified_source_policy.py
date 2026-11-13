@@ -119,7 +119,7 @@ class VerifiedSourcePolicyTests(unittest.TestCase):
 
     def test_v19_upgrade_preserves_media_and_initializes_no_false_verification(self):
         from backend.db.connection import schema_version
-        from backend.db.migrations import apply_migrations
+        from backend.db.migrations import apply_migrations, LATEST_VERSION
         from backend.db.postgres import initialize
         media = self.upload()
         with get_connection() as conn:
@@ -133,7 +133,7 @@ class VerifiedSourcePolicyTests(unittest.TestCase):
             with get_connection() as conn:
                 apply_migrations(conn)
         with get_connection() as conn:
-            self.assertEqual(schema_version(conn), 20)
+            self.assertEqual(schema_version(conn), LATEST_VERSION)
         row = self.media(media['media_id'])
         self.assertEqual(row['verification_json'], '')
         self.assertIsNone(row['source_deleted_at'])
