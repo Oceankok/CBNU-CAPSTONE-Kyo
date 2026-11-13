@@ -41,6 +41,27 @@ export function relationFingerprintBody(expectedFingerprint: string) {
   return { expected_fingerprint: expectedFingerprint };
 }
 
+export function isEducationScopeConflictStatus(status: number): boolean {
+  return status === 404 || status === 409;
+}
+
+export function isLatestRequest(requestId: number, currentRequestId: number): boolean {
+  return requestId === currentRequestId;
+}
+
+export function matchesEvidenceSelection(
+  selectedPeer: string | null,
+  expectedPeer: string,
+  fingerprint: string | null | undefined,
+  expectedFingerprint: string,
+): boolean {
+  return selectedPeer === expectedPeer && fingerprint === expectedFingerprint;
+}
+
+export function reconcileEffect(limit = 20): string {
+  return `recomputes current candidates and may save up to ${limit} unreviewed relations`;
+}
+
 export function zoneSaveBody<T extends ZoneRuleLike>(
   rule: T,
 ): Pick<T, 'required_ppe' | 'rules'> & { risk_level?: T['risk_level'] } {

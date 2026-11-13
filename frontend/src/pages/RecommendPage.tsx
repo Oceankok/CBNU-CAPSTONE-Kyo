@@ -10,6 +10,8 @@ import type {
 } from '../types';
 import { ApiError } from '../api/client';
 import EducationMaterialEditor from '../components/EducationMaterialEditor';
+import type { EducationMaterialDraft } from '../components/EducationMaterialEditor';
+import type { EducationMaterialScope } from '../api/materials';
 import type { LayoutContext } from '../components/AppLayout';
 import styles from './RecommendPage.module.css';
 
@@ -33,9 +35,15 @@ function ScoreRow({ label, value }: { label: string; value: string | number }) {
 function RecommendCard({
   item,
   quarter,
+  draft,
+  onDraftChange,
+  onScopeConflict,
 }: {
   item: EducationRecommendation;
   quarter: string;
+  draft?: EducationMaterialDraft;
+  onDraftChange: (draft: EducationMaterialDraft | null) => void;
+  onScopeConflict: (scope: EducationMaterialScope) => void;
 }) {
   const rankColor = RANK_COLORS[item.recommendation_rank - 1] ?? '#718096';
   return (
@@ -106,6 +114,9 @@ function RecommendCard({
 
       <EducationMaterialEditor
         recommendationId={item.recommendation_id}
+        draft={draft}
+        onDraftChange={onDraftChange}
+        onScopeConflict={onScopeConflict}
         scope={{
           recommendation_id: item.recommendation_id,
           quarter,
@@ -123,6 +134,41 @@ export default function RecommendPage() {
   const [data, setData] = useState<EducationRecommendationList | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [latest, setLatest] = useState<EducationRecommendationList | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, EducationMaterialDraft>>({});
+
+  const storeDraft = (recommendationId: string, draft: EducationMaterialDraft | null) => {
+    setDrafts((current) => {
+      const next = { ...current };
+      if (draft) next[recommendationId] = draft;
+      else delete next[recommendationId];
+      return next;
+    });
+  };
+
+  const refreshRecommendationsAfterConflict = async (scope: EducationMaterialScope) => {
+    try {
+      setLatest(await fetchRecommendations(scope.quarter));
+      setError(
+        '추천 목록이 변경되었습니다. 입력 중인 초안은 보존했습니다. 최신 추천 대상을 명시적으로 다시 선택하세요.',
+      );
+    } catch (e) {
+      setError(
+        `최신 추천 목록을 불러오지 못했습니다. 기존 초안은 보존되어 있습니다. (${e instanceof Error ? e.message : String(e)})`,
+      );
+    }
+  };
+
+  const selectLatest = (next: EducationRecommendationList, recommendationId: string) => {
+    const selected = next.items.find((item) => item.recommendation_id === recommendationId);
+    setData(
+      selected
+        ? { ...next, items: [selected, ...next.items.filter((item) => item !== selected)] }
+        : next,
+    );
+    setLatest(null);
+    setError(null);
+  };
 
   // AppLayout remounts this page when the quarter changes, so this runs once per quarter
   useEffect(() => {
@@ -167,6 +213,28 @@ export default function RecommendPage() {
         </p>
       )}
 
+      {latest && (
+        <section className={styles.notice}>
+          <strong>최신 추천 목록을 확인하세요</strong>
+          <p>
+            이전 대상에 대한 초안은 보존되어 있습니다. 아래에서 현재 편집할 추천 대상을
+            명시적으로 다시 선택하면 최신 목록으로 전환합니다.
+          </p>
+          <div className={styles.cardList}>
+            {latest.items.map((item) => (
+              <button
+                key={item.recommendation_id}
+                type="button"
+                className={styles.reselect}
+                onClick={() => selectLatest(latest, item.recommendation_id)}
+              >
+                {item.zone_name} · {item.ppe_type} · {item.education_topic} 선택
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       {data && (
         <div className={styles.cardList}>
           {data.items.map((item) => (
@@ -174,10 +242,35 @@ export default function RecommendPage() {
                 key={item.recommendation_id}
                 item={item}
                 quarter={data.quarter}
+                draft={drafts[item.recommendation_id]}
+                onDraftChange={(draft) => storeDraft(item.recommendation_id, draft)}
+                onScopeConflict={(scope) => void refreshRecommendationsAfterConflict(scope)}
               />
           ))}
         </div>
       )}
+
+      {data &&
+        Object.entries(drafts)
+          .filter(
+            ([recommendationId]) =>
+              !data.items.some((item) => item.recommendation_id === recommendationId),
+          )
+          .map(([recommendationId, draft]) => (
+            <div key={recommendationId} className={styles.card}>
+              <p className={styles.notice}>
+                이전 추천 대상({recommendationId})의 입력 초안을 보존했습니다. 최신 목록으로
+                전환했지만 초안을 다시 확인하거나 복사할 수 있습니다.
+              </p>
+              <EducationMaterialEditor
+                recommendationId={recommendationId}
+                scope={draft.editingScope}
+                draft={draft}
+                onDraftChange={(next) => storeDraft(recommendationId, next)}
+                onScopeConflict={(scope) => void refreshRecommendationsAfterConflict(scope)}
+              />
+            </div>
+          ))}
     </div>
   );
 }

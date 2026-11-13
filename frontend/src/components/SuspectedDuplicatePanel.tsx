@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   fetchRelationEvidence,
   fetchSavedSuspectedRelations,
@@ -14,10 +14,69 @@ import type {
   SuspectedDuplicateTag,
 } from '../api/events';
 import { ApiError } from '../api/client';
+import {
+  isLatestRequest,
+  matchesEvidenceSelection,
+  reconcileEffect,
+} from '../api/schema31Contracts';
 import styles from './SuspectedDuplicatePanel.module.css';
 
 const relationError = (e: unknown) =>
   e instanceof Error ? e.message : String(e);
+
+const textValue = (value: unknown): string => {
+  if (value == null) return '-';
+  if (Array.isArray(value)) return value.map(textValue).join(', ');
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+};
+
+function EvidenceDetails({ evidence }: { evidence: Record<string, unknown> }) {
+  const events = Array.isArray(evidence.events) ? evidence.events : [];
+  const groups = Array.isArray(evidence.shared_group_snapshots)
+    ? evidence.shared_group_snapshots
+    : [];
+  return (
+    <dl className={styles.evidenceDetails}>
+      <div>
+        <dt>판정 규칙</dt>
+        <dd>{textValue(evidence.rule_version)}</dd>
+      </div>
+      <div>
+        <dt>시간 기준</dt>
+        <dd>
+          {textValue(evidence.interval_basis)} · 허용 오차 {textValue(evidence.clock_tolerance_seconds)}초
+        </dd>
+      </div>
+      <div>
+        <dt>공통 카메라 그룹 snapshot</dt>
+        <dd>
+          {groups.length
+            ? groups
+                .map((group) => {
+                  const item = group as Record<string, unknown>;
+                  return `${textValue(item.group_id)} (v${textValue(item.group_version)})`;
+                })
+                .join(', ')
+            : '없음'}
+        </dd>
+      </div>
+      <div>
+        <dt>사건 관찰 구간</dt>
+        <dd>
+          {events.length
+            ? events
+                .map((event) => {
+                  const item = event as Record<string, unknown>;
+                  return `${textValue(item.event_id)}: ${textValue(item.timestamp_start)} ~ ${textValue(item.timestamp_end)}`;
+                })
+                .join(' · ')
+            : '없음'}
+        </dd>
+      </div>
+    </dl>
+  );
+}
 
 export default function SuspectedDuplicatePanel({
   eventId,
@@ -38,6 +97,8 @@ export default function SuspectedDuplicatePanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [reconcileArmed, setReconcileArmed] = useState(false);
+  const evidenceRequest = useRef(0);
 
   const load = async () => {
     const [nextPreview, nextSaved] = await Promise.all([
@@ -60,31 +121,53 @@ export default function SuspectedDuplicatePanel({
   };
 
   const inspect = async (peerId: string) => {
+    const request = ++evidenceRequest.current;
     setSelectedPeer(peerId);
     setEvidence(null);
     setError(null);
     try {
-      setEvidence(await fetchRelationEvidence(eventId, peerId));
+      const nextEvidence = await fetchRelationEvidence(eventId, peerId);
+      if (isLatestRequest(request, evidenceRequest.current)) setEvidence(nextEvidence);
     } catch (e) {
-      setError(relationError(e));
+      if (isLatestRequest(request, evidenceRequest.current)) setError(relationError(e));
     }
   };
 
   const save = async () => {
     if (!selectedPeer || !evidence?.fingerprint || !evidence.eligible) return;
+    const peerAtSave = selectedPeer;
+    const fingerprintAtSave = evidence.fingerprint;
+    const requestAtSave = evidenceRequest.current;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await saveSuspectedRelation(eventId, selectedPeer, evidence.fingerprint);
+      await saveSuspectedRelation(eventId, peerAtSave, fingerprintAtSave);
       await load();
+      if (
+        !isLatestRequest(requestAtSave, evidenceRequest.current) ||
+        !matchesEvidenceSelection(
+          selectedPeer,
+          peerAtSave,
+          evidence?.fingerprint,
+          fingerprintAtSave,
+        )
+      ) {
+        return;
+      }
       setNotice(
         '현재 근거를 명시적으로 저장했습니다. 사건을 병합하거나 통계를 변경하지 않습니다.',
       );
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         try {
-          setEvidence(await fetchRelationEvidence(eventId, selectedPeer));
+          const nextEvidence = await fetchRelationEvidence(eventId, peerAtSave);
+          if (
+            isLatestRequest(requestAtSave, evidenceRequest.current) &&
+            selectedPeer === peerAtSave
+          ) {
+            setEvidence(nextEvidence);
+          }
           setError(
             '근거가 바뀌었습니다. 새 근거를 확인한 뒤 다시 저장할지 판단하세요.',
           );
@@ -128,6 +211,7 @@ export default function SuspectedDuplicatePanel({
         created_count?: number;
       };
       await load();
+      setReconcileArmed(false);
       setNotice(
         `현재 근거를 명시적으로 다시 확인했습니다. 새로 저장된 관계 ${result.created_count ?? 0}건.`,
       );
@@ -169,13 +253,38 @@ export default function SuspectedDuplicatePanel({
         <div className={styles.section}>
           <div className={styles.sectionHead}>
             <strong>계산 후보 ({preview.total})</strong>
-            <button type="button" className={styles.linkBtn} disabled={busy} onClick={reconcile}>
+            <button type="button" className={styles.linkBtn} disabled={busy} onClick={() => setReconcileArmed(true)}>
               현재 근거 다시 확인
             </button>
           </div>
           {!preview.eligible && <p className={styles.help}>후보를 계산할 수 없습니다: {preview.reason}</p>}
           {preview.eligible && preview.items.length === 0 && (
             <p className={styles.help}>현재 조건에 맞는 후보가 없습니다.</p>
+          )}
+          {reconcileArmed && (
+            <div className={styles.confirmBox}>
+              <p>
+                이 작업은 현재 후보를 다시 계산하고, 아직 검토 이력이 없는 후보를 최대 20건까지
+                저장합니다. 자동 병합이나 동일인 확정은 하지 않지만, 저장 기록은 생성됩니다.
+                ({reconcileEffect(20)})
+              </p>
+              <button
+                type="button"
+                className={styles.primaryBtn}
+                disabled={busy || !preview.eligible}
+                onClick={() => void reconcile()}
+              >
+                최대 20건 저장 실행
+              </button>
+              <button
+                type="button"
+                className={styles.linkBtn}
+                disabled={busy}
+                onClick={() => setReconcileArmed(false)}
+              >
+                취소
+              </button>
+            </div>
           )}
           <ul className={styles.list}>
             {preview.items.map((candidate) => (
@@ -206,6 +315,9 @@ export default function SuspectedDuplicatePanel({
           <span className={styles.meta}>
             {evidence.eligible ? `fingerprint: ${evidence.fingerprint}` : `저장 불가: ${evidence.reason}`}
           </span>
+          {evidence.eligible && evidence.evidence && (
+            <EvidenceDetails evidence={evidence.evidence} />
+          )}
           <button
             type="button"
             className={styles.primaryBtn}

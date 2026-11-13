@@ -120,3 +120,34 @@
   line-height: 1.5;
   color: var(--text-muted);
 }
+
+.notice {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid #f6ad55;
+  border-radius: 8px;
+  background: #fffaf0;
+  color: #744210;
+  line-height: 1.5;
+}
+
+.notice p {
+  margin: 6px 0 10px;
+}
+
+.reselect {
+  appearance: none;
+  border: 1px solid #cbd5e0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #fff;
+  color: #2d3748;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reselect:hover,
+.reselect:focus-visible {
+  border-color: #3182ce;
+  color: #2b6cb0;
+}

@@ -16,8 +16,17 @@ import type {
   GenerationStatus,
 } from '../api/materials';
 import { ApiError } from '../api/client';
+import { isEducationScopeConflictStatus } from '../api/schema31Contracts';
 import { formatSeoul } from '../time';
 import styles from './EducationMaterialEditor.module.css';
+
+export interface EducationMaterialDraft {
+  editing: EducationMaterial | 'new';
+  editingScope: EducationMaterialScope;
+  title: string;
+  body: string;
+  checklist: string;
+}
 
 const STATUS_LABEL = {
   draft: '초안',
@@ -30,9 +39,15 @@ const STATUS_LABEL = {
 export default function EducationMaterialEditor({
   recommendationId,
   scope,
+  draft,
+  onDraftChange,
+  onScopeConflict,
 }: {
   recommendationId: string;
   scope: EducationMaterialScope;
+  draft?: EducationMaterialDraft;
+  onDraftChange?: (draft: EducationMaterialDraft | null) => void;
+  onScopeConflict?: (scope: EducationMaterialScope) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<EducationMaterial[] | null>(null);
@@ -42,13 +57,14 @@ export default function EducationMaterialEditor({
   const [generating, setGenerating] = useState(false);
   // null: not editing; 'new': writing a new draft; otherwise the draft being edited
   const [editing, setEditing] = useState<EducationMaterial | 'new' | null>(
-    null,
+    draft?.editing ?? null,
   );
-  const [editingScope, setEditingScope] =
-    useState<EducationMaterialScope | null>(null);
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
-  const [checklist, setChecklist] = useState('');
+  const [editingScope, setEditingScope] = useState<EducationMaterialScope | null>(
+    draft?.editingScope ?? null,
+  );
+  const [title, setTitle] = useState(draft?.title ?? '');
+  const [body, setBody] = useState(draft?.body ?? '');
+  const [checklist, setChecklist] = useState(draft?.checklist ?? '');
   const loadRequest = useRef(0);
 
   const fail = (e: Error) => setError(MATERIAL_ERRORS[e.message] ?? e.message);
@@ -67,6 +83,7 @@ export default function EducationMaterialEditor({
   };
 
   const refreshAfterScopeConflict = async () => {
+    onScopeConflict?.(structuredClone(editingScope ?? scope));
     try {
       await load();
       setError(
@@ -96,7 +113,7 @@ export default function EducationMaterialEditor({
     generateMaterial(recommendationId, structuredClone(scope))
       .then(() => load())
       .catch((e: unknown) => {
-        if (e instanceof ApiError && (e.status === 404 || e.status === 409)) {
+        if (e instanceof ApiError && isEducationScopeConflictStatus(e.status)) {
           void refreshAfterScopeConflict();
         } else {
           fail(e instanceof Error ? e : new Error(String(e)));
@@ -106,12 +123,37 @@ export default function EducationMaterialEditor({
   };
 
   const startEdit = (m: EducationMaterial | 'new') => {
+    const nextScope = structuredClone(scope);
+    const nextTitle = m === 'new' ? '' : m.title;
+    const nextBody = m === 'new' ? '' : m.body;
+    const nextChecklist = m === 'new' ? '' : m.checklist.join('\n');
     setEditing(m);
-    setEditingScope(structuredClone(scope));
+    setEditingScope(nextScope);
     setError(null);
-    setTitle(m === 'new' ? '' : m.title);
-    setBody(m === 'new' ? '' : m.body);
-    setChecklist(m === 'new' ? '' : m.checklist.join('\n'));
+    setTitle(nextTitle);
+    setBody(nextBody);
+    setChecklist(nextChecklist);
+    onDraftChange?.({
+      editing: m,
+      editingScope: nextScope,
+      title: nextTitle,
+      body: nextBody,
+      checklist: nextChecklist,
+    });
+  };
+
+  const updateDraft = (
+    patch: Partial<Pick<EducationMaterialDraft, 'title' | 'body' | 'checklist'>>,
+  ) => {
+    if (!editing) return;
+    onDraftChange?.({
+      editing,
+      editingScope: editingScope ?? structuredClone(scope),
+      title,
+      body,
+      checklist,
+      ...patch,
+    });
   };
 
   const content = () => ({
@@ -140,10 +182,11 @@ export default function EducationMaterialEditor({
     request
       .then(() => {
         setEditing(null);
+        onDraftChange?.(null);
         return load();
       })
       .catch((e: unknown) => {
-        if (e instanceof ApiError && (e.status === 404 || e.status === 409)) {
+        if (e instanceof ApiError && isEducationScopeConflictStatus(e.status)) {
           // Keep the editor mounted and its draft fields untouched. A stale
           // recommendation is never retried against a newly selected ID.
           void refreshAfterScopeConflict();
@@ -260,7 +303,10 @@ export default function EducationMaterialEditor({
                   className={styles.input}
                   value={title}
                   maxLength={200}
-                  onChange={(e) => setTitle(e.target.value)}
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                    updateDraft({ title: e.target.value });
+                  }}
                 />
               </label>
               <label className={styles.field}>
@@ -270,7 +316,10 @@ export default function EducationMaterialEditor({
                   rows={5}
                   value={body}
                   maxLength={12000}
-                  onChange={(e) => setBody(e.target.value)}
+                  onChange={(e) => {
+                    setBody(e.target.value);
+                    updateDraft({ body: e.target.value });
+                  }}
                 />
               </label>
               <label className={styles.field}>
@@ -279,14 +328,20 @@ export default function EducationMaterialEditor({
                   className={styles.input}
                   rows={4}
                   value={checklist}
-                  onChange={(e) => setChecklist(e.target.value)}
+                  onChange={(e) => {
+                    setChecklist(e.target.value);
+                    updateDraft({ checklist: e.target.value });
+                  }}
                 />
               </label>
               <div className={styles.actions}>
                 <button
                   type="button"
                   className={styles.btn}
-                  onClick={() => setEditing(null)}
+                  onClick={() => {
+                    setEditing(null);
+                    onDraftChange?.(null);
+                  }}
                 >
                   취소
                 </button>

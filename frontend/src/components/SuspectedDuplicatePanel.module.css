@@ -103,3 +103,50 @@
   background: #f0fff4;
   color: #276749;
 }
+
+.confirmBox {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid #f6ad55;
+  border-radius: 6px;
+  background: #fffaf0;
+  color: #744210;
+}
+
+.confirmBox p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.confirmBox .linkBtn {
+  margin-left: 6px;
+}
+
+.evidenceDetails {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0;
+  padding: 10px;
+  border-radius: 6px;
+  background: #f7fafc;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.evidenceDetails div {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.35fr) 1fr;
+  gap: 8px;
+}
+
+.evidenceDetails dt {
+  color: #4a5568;
+  font-weight: 600;
+}
+
+.evidenceDetails dd {
+  margin: 0;
+  color: #2d3748;
+  word-break: break-word;
+}
