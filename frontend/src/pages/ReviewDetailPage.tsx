@@ -130,9 +130,11 @@ function EventLinks({ ids }: { ids: string[] }) {
 function SuspectedDuplicateSummary({
   eventId,
   tag,
+  refreshKey,
 }: {
   eventId: string;
   tag?: SuspectedDuplicateTag;
+  refreshKey: number;
 }) {
   const requestId = useRef(0);
   const [preview, setPreview] = useState<SuspectedDuplicatePreview | null>(null);
@@ -160,7 +162,7 @@ function SuspectedDuplicateSummary({
       if (savedResult.status === 'fulfilled') setSaved(savedResult.value);
       else setSavedError(relationLoadError(savedResult.reason));
     });
-  }, [eventId, enabled]);
+  }, [eventId, enabled, refreshKey]);
 
   if (!enabled) return null;
 
@@ -168,6 +170,7 @@ function SuspectedDuplicateSummary({
     eventId,
     preview,
     saved?.items ?? [],
+    saved?.has_more ?? false,
   );
   const hasLinks =
     summary.computedPeerIds.length > 0 ||
@@ -188,6 +191,11 @@ function SuspectedDuplicateSummary({
       {loading && <p className={styles.optional}>의심 관계를 불러오는 중...</p>}
       {previewError && <p className={styles.optional}>{previewError}</p>}
       {savedError && <p className={styles.optional}>{savedError}</p>}
+      {summary.partialResults && (
+        <p className={styles.optional}>
+          일부 관계만 조회되어 계산 후보와 저장 여부의 차이는 단정하지 않습니다.
+        </p>
+      )}
       {!loading && !hasLinks && !previewError && !savedError && (
         <p className={styles.optional}>현재 표시할 의심 관계가 없습니다.</p>
       )}
@@ -249,6 +257,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
   );
   // Bumped after a merge so the media panel reloads the reference media that moved in
   const [mediaKey, setMediaKey] = useState(0);
+  const [relationRefreshKey, setRelationRefreshKey] = useState(0);
   useEffect(() => {
     if (!event_id) return;
     fetchEvent(event_id, { includeSuspectedDuplicates: true })
@@ -387,9 +396,10 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
         {/* Right: event details + review form */}
         <div className={styles.infoCol}>
           <SuspectedDuplicateSummary
-            key={`${event.event_id}-${event.suspected_duplicate_tag?.candidate_count ?? 0}-${event.suspected_duplicate_tag?.saved_record_count ?? 0}-${event.suspected_duplicate_tag?.released_record_count ?? 0}`}
+            key={`${event.event_id}-${event.suspected_duplicate_tag?.candidate_count ?? 0}-${event.suspected_duplicate_tag?.saved_record_count ?? 0}-${event.suspected_duplicate_tag?.released_record_count ?? 0}-${relationRefreshKey}`}
             eventId={event.event_id}
             tag={event.suspected_duplicate_tag}
+            refreshKey={relationRefreshKey}
           />
           <div className={styles.card}>
             {/* Headline: what the reviewer is judging */}
@@ -442,6 +452,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
           <SuspectedDuplicatePanel
             eventId={event.event_id}
             tag={event.suspected_duplicate_tag}
+            onRelationsChanged={() => setRelationRefreshKey((key) => key + 1)}
           />
 
           {/* Merged source: the review happens on the representative event */}

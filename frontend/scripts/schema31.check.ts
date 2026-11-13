@@ -116,4 +116,27 @@ assert(
   duplicateSummary.staleCount === 1 && duplicateSummary.releasedCount === 1,
   'summary must count stale and released relations',
 );
+const partialSummary = buildSuspectedDuplicateSummary(
+  'EVENT_SELF',
+  {
+    event_id: 'EVENT_SELF',
+    mode: 'metadata_preview',
+    eligible: true,
+    reason: null,
+    total: 21,
+    limit: 20,
+    offset: 0,
+    has_more: true,
+    next_offset: 20,
+    pagination_truncated: true,
+    items: [],
+  },
+  [relation('EVENT_SELF', 'EVENT_B', 'saved')],
+  true,
+);
+assert(partialSummary.partialResults, 'summary must expose truncated relation results');
+assert(
+  partialSummary.computedOnlyPeerIds.length === 0,
+  'summary must not claim an unsaved difference when either list is truncated',
+);
 console.log('schema31 contracts ok');
