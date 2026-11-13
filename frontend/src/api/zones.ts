@@ -28,10 +28,20 @@ export async function fetchZones(): Promise<ZoneRule[]> {
 }
 
 export async function saveZone(rule: ZoneRule): Promise<ZoneRule> {
-  const body = { required_ppe: rule.required_ppe, rules: rule.rules };
+  const body = {
+    required_ppe: rule.required_ppe,
+    rules: rule.rules,
+    ...(rule.risk_level != null ? { risk_level: rule.risk_level } : {}),
+  };
   if (MOCK_AUTH) {
-    const saved = { ...rule, ...body, updated_at: new Date().toISOString() };
     const i = mockZones.findIndex((z) => z.zone_name === rule.zone_name);
+    const saved = {
+      ...rule,
+      ...body,
+      // Omitting the level keeps what was saved, like the server
+      risk_level: body.risk_level ?? mockZones[i]?.risk_level ?? null,
+      updated_at: new Date().toISOString(),
+    };
     if (i >= 0) mockZones[i] = saved;
     else mockZones.push(saved);
     return structuredClone(saved);

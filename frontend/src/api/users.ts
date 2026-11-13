@@ -108,6 +108,9 @@ export async function resetPassword(
 export async function setZoneMembers(
   zone: string,
   userIds: string[],
+  // Full member list as it was when editing started; the server answers 409
+  // zone_members_changed instead of overwriting someone else's change (#240)
+  expectedUserIds: string[],
 ): Promise<{ zone_name: string; user_ids: string[] }> {
   if (MOCK_AUTH) {
     for (const u of mockUsers) {
@@ -122,6 +125,9 @@ export async function setZoneMembers(
   }
   return apiFetch(`/api/zones/${encodeURIComponent(zone)}/members`, {
     method: 'PUT',
-    body: JSON.stringify({ user_ids: userIds }),
+    body: JSON.stringify({
+      user_ids: userIds,
+      expected_user_ids: expectedUserIds,
+    }),
   });
 }

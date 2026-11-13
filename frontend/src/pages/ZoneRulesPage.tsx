@@ -13,14 +13,26 @@ interface Draft {
   zone_name: string;
   required_ppe: ZonePpe[];
   rulesText: string;
+  riskLevel: number | null; // null = not set yet
   saved: boolean; // false while there are unsaved edits
   isNew: boolean; // added locally, not on the server yet
 }
+
+// Zone risk for education recommendations: a relative priority, not a safety risk assessment.
+// The multiplier is what the server applies to newly generated recommendations (#240)
+const RISK_LEVELS = [
+  { level: 1, label: '매우 낮음', multiplier: 1 },
+  { level: 2, label: '낮음', multiplier: 1.25 },
+  { level: 3, label: '보통', multiplier: 1.5 },
+  { level: 4, label: '높음', multiplier: 1.75 },
+  { level: 5, label: '매우 높음', multiplier: 2 },
+];
 
 const toDraft = (z: ZoneRule): Draft => ({
   zone_name: z.zone_name,
   required_ppe: z.required_ppe,
   rulesText: z.rules.join('\n'),
+  riskLevel: z.risk_level ?? null,
   saved: true,
   isNew: false,
 });
@@ -28,6 +40,7 @@ const toDraft = (z: ZoneRule): Draft => ({
 const toRule = (d: Draft): ZoneRule => ({
   zone_name: d.zone_name,
   required_ppe: d.required_ppe,
+  risk_level: d.riskLevel,
   // Backend rejects duplicate lines (422), so drop repeats here
   rules: [
     ...new Set(
@@ -60,22 +73,43 @@ export default function ZoneRulesPage() {
       .catch(() => {});
   }, []);
 
-  // Replaces this zone's worker list only; the workers' other zones stay (#127)
+  const loadWorkers = () =>
+    fetchUsers()
+      .then((users) => setWorkers(users.filter((u) => u.role === 'worker')))
+      .catch(() => {});
+
+  // Replaces this zone's worker list only; the workers' other zones stay (#127).
+  // The list as we last loaded it goes along, so a change made by another admin
+  // in the meantime is reported instead of silently overwritten (#240)
   const assign = (zone: string, userIds: string[]) => {
     setError(null);
-    setZoneMembers(zone, userIds)
-      .then(() =>
+    const expected = workers
+      .filter((w) => w.zone_names.includes(zone))
+      .map((w) => w.user_id);
+    setZoneMembers(zone, userIds, expected)
+      .then((saved) =>
         setWorkers((prev) =>
           prev.map((w) => {
             const others = w.zone_names.filter((z) => z !== zone);
-            const names = userIds.includes(w.user_id)
+            const names = saved.user_ids.includes(w.user_id)
               ? [...others, zone].sort()
               : others;
             return { ...w, zone_names: names, zone_name: names[0] ?? null };
           }),
         ),
       )
-      .catch((e: Error) => setError(`${zone} 작업자 변경 실패: ${e.message}`));
+      .catch((e: Error) => {
+        if (e.message === 'zone_members_changed') {
+          setError(
+            `${zone} 작업자 명단을 다른 관리자가 먼저 변경했습니다. 최신 명단을 다시 불러왔으니 확인한 뒤 다시 시도하세요.`,
+          );
+          void loadWorkers();
+          return;
+        }
+        setError(`${zone} 작업자 변경 실패: ${e.message}`);
+        // The request may have been applied even though the answer was lost
+        void loadWorkers();
+      });
   };
 
   const patch = (zone: string, p: Partial<Draft>) =>
@@ -138,6 +172,7 @@ export default function ZoneRulesPage() {
         zone_name: name,
         required_ppe: [],
         rulesText: '',
+        riskLevel: null,
         saved: false,
         isNew: true,
       },
@@ -193,6 +228,43 @@ export default function ZoneRulesPage() {
               placeholder="예: 금형 교체 시 반드시 전원 차단"
             />
           </label>
+
+          <div className={styles.field}>
+            <span className={styles.fieldLabel}>
+              위험도{' '}
+              {d.riskLevel == null
+                ? '(미설정)'
+                : `${d.riskLevel}단계 · ${RISK_LEVELS[d.riskLevel - 1].label}`}
+            </span>
+            <div
+              className={styles.riskRow}
+              role="radiogroup"
+              aria-label="위험도"
+            >
+              {RISK_LEVELS.map((r) => (
+                <button
+                  key={r.level}
+                  type="button"
+                  role="radio"
+                  aria-checked={d.riskLevel === r.level}
+                  className={`${styles.riskBtn} ${d.riskLevel === r.level ? styles.riskOn : ''}`}
+                  onClick={() => patch(d.zone_name, { riskLevel: r.level })}
+                >
+                  {r.level}
+                  <span className={styles.riskLabel}>{r.label}</span>
+                </button>
+              ))}
+            </div>
+            <p className={styles.ppeNote}>
+              교육 추천의 우선순위를 정할 때 쓰는 상대적인 값입니다(산업안전
+              위험성 평가가 아닙니다). 점수에 곱해지는 배율은{' '}
+              {d.riskLevel == null
+                ? '미설정일 때 1배'
+                : `${RISK_LEVELS[d.riskLevel - 1].multiplier}배`}
+              이며, 저장한 뒤 새로 만드는 교육 추천부터 반영됩니다. 이미 만든
+              추천은 바뀌지 않습니다.
+            </p>
+          </div>
 
           <ZoneMembers
             zone={d.zone_name}
