@@ -35,3 +35,25 @@ export function previewIsCurrent(
 ): boolean {
   return Boolean(previewSelectionKey && previewSelectionKey === selectionKey);
 }
+
+export function bundleMutationIsAllowed(
+  bundleId: string,
+  bundleVersion: number,
+  activeBundleId: string | null,
+  activeBundleVersion: number | null,
+  actionBlocked: boolean,
+): boolean {
+  if (activeBundleId !== null && activeBundleId === bundleId && activeBundleVersion !== bundleVersion) {
+    return false;
+  }
+  return !actionBlocked;
+}
+
+export function bundleConflictResponseIsCurrent(
+  requestEpoch: number,
+  currentEpoch: number,
+  requestedBundleId: string,
+  activeBundleId: string | null,
+): boolean {
+  return requestEpoch === currentEpoch && requestedBundleId === activeBundleId;
+}

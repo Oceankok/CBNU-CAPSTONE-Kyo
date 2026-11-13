@@ -15,7 +15,9 @@ import {
 import { ApiError } from '../api/client';
 import {
   bundleActionBlocked,
+  bundleConflictResponseIsCurrent,
   bundleDraftIsDirty,
+  bundleMutationIsAllowed,
   previewIsCurrent,
 } from '../api/educationBundleEditorContracts';
 import type { EducationBundle } from '../types';
@@ -48,7 +50,13 @@ export default function EducationBundleEditor({
   const [previewSelectionKey, setPreviewSelectionKey] = useState<string | null>(null);
   const [conflictBundle, setConflictBundle] = useState<EducationBundle | null>(null);
   const requestRef = useRef(0);
+  const conflictEpochRef = useRef(0);
+  const activeBundleIdRef = useRef<string | null>(null);
   const selectionKey = recommendationIds.join('|');
+
+  useEffect(() => {
+    activeBundleIdRef.current = activeBundle?.bundle_id ?? null;
+  }, [activeBundle]);
 
   const loadBundles = () => {
     const request = ++requestRef.current;
@@ -129,16 +137,32 @@ export default function EducationBundleEditor({
   };
 
   const refreshBundleAfterConflict = (bundleId: string) => {
+    const requestEpoch = ++conflictEpochRef.current;
     setError('다른 관리자가 자료를 변경했습니다. 최신 자료를 확인해 주세요. 입력한 내용은 보존됩니다.');
     return fetchEducationBundle(bundleId)
       .then((latest) => {
+        if (!bundleConflictResponseIsCurrent(
+          requestEpoch,
+          conflictEpochRef.current,
+          bundleId,
+          activeBundleIdRef.current,
+        )) return;
         setActiveBundle(latest);
+        activeBundleIdRef.current = latest.bundle_id;
         setConflictBundle(latest);
       })
-      .catch(showError);
+      .catch((e: unknown) => {
+        if (bundleConflictResponseIsCurrent(
+          requestEpoch,
+          conflictEpochRef.current,
+          bundleId,
+          activeBundleIdRef.current,
+        )) showError(e);
+      });
   };
 
   const previewSelection = () => {
+    ++conflictEpochRef.current;
     setBusy(true);
     setError(null);
     previewEducationBundle(recommendationIds)
@@ -146,6 +170,7 @@ export default function EducationBundleEditor({
         setPreview(next);
         setPreviewSelectionKey(selectionKey);
         setActiveBundle(null);
+        activeBundleIdRef.current = null;
         setConflictBundle(null);
       })
       .catch(showError)
@@ -153,7 +178,9 @@ export default function EducationBundleEditor({
   };
 
   const startNewDraft = () => {
+    ++conflictEpochRef.current;
     setActiveBundle(null);
+    activeBundleIdRef.current = null;
     setConflictBundle(null);
     setPreviewSelectionKey(null);
     setTitle('');
@@ -163,7 +190,9 @@ export default function EducationBundleEditor({
   };
 
   const openBundle = (bundle: EducationBundle) => {
+    ++conflictEpochRef.current;
     setActiveBundle(bundle);
+    activeBundleIdRef.current = bundle.bundle_id;
     setPreview(null);
     setPreviewSelectionKey(null);
     setConflictBundle(null);
@@ -193,6 +222,7 @@ export default function EducationBundleEditor({
     request
       .then((next) => {
         setActiveBundle(next);
+        activeBundleIdRef.current = next.bundle_id;
         setConflictBundle(null);
         setPreview(null);
         setPreviewSelectionKey(null);
@@ -205,7 +235,7 @@ export default function EducationBundleEditor({
         if (isCode(e, 'education_bundle_selection_changed')) {
           void refreshSelectionAfterConflict();
         } else if (isVersionConflict(e) && activeBundle) {
-          void refreshBundleAfterConflict(activeBundle.bundle_id);
+          return refreshBundleAfterConflict(activeBundle.bundle_id);
         } else {
           showError(e);
         }
@@ -220,6 +250,7 @@ export default function EducationBundleEditor({
     generateEducationBundle(recommendationIds, selectedSnapshot)
       .then((next) => {
         setActiveBundle(next);
+        activeBundleIdRef.current = next.bundle_id;
         setConflictBundle(null);
         setPreview(null);
         setPreviewSelectionKey(null);
@@ -238,18 +269,38 @@ export default function EducationBundleEditor({
       .finally(() => setBusy(false));
   };
 
+  const canMutateBundle = (bundle: EducationBundle) => {
+    const editingThisBundle = activeBundle?.bundle_id === bundle.bundle_id;
+    const blocked = editingThisBundle && activeActionsBlocked;
+    if (!bundleMutationIsAllowed(
+      bundle.bundle_id,
+      bundle.version,
+      activeBundle?.bundle_id ?? null,
+      activeBundle?.version ?? null,
+      blocked,
+    )) {
+      setError('현재 입력 또는 최신 자료를 먼저 검토하고 명시적으로 해결해 주세요.');
+      return false;
+    }
+    return true;
+  };
+
   const publish = (bundle: EducationBundle) => {
+    if (!canMutateBundle(bundle) || bundle.status !== 'draft') return;
     setBusy(true);
     setError(null);
     publishEducationBundle(bundle.bundle_id, bundle.version)
       .then((next) => {
-        setActiveBundle(next);
-        setConflictBundle(null);
+        if (activeBundle?.bundle_id === bundle.bundle_id) {
+          setActiveBundle(next);
+          activeBundleIdRef.current = next.bundle_id;
+          setConflictBundle(null);
+        }
         return loadBundles();
       })
       .catch((e: unknown) => {
         if (isVersionConflict(e)) {
-          void refreshBundleAfterConflict(bundle.bundle_id);
+          return refreshBundleAfterConflict(bundle.bundle_id);
         } else {
           showError(e);
         }
@@ -258,17 +309,21 @@ export default function EducationBundleEditor({
   };
 
   const unpublish = (bundle: EducationBundle) => {
+    if (!canMutateBundle(bundle) || bundle.status !== 'published') return;
     setBusy(true);
     setError(null);
     unpublishEducationBundle(bundle.bundle_id, bundle.version)
       .then((next) => {
-        setActiveBundle(next);
-        setConflictBundle(null);
+        if (activeBundle?.bundle_id === bundle.bundle_id) {
+          setActiveBundle(next);
+          activeBundleIdRef.current = next.bundle_id;
+          setConflictBundle(null);
+        }
         return loadBundles();
       })
       .catch((e: unknown) => {
         if (isVersionConflict(e)) {
-          void refreshBundleAfterConflict(bundle.bundle_id);
+          return refreshBundleAfterConflict(bundle.bundle_id);
         } else {
           showError(e);
         }

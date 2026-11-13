@@ -7,7 +7,9 @@ import {
 } from '../src/api/educationBundleContracts.ts';
 import {
   bundleActionBlocked,
+  bundleConflictResponseIsCurrent,
   bundleDraftIsDirty,
+  bundleMutationIsAllowed,
   previewIsCurrent,
 } from '../src/api/educationBundleEditorContracts.ts';
 import type { EducationBundle } from '../src/types/index.ts';
@@ -68,4 +70,25 @@ assert(
 );
 assert(!previewIsCurrent('old-selection', 'new-selection'), 'stale snapshot must not match a new selection');
 assert(previewIsCurrent('same-selection', 'same-selection'), 'same selection may use its preview snapshot');
+assert(
+  !bundleMutationIsAllowed('A', 2, 'A', 1, false),
+  'stale list version must not mutate the active bundle',
+);
+assert(
+  !bundleMutationIsAllowed('A', 2, 'A', 2, true),
+  'dirty or conflicted active bundle must not publish',
+);
+assert(
+  bundleMutationIsAllowed('A', 2, 'B', 4, false),
+  'publishing a different list bundle must not bind its result to the active editor',
+);
+assert(
+  bundleConflictResponseIsCurrent(3, 3, 'A', 'A'),
+  'matching conflict response may update the active bundle',
+);
+assert(
+  !bundleConflictResponseIsCurrent(3, 4, 'A', 'A') &&
+    !bundleConflictResponseIsCurrent(3, 3, 'A', 'B'),
+  'late or differently bound conflict response must be ignored',
+);
 console.log('education bundle editor safety contracts ok');
