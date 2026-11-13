@@ -78,7 +78,11 @@ async function runMockInteractions() {
   assert(visibleList[0] === 'new-list', 'late W17 list response must be ignored');
 
   // The production scope refresh is called for both backend conflict statuses.
-  const draftTitle = 'typed draft survives conflict';
+  let draftTitle = '';
+  const onUserInput = (value: string) => {
+    draftTitle = value;
+  };
+  onUserInput('typed draft survives conflict');
   let recommendationRequest = 0;
   let latestRecommendation: string | null = null;
   const refresh = async (status: number, value: string) => {

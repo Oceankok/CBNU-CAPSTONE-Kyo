@@ -42,7 +42,14 @@ export async function saveEvidenceWithConflictRecovery<T>(
     if (!(error && typeof error === 'object' && 'status' in error && error.status === 409)) {
       throw error;
     }
-    return { saved: false, conflict: true, evidence: await refreshEvidence() };
+    try {
+      return { saved: false, conflict: true, evidence: await refreshEvidence() };
+    } catch (refreshError) {
+      throw new Error(
+        `relation evidence refresh failed: ${refreshError instanceof Error ? refreshError.message : String(refreshError)}`,
+        { cause: refreshError },
+      );
+    }
   }
 }
 
