@@ -596,3 +596,7 @@ app.include_router(legacy_capture_stop_router)
 from backend.education_bundles.routes import router as education_bundles_router, worker as worker_bundles_router
 app.include_router(education_bundles_router)
 app.include_router(worker_bundles_router)
+
+
+from backend.auto_decision.settings import router as auto_decision_settings_router
+app.include_router(auto_decision_settings_router)

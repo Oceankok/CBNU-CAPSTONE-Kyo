@@ -30,7 +30,7 @@ class AutomaticReadinessTests(unittest.TestCase):
         row=result['items'][0]
         self.assertFalse(row['automatic_confirmation_allowed'])
         for reason in ('automatic_confirmation_disabled','validated_decision_policy_unavailable',
-                       'full_evidence_decision_validation_unavailable','automatic_review_writer_unavailable',
+                       'full_evidence_decision_validation_unavailable','automatic_review_runtime_not_connected',
                        'closed_lifecycle_provenance_required'):
             self.assertIn(reason,row['blocking_reasons'])
         self.assertEqual(before,self.state())
@@ -68,6 +68,27 @@ class AutomaticReadinessTests(unittest.TestCase):
         for reason in ('review_only','already_reviewed_or_not_pending','media_deleted_or_expired'):
             self.assertIn(reason,row['blocking_reasons'])
         self.assertEqual(before,self.state())
+
+    def test_absence_candidate_never_promoted_by_threshold_or_person_score(self):
+        # Synthetic contract regression, not a measurement of detector accuracy.
+        # A person score (even 1.0) is not calibrated PPE violation confidence.
+        self.policy['threshold'] = 0
+        for confidence in (None, 0.676249, 1.0):
+            with self.subTest(confidence=confidence):
+                with get_connection() as conn:
+                    conn.execute('UPDATE processing_review_only_event SET review_only=1 WHERE event_id=?', (self.ident,))
+                    conn.execute('UPDATE candidate_event SET ai_confidence=? WHERE event_id=?', (confidence, self.ident))
+                before = self.state()
+                result = self.client.post('/api/auto-decisions/preview', headers=self.admin, json=self.policy).json()
+                item = result['items'][0]
+                self.assertIsNone(item['observed_confidence'])
+                self.assertFalse(item['threshold_candidate'])
+                self.assertIn('review_only', item['blocking_reasons'])
+                ready = self.evaluate()['items'][0]
+                self.assertFalse(ready['automatic_confirmation_allowed'])
+                self.assertIn('automatic_review_runtime_not_connected', ready['blocking_reasons'])
+                self.assertNotIn('automatic_review_writer_unavailable', ready['blocking_reasons'])
+                self.assertEqual(before, self.state())
 
     def test_missing_event_is_404_and_does_not_write_partial_results(self):
         before=self.state()

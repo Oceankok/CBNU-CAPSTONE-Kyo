@@ -99,3 +99,25 @@ def get_shadow(run_id: str):
             raise HTTPException(404, 'shadow_run_not_found')
         return _run(conn, row)
     return run_stats_transaction(operation)
+
+
+def record_policy_shadow(conn, event_id, version, actor_id, policy, diagnostic):
+    """Completion-hook shadow in caller transaction, once per policy/evidence.
+
+    actor_id is the administrator who configured this policy, not a reviewer.
+    This never creates event_review and cannot install an enforce runtime.
+    """
+    fingerprint = diagnostic['evidence_fingerprint']
+    request_key = 'policy_' + hashlib.sha256(f'{version}:{event_id}:{fingerprint}'.encode()).hexdigest()
+    encoded_policy = _json(policy.model_dump(exclude={'event_ids'}))
+    digest = hashlib.sha256(_json(policy.model_dump()).encode()).hexdigest()
+    run_id = str(uuid4())
+    inserted = conn.execute('''INSERT INTO auto_decision_shadow_run
+        (run_id,actor_id,request_key,request_digest,policy_json,created_at,item_count)
+        VALUES(?,?,?,?,?,?,1) ON CONFLICT(actor_id,request_key) DO NOTHING RETURNING run_id''',
+        (run_id,actor_id,request_key,digest,encoded_policy,datetime.now(timezone.utc).isoformat())).fetchone()
+    if inserted:
+        result={**diagnostic,'source':'completion_hook_shadow','settings_version':version,
+                'policy_configured_by':actor_id,'automatic_confirmation_allowed':False}
+        conn.execute('INSERT INTO auto_decision_shadow_item(run_id,event_id,ordinal,result_json) VALUES(?,?,0,?)',
+                     (run_id,event_id,_json(result)))

@@ -33,11 +33,14 @@ class Runtime:
 def on_event_ready(conn, event_id, *, runtime=None):
     """Caller owns write lock+transaction. Runtime errors roll back, never approve.
 
-    Three completion hooks call this with no runtime, so current operation stays
-    OFF without DB reads or writes. Only a future reviewed integration can supply
-    Runtime; the public preview/shadow APIs have no path to it.
+    Four completion hooks call this without an explicit runtime. The saved policy
+    dispatcher defaults OFF; only a reviewed trusted adapter can supply Runtime.
+    Public preview/shadow results can never install one.
     """
-    if runtime is None or runtime.enabled is not True:
+    if runtime is None:
+        from backend.auto_decision.settings import process_ready
+        return process_ready(conn,event_id)
+    if runtime.enabled is not True:
         return {'applied':False,'reason':'automatic_confirmation_disabled'}
     if not callable(runtime.validator):
         return {'applied':False,'reason':'validated_evidence_adapter_unavailable'}

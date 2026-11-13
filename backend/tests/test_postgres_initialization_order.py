@@ -41,6 +41,8 @@ class InitializationConnection:
             return Cursor(None if self.version is None else (self.version,))
         if sql == "SELECT to_regclass('camera_info')":
             return Cursor((None,))
+        if sql == "SELECT to_regclass('auto_decision_settings')":
+            return Cursor(('auto_decision_settings',))
         return Cursor()
 
 
