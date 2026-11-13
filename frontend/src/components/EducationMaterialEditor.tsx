@@ -66,6 +66,7 @@ export default function EducationMaterialEditor({
   const [body, setBody] = useState(draft?.body ?? '');
   const [checklist, setChecklist] = useState(draft?.checklist ?? '');
   const loadRequest = useRef(0);
+  const scopeConflictRequest = useRef(0);
 
   const fail = (e: Error) => setError(MATERIAL_ERRORS[e.message] ?? e.message);
 
@@ -83,13 +84,16 @@ export default function EducationMaterialEditor({
   };
 
   const refreshAfterScopeConflict = async () => {
+    const request = ++scopeConflictRequest.current;
     onScopeConflict?.(structuredClone(editingScope ?? scope));
     try {
       await load();
+      if (request !== scopeConflictRequest.current) return;
       setError(
         '추천 대상이 바뀌었습니다. 작성 중인 내용은 보존했습니다. 최신 자료 목록을 확인한 뒤 대상을 명시적으로 다시 선택하세요.',
       );
     } catch (e) {
+      if (request !== scopeConflictRequest.current) return;
       setError(
         `추천 대상이 바뀌었고 최신 자료 목록을 불러오지 못했습니다. 작성 중인 내용은 보존했습니다. (${e instanceof Error ? e.message : String(e)})`,
       );

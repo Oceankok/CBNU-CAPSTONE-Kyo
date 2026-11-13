@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import {
   fetchRecommendations,
@@ -9,6 +9,7 @@ import type {
   EducationRecommendationList,
 } from '../types';
 import { ApiError } from '../api/client';
+import { isLatestRequest } from '../api/schema31Contracts';
 import EducationMaterialEditor from '../components/EducationMaterialEditor';
 import type { EducationMaterialDraft } from '../components/EducationMaterialEditor';
 import type { EducationMaterialScope } from '../api/materials';
@@ -136,6 +137,8 @@ export default function RecommendPage() {
   const [error, setError] = useState<string | null>(null);
   const [latest, setLatest] = useState<EducationRecommendationList | null>(null);
   const [drafts, setDrafts] = useState<Record<string, EducationMaterialDraft>>({});
+  const recommendationRequest = useRef(0);
+  const latestRecommendationRequest = useRef(0);
 
   const storeDraft = (recommendationId: string, draft: EducationMaterialDraft | null) => {
     setDrafts((current) => {
@@ -147,12 +150,16 @@ export default function RecommendPage() {
   };
 
   const refreshRecommendationsAfterConflict = async (scope: EducationMaterialScope) => {
+    const request = ++latestRecommendationRequest.current;
     try {
-      setLatest(await fetchRecommendations(scope.quarter));
+      const next = await fetchRecommendations(scope.quarter);
+      if (!isLatestRequest(request, latestRecommendationRequest.current)) return;
+      setLatest(next);
       setError(
         '추천 목록이 변경되었습니다. 입력 중인 초안은 보존했습니다. 최신 추천 대상을 명시적으로 다시 선택하세요.',
       );
     } catch (e) {
+      if (!isLatestRequest(request, latestRecommendationRequest.current)) return;
       setError(
         `최신 추천 목록을 불러오지 못했습니다. 기존 초안은 보존되어 있습니다. (${e instanceof Error ? e.message : String(e)})`,
       );
@@ -172,10 +179,14 @@ export default function RecommendPage() {
 
   // AppLayout remounts this page when the quarter changes, so this runs once per quarter
   useEffect(() => {
+    const request = ++recommendationRequest.current;
     const noData = `${quarter}에는 추천을 만들 확정 위반 기록이 아직 없습니다.`;
     fetchRecommendations(quarter)
-      .then(setData)
+      .then((next) => {
+        if (isLatestRequest(request, recommendationRequest.current)) setData(next);
+      })
       .catch((e) => {
+        if (!isLatestRequest(request, recommendationRequest.current)) return;
         // Only "no recommendations yet" (404) triggers generation. An expired login, a
         // permission or server error, or a network failure must not start a write (#240)
         if (!(e instanceof ApiError && e.status === 404)) {
@@ -183,8 +194,11 @@ export default function RecommendPage() {
           return;
         }
         return generateRecommendations(quarter)
-          .then(setData)
-          .catch((ge) =>
+          .then((next) => {
+            if (isLatestRequest(request, recommendationRequest.current)) setData(next);
+          })
+          .catch((ge) => {
+            if (!isLatestRequest(request, recommendationRequest.current)) return;
             setError(
               // 404 here = the quarter has no confirmed violations to rank yet
               ge instanceof ApiError && ge.status === 404
@@ -192,10 +206,12 @@ export default function RecommendPage() {
                 : ge instanceof Error
                   ? ge.message
                   : String(ge),
-            ),
-          );
+            );
+          });
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (isLatestRequest(request, recommendationRequest.current)) setLoading(false);
+      });
   }, [quarter]);
 
   return (
