@@ -19,6 +19,12 @@ import {
   matchesEvidenceSelection,
   reconcileEffect,
 } from '../api/schema31Contracts';
+import {
+  executeConfirmedReconcile,
+  acceptLatestResponse,
+  fetchLatestEvidence,
+  saveEvidenceWithConflictRecovery,
+} from '../api/schema31Interactions';
 import styles from './SuspectedDuplicatePanel.module.css';
 
 const relationError = (e: unknown) =>
@@ -99,16 +105,23 @@ export default function SuspectedDuplicatePanel({
   const [notice, setNotice] = useState<string | null>(null);
   const [reconcileArmed, setReconcileArmed] = useState(false);
   const evidenceRequest = useRef(0);
+  const loadRequest = useRef(0);
 
   const load = async () => {
+    const request = ++loadRequest.current;
     const [nextPreview, nextSaved] = await Promise.all([
       fetchSuspectedDuplicatesPreview(eventId),
       fetchSavedSuspectedRelations(eventId),
     ]);
-    setPreview(nextPreview);
-    setSaved(nextSaved.items);
-    setSavedTotal(nextSaved.total);
-    setSavedHasMore(nextSaved.has_more);
+    const result = acceptLatestResponse(request, loadRequest.current, {
+      preview: nextPreview,
+      saved: nextSaved,
+    });
+    if (!result) return;
+    setPreview(result.preview);
+    setSaved(result.saved.items);
+    setSavedTotal(result.saved.total);
+    setSavedHasMore(result.saved.has_more);
   };
 
   const openPanel = () => {
@@ -126,8 +139,13 @@ export default function SuspectedDuplicatePanel({
     setEvidence(null);
     setError(null);
     try {
-      const nextEvidence = await fetchRelationEvidence(eventId, peerId);
-      if (isLatestRequest(request, evidenceRequest.current)) setEvidence(nextEvidence);
+      const result = await fetchLatestEvidence(
+        peerId,
+        request,
+        () => evidenceRequest.current,
+        (peer) => fetchRelationEvidence(eventId, peer),
+      );
+      if (result) setEvidence(result.evidence);
     } catch (e) {
       if (isLatestRequest(request, evidenceRequest.current)) setError(relationError(e));
     }
@@ -142,7 +160,20 @@ export default function SuspectedDuplicatePanel({
     setError(null);
     setNotice(null);
     try {
-      await saveSuspectedRelation(eventId, peerAtSave, fingerprintAtSave);
+      const saveResult = await saveEvidenceWithConflictRecovery(
+        () => saveSuspectedRelation(eventId, peerAtSave, fingerprintAtSave),
+        () => fetchRelationEvidence(eventId, peerAtSave),
+      );
+      if (!saveResult.saved) {
+        if (
+          isLatestRequest(requestAtSave, evidenceRequest.current) &&
+          selectedPeer === peerAtSave
+        ) {
+          setEvidence(saveResult.evidence);
+          setError('근거가 바뀌었습니다. 새 근거를 확인한 뒤 다시 저장할지 판단하세요.');
+        }
+        return;
+      }
       await load();
       if (
         !isLatestRequest(requestAtSave, evidenceRequest.current) ||
@@ -207,7 +238,9 @@ export default function SuspectedDuplicatePanel({
     setError(null);
     setNotice(null);
     try {
-      const result = (await reconcileSuspectedRelations(eventId)) as {
+      const result = (await executeConfirmedReconcile(true, () =>
+        reconcileSuspectedRelations(eventId),
+      )) as {
         created_count?: number;
       };
       await load();

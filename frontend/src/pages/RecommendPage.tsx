@@ -10,6 +10,7 @@ import type {
 } from '../types';
 import { ApiError } from '../api/client';
 import { isLatestRequest } from '../api/schema31Contracts';
+import { refreshAfterScopeConflict as refreshLatestAfterScopeConflict } from '../api/schema31Interactions';
 import EducationMaterialEditor from '../components/EducationMaterialEditor';
 import type { EducationMaterialDraft } from '../components/EducationMaterialEditor';
 import type { EducationMaterialScope } from '../api/materials';
@@ -152,9 +153,11 @@ export default function RecommendPage() {
   const refreshRecommendationsAfterConflict = async (scope: EducationMaterialScope) => {
     const request = ++latestRecommendationRequest.current;
     try {
-      const next = await fetchRecommendations(scope.quarter);
+      const next = await refreshLatestAfterScopeConflict(409, () =>
+        fetchRecommendations(scope.quarter),
+      );
       if (!isLatestRequest(request, latestRecommendationRequest.current)) return;
-      setLatest(next);
+      if (next) setLatest(next);
       setError(
         '추천 목록이 변경되었습니다. 입력 중인 초안은 보존했습니다. 최신 추천 대상을 명시적으로 다시 선택하세요.',
       );
