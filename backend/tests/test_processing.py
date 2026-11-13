@@ -305,3 +305,48 @@ class ProcessingTests(unittest.TestCase):
             self.assertEqual(response.json()['detail'], 'clip_request_upload_in_progress')
         with get_connection() as conn:
             self.assertEqual(conn.execute('SELECT status FROM event_clip_request WHERE request_id=?', (ident,)).fetchone()[0], 'pending')
+
+    def test_remote_publish_dormant_decision_hook_observes_locked_complete_state(self):
+        from backend.processing import routes
+        from backend.auto_decision import writer
+        media = self.upload()
+        job, headers = self.claim()
+        locked = []
+        original_lock = routes.begin_write
+        def record_lock(conn):
+            original_lock(conn)
+            locked.append(conn)
+        original_hook = writer.on_event_ready
+        # Avoid changing a public production symbol solely to call through our spy.
+        def hook(conn, event_id):
+            self.assertTrue(any(conn is item for item in locked))
+            self.assertEqual(event_id, 'EVT_0001')
+            self.assertEqual(conn.execute('SELECT status FROM processing_job WHERE job_id=?', (job['job_id'],)).fetchone()[0], 'succeeded')
+            self.assertEqual(conn.execute('SELECT status FROM event_media WHERE media_id=?', (media['media_id'],)).fetchone()[0], 'ready')
+            self.assertEqual(original_hook(conn, event_id), {'applied': False, 'reason': 'automatic_confirmation_disabled'})
+            return {'applied': False, 'reason': 'automatic_confirmation_disabled'}
+        with patch.object(routes, 'begin_write', side_effect=record_lock), patch.object(writer, 'on_event_ready', side_effect=hook) as called:
+            response = self.result(job, headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(called.call_count, 1)
+            # A duplicate acknowledged result must not re-run the completion action.
+            self.assertEqual(self.result(job, headers).status_code, 200)
+            self.assertEqual(called.call_count, 1)
+            other = cv2.imencode('.jpg', np.ones((64,64,3), dtype=np.uint8) * 255)[1].tobytes()
+            self.assertEqual(self.result(job, headers, other).status_code, 409)
+            self.assertEqual(called.call_count, 1)
+
+    def test_remote_publish_hook_failure_rolls_back_ready_and_job_success(self):
+        from backend.auto_decision import writer
+        media = self.upload()
+        job, headers = self.claim()
+        with patch.object(writer, 'on_event_ready', side_effect=RuntimeError('synthetic hook failure')):
+            with self.assertRaisesRegex(RuntimeError, 'synthetic hook failure'):
+                self.result(job, headers)
+        with get_connection() as conn:
+            self.assertNotEqual(conn.execute('SELECT status FROM processing_job WHERE job_id=?', (job['job_id'],)).fetchone()[0], 'succeeded')
+            self.assertEqual(conn.execute('SELECT status FROM event_media WHERE media_id=?', (media['media_id'],)).fetchone()[0], 'processing')
+        from backend.processing.routes import PROCESSED_ROOT
+        self.assertFalse((PROCESSED_ROOT / (media['media_id'] + '.jpg')).exists())
+        # Same valid result can be retried after the transient failure.
+        self.assertEqual(self.result(job, headers).status_code, 200)

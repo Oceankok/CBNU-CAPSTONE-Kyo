@@ -26,6 +26,10 @@ class CaptureSequenceTests(unittest.TestCase):
         (self.root / 'chunk_99999.mp4').mkdir()
         self.assertEqual(next_sequence(self.root), 121)
 
+    def test_cleanup_intent_reserves_sequence_after_media_removed(self):
+        (self.root / 'chunk_00125.cleanup').touch()
+        self.assertEqual(next_sequence(self.root), 126)
+
     def test_numeric_order_excludes_active_tail_after_five_digits(self):
         for name in ('chunk_99998.mp4', 'chunk_99999.mp4', 'chunk_100000.mp4'):
             (self.root / name).write_bytes(b'fixture')
@@ -42,7 +46,7 @@ class CaptureSequenceTests(unittest.TestCase):
         self.assertTrue((self.root / 'chunk_00020.mp4').exists())
         self.assertFalse((self.root / 'chunk_00021.mp4').exists())
         self.assertFalse((self.root / 'chunk_00022.mp4').exists())
-        self.assertEqual(completed_chunks(self.root), [])
+        self.assertEqual([p.name for p in completed_chunks(self.root)], ["chunk_00020.mp4"])
         self.assertEqual(next_sequence(self.root), 23)
 
     def test_publication_retries_shared_file_without_losing_source(self):
@@ -68,6 +72,17 @@ class CaptureSequenceTests(unittest.TestCase):
         self.assertEqual(ready.read_bytes(), b'previous')
         self.assertTrue(pending.exists())
         publish_completed_segments(self.root, self.root / 'missing.list')
+
+    def test_repeated_manifest_does_not_recreate_deleted_markers(self):
+        from video_sender.live_sender import delete_chunk_files
+        pending = self.root / 'chunk_00000.mp4.part'
+        pending.write_bytes(b'finished')
+        manifest = self.root / '.list'
+        manifest.write_text(pending.name + '\n')
+        publish_completed_segments(self.root, manifest)
+        self.assertTrue(delete_chunk_files(pending.with_suffix('')))
+        publish_completed_segments(self.root, manifest)
+        self.assertFalse((self.root / 'chunk_00000.ready').exists())
 
     def test_capture_restart_aligns_ffmpeg_and_timestamp_without_overwrite(self):
         old_video = self.root / 'chunk_00999.mp4'

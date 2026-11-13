@@ -51,8 +51,12 @@ def create_camera(body: CameraCreate):
 def patch_camera(camera_id: str, body: CameraPatch):
     changes = body.model_dump(exclude_unset=True)
     with get_connection() as conn:
-        begin_write(conn)
+        from backend.capture_context.service import begin
+        begin(conn)
         previous = require_camera(conn, camera_id)
+        if 'zone_name' in changes and changes['zone_name'] != previous['zone_name']:
+            from backend.capture_context.service import assert_reassignment_allowed
+            assert_reassignment_allowed(conn,camera_id)
         if 'zone_name' in changes:
             check_zone(conn, changes['zone_name'])
             if changes['zone_name'] != previous['zone_name'] and conn.execute(

@@ -70,6 +70,7 @@ def seed_demo(password, *, reset=False, trusted_fixture=False):
     create_user('DEMO_worker01', password, 'DEMO 다중 구역 작업자', 'worker')
     create_user('DEMO_worker02', password, 'DEMO 단일 구역 작업자', 'worker')
     with connect() as conn:
+        begin_write(conn)
         for user_id, version in old_versions.items():
             conn.execute('UPDATE app_user SET auth_version=? WHERE user_id=?', (version, user_id))
         replace_user_zones(conn, 'DEMO_worker01', ZONES)

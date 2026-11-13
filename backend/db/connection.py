@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import time
 
 try:
     import psycopg
@@ -112,6 +113,38 @@ def begin_write(conn):
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(current_schema(), 129))")
     else:
         conn.execute("BEGIN IMMEDIATE")
+
+
+def run_stats_transaction(operation, *, write=False, connection_factory=connect):
+    """Run DB-only statistics work against one snapshot, including its response.
+
+    PostgreSQL's advisory lock can wait with an already established snapshot.
+    Retry serialization failures with a new connection and snapshot, including
+    failures raised by commit. Other errors and SQLite lock errors are not retried.
+    Do not use this helper for operations with non-transactional side effects.
+    """
+    for attempt in range(3):
+        postgres = False
+        try:
+            with connection_factory() as conn:
+                postgres = getattr(conn, "dialect", "sqlite") == "postgresql"
+                if postgres:
+                    # Must precede the advisory-lock SELECT and every data read.
+                    conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+                                 + ("" if write else " READ ONLY"))
+                    if write:
+                        begin_write(conn)
+                elif write:
+                    begin_write(conn)
+                else:
+                    conn.execute("BEGIN")
+                result = operation(conn)
+            # Return only after the context manager has committed successfully.
+            return result
+        except Exception as exc:
+            if not postgres or getattr(exc, "sqlstate", None) != "40001" or attempt == 2:
+                raise
+            time.sleep(0.01 * (attempt + 1))
 
 
 def schema_version(conn):

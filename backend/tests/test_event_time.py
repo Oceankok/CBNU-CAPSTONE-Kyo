@@ -76,7 +76,7 @@ class EventTimeTests(unittest.TestCase):
         self.assertEqual(stats['summary']['candidate_count'], 2)
         self.assertEqual(stats['summary']['confirmed_count'], 2)
         trend = {row['quarter']: row['helmet'] for row in stats['trend']}
-        self.assertEqual([trend['2030-Q1'], trend['2030-Q2'], trend['2030-Q3']], [1,2,1])
+        self.assertEqual(trend, {'2029-Q3': 0, '2029-Q4': 0, '2030-Q1': 1, '2030-Q2': 2})
         recommendations = generate_education_recommendations('2030-Q2')['items']
         self.assertEqual(len(recommendations), 1)
         self.assertEqual(recommendations[0]['score_breakdown']['confirmed_count'], 2)

@@ -8,6 +8,7 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from backend.db.event_repository import get_connection
+from backend.db.connection import begin_write
 
 PASSWORDS = PasswordHasher()
 DUMMY_HASH = PASSWORDS.hash("not-a-real-account")
@@ -33,12 +34,14 @@ def create_user(user_id: str, password: str, display_name: str, role: str, zone_
         raise ValueError("Valid role and password of at least 8 characters required")
     if role == "admin" and zone_name:
         raise ValueError("Administrators cannot be assigned to a worker zone")
+    password_hash = PASSWORDS.hash(password)
     with get_connection() as conn:
+        begin_write(conn)
         if zone_name and not conn.execute("SELECT 1 FROM zone_rule WHERE zone_name=?", (zone_name,)).fetchone():
             raise ValueError("zone_not_found")
         conn.execute(
             "INSERT INTO app_user(user_id,password_hash,display_name,role,zone_name) VALUES(?,?,?,?,?)",
-            (user_id, PASSWORDS.hash(password), display_name, role, zone_name),
+            (user_id, password_hash, display_name, role, zone_name),
         )
         if zone_name:
             conn.execute("INSERT INTO user_zone(user_id,zone_name) VALUES(?,?)", (user_id, zone_name))

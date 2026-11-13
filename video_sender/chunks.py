@@ -9,7 +9,7 @@ def next_sequence(directory):
         int(match.group(1))
         for path in directory.iterdir()
         if path.is_file()
-        and (match := re.fullmatch(r"chunk_(\d+)\.(?:mp4(?:\.part)?|txt)", path.name))
+        and (match := re.fullmatch(r"chunk_(\d+)\.(?:mp4(?:\.part)?|txt|cleanup)", path.name))
     )
     return max(numbers, default=-1) + 1
 
@@ -22,7 +22,8 @@ def completed_chunks(directory):
     )
     # Preserve the legacy sender's tail exclusion for folders written by older
     # capture versions. New capture publishes finalized .part files separately.
-    return chunks[:-1]
+    return [path for index, path in enumerate(chunks)
+            if index < len(chunks) - 1 or path.with_suffix(".ready").is_file()]
 
 
 def publish_completed_segments(directory, manifest):
@@ -44,9 +45,12 @@ def publish_completed_segments(directory, manifest):
             continue
         pending = directory / name
         ready = pending.with_suffix('')
-        if ready.exists():
+        if ready.exists() or not pending.exists():
             continue
         try:
+            # Publish proof before exposing the MP4, so even the final segment
+            # is eligible. A legacy writer without this marker keeps tail safety.
+            ready.with_suffix(".ready").touch()
             pending.rename(ready)
         except (FileNotFoundError, PermissionError):
             continue

@@ -76,6 +76,8 @@ def register_clip_request(event_id: str, body: ClipRequestRegistration):
             raise HTTPException(404, "camera_not_found")
         if conn.execute("SELECT 1 FROM event_retention WHERE event_id=? AND decision='delete'", (event_id,)).fetchone():
             raise HTTPException(409, "event_media_deleted")
+        if conn.execute('SELECT 1 FROM processing_event_lifecycle WHERE event_id=?', (event_id,)).fetchone():
+            raise HTTPException(409, 'continuous_segment_endpoint_required')
         pending = conn.execute("SELECT * FROM event_clip_request WHERE event_id=? AND camera_id=? AND status='pending'", (event_id, body.camera_id)).fetchone()
         if pending:
             return dict(pending)
@@ -181,6 +183,11 @@ async def upload_media(event_id: str, request: Request, kind: Literal["image", "
         if request_id:
             with get_connection() as conn:
                 begin_write(conn)
+                from backend.processing.lifecycle import require_segment_upload
+                try:
+                    require_segment_upload(conn,event_id,request_id)
+                except ValueError as exc:
+                    raise HTTPException(409,str(exc)) from exc
                 changed = conn.execute("""UPDATE event_clip_request SET updated_at=?
                     WHERE request_id=? AND event_id=? AND camera_id=? AND role=? AND status='pending'""",
                     (time.time(), request_id, event_id, camera_id or event['camera_id'], role))

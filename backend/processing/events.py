@@ -19,6 +19,7 @@ class EventSubmission(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     event_id: str = Field(pattern=r"^EVT_[0-9a-f]{32}$")
+    capture_context_id: str | None = Field(default=None,pattern=r"^[0-9a-f-]{36}$")
     camera_id: str = Field(min_length=1, max_length=100)
     tracking_id: str | None = Field(default=None, min_length=1, max_length=200)
     ppe_type: str
@@ -104,6 +105,8 @@ def submit(body: EventSubmission):
         begin_write(conn)
 
         require_camera(conn, body.camera_id, active=True)
+        from backend.capture_context.service import check_event,bind_event
+        capture_context=check_event(conn,body)
 
         previous = conn.execute(
             "SELECT * FROM candidate_event WHERE event_id=?",
@@ -120,6 +123,11 @@ def submit(body: EventSubmission):
         ).fetchone()
 
         created = previous is None
+        if previous and body.capture_context_id is not None:
+            old_context=conn.execute("SELECT context_id FROM event_capture_context WHERE event_id=?",(body.event_id,)).fetchone()
+            if not old_context or old_context[0]!=body.capture_context_id:raise HTTPException(409,"event_capture_context_conflict")
+        if previous and conn.execute('SELECT 1 FROM processing_event_lifecycle WHERE event_id=?',(body.event_id,)).fetchone():
+            raise HTTPException(409,'continuous_event_endpoint_required')
 
         if previous:
             # Legacy events without a mode record are normal events.
@@ -171,6 +179,7 @@ def submit(body: EventSubmission):
 
         else:
             insert_candidate_event(event, connection=conn)
+            bind_event(conn,body,capture_context)
 
             # Persist the submission mode in the same transaction.
             conn.execute(

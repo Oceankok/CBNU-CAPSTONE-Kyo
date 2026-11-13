@@ -48,6 +48,14 @@ def enqueue_event_broadcast(event_id):
         ).fetchone()
         if current is None:
             raise HTTPException(404, "Event not found")
+        continuous = conn.execute('SELECT phase FROM processing_event_lifecycle WHERE event_id=?', (event_id,)).fetchone()
+        if continuous:
+            retention = conn.execute('SELECT decision,retain_until FROM event_retention WHERE event_id=?',(event_id,)).fetchone()
+            if continuous['phase'] != 'open':
+                return {'queued': False, 'reason': 'continuous_event_closed'}
+            if retention and (retention['decision']=='delete' or (retention['decision']=='retain' and retention['retain_until'] is not None and retention['retain_until']<=now)):
+                return {'queued': False, 'reason': 'event_media_deleted_or_expired'}
+
         if not settings.get("enabled"):
             return {"queued": False, "reason": "broadcast_disabled"}
         if conn.execute('SELECT 1 FROM event_merge WHERE source_event_id=?', (event_id,)).fetchone():

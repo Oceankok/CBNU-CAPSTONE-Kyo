@@ -102,3 +102,15 @@ PR마다 GitHub Actions(CI)가 위 테스트와 빌드를 자동으로 실행한
 - `Fix/<description>` — 버그 수정
 - `Docs/<description>` — 문서 작업
 - `Chore/<description>` — 설정·환경 작업
+
+
+### 교육 추천 seed와 ID 전환
+
+DB 초기화 명령은 기존과 동일하다. SQLite는 schema.sql → seed.sql →
+**추천 테이블 최초 생성 때만 education_seed.sql** → migrations 순서다.
+PostgreSQL은 기존 migration/seed 순서를 유지하되 seed=True인 새 schema에서만
+postgres_education_seed.sql을 추가 실행한다. 기존 DB의 추천 cache(0행 포함)는
+재초기화로 seed하지 않는다. 두 추천 전용 seed 파일을 운영/기존 DB에 수동 재실행하지 않는다.
+추천 ID는 opaque 문자열이며 명시 재생성 후 순위와 무관한 semantic ID로 바뀐다.
+오래된 추천 URL의404/409는 목록 재조회로 처리한다. 상세는
+[W07 ID 전환](docs/20261113_Recommendation_Semantic_Identity.md)을 참고한다.

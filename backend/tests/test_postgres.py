@@ -34,6 +34,16 @@ class PostgresIntegrationTests(unittest.TestCase):
             self.assertEqual(schema_version(conn), LATEST_VERSION)
         self.assertEqual(self.client.get('/api/auth/me', headers=login(self.client)).status_code, 200)
 
+    def test_v30_version_is_accepted_and_reinitialization_preserves_account(self):
+        # Version-gate regression; the separate matrix builds a true v30 ledger.
+        with connect() as conn:
+            conn.execute('UPDATE app_schema_version SET version=30 WHERE singleton=1')
+        initialize(); initialize()
+        with connect() as conn:
+            self.assertEqual(schema_version(conn), LATEST_VERSION)
+            self.assertIsNotNone(conn.execute("SELECT to_regclass('capture_context_registry')").fetchone()[0])
+        self.assertEqual(self.client.get('/api/auth/me', headers=login(self.client)).status_code, 200)
+
     def test_v7_processing_upgrade_preserves_account(self):
         with connect() as conn:
             # Recreate the pre-processing baseline, including removal of newer dependants.

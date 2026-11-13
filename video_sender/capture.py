@@ -8,9 +8,13 @@ from datetime import datetime,timezone
 from uuid import uuid4
 
 if __package__:
+    from .backpressure import Policy
     from .chunks import next_sequence, publish_completed_segments
+    from .capture_control import run_id_from_env, stop_requested, publish_result
 else:
+    from backpressure import Policy
     from chunks import next_sequence, publish_completed_segments
+    from capture_control import run_id_from_env, stop_requested, publish_result
 
 CAMERA_INDEX = int(os.getenv("VIDEO_CAMERA_INDEX", "0"))
 FPS = 15
@@ -21,6 +25,11 @@ SEGMENT_SECONDS = 1
 OUTPUT_DIR = Path(os.getenv("VIDEO_OUTPUT_DIR", "video_sender/output"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 START_SEQUENCE = next_sequence(OUTPUT_DIR)
+CONTROL_RUN_ID = run_id_from_env()
+SPOOL_POLICY = Policy.from_env() if CONTROL_RUN_ID else None
+stopped_by_request = False
+protective_stop_reason = None
+frame_count = 0
 SEGMENT_LIST = OUTPUT_DIR / f".capture-{uuid4().hex}.list"
 
 cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
@@ -75,6 +84,15 @@ try:
     frame_count = 0
 
     while True:
+        if SPOOL_POLICY is not None:
+            reason = SPOOL_POLICY.reason(OUTPUT_DIR)
+            if reason:
+                protective_stop_reason = reason
+                print('[CAPTURE] protective stop: '+reason)
+                (OUTPUT_DIR / f'.stop-{CONTROL_RUN_ID}').touch(exist_ok=True)
+        if stop_requested(OUTPUT_DIR, CONTROL_RUN_ID):
+            stopped_by_request = True
+            break
         publish_completed_segments(OUTPUT_DIR, SEGMENT_LIST)
         success, frame = cap.read()
 
@@ -128,7 +146,9 @@ finally:
     if process.stdin:
         process.stdin.close()
 
-    process.wait()
+    ffmpeg_exit = process.wait()
     publish_completed_segments(OUTPUT_DIR, SEGMENT_LIST)
     SEGMENT_LIST.unlink(missing_ok=True)
+    publish_result(OUTPUT_DIR, CONTROL_RUN_ID, stopped_by_request=stopped_by_request,
+                   ffmpeg_exit=ffmpeg_exit, start_sequence=START_SEQUENCE, frame_count=frame_count, fps=FPS, protective_stop_reason=protective_stop_reason)
     print("프로그램 종료")
