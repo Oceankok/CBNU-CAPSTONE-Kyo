@@ -9,6 +9,7 @@ import {
   bundleActionBlocked,
   bundleConflictResponseIsCurrent,
   bundleDraftIsDirty,
+  bundleInputsDisabled,
   bundleMutationIsAllowed,
   previewIsCurrent,
 } from '../src/api/educationBundleEditorContracts.ts';
@@ -91,4 +92,6 @@ assert(
     !bundleConflictResponseIsCurrent(3, 3, 'A', 'B'),
   'late or differently bound conflict response must be ignored',
 );
+assert(bundleInputsDisabled(true), 'bundle fields must be disabled while a write is pending');
+assert(!bundleInputsDisabled(false), 'bundle fields may be edited when no write is pending');
 console.log('education bundle editor safety contracts ok');

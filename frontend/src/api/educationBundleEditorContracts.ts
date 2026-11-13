@@ -57,3 +57,7 @@ export function bundleConflictResponseIsCurrent(
 ): boolean {
   return requestEpoch === currentEpoch && requestedBundleId === activeBundleId;
 }
+
+export function bundleInputsDisabled(busy: boolean): boolean {
+  return busy;
+}

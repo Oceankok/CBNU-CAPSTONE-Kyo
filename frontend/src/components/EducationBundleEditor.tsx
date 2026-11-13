@@ -17,6 +17,7 @@ import {
   bundleActionBlocked,
   bundleConflictResponseIsCurrent,
   bundleDraftIsDirty,
+  bundleInputsDisabled,
   bundleMutationIsAllowed,
   previewIsCurrent,
 } from '../api/educationBundleEditorContracts';
@@ -507,15 +508,15 @@ export default function EducationBundleEditor({
         <div className={styles.form}>
           <label className={styles.field}>
             제목
-            <input className={styles.input} maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} />
+            <input className={styles.input} disabled={bundleInputsDisabled(busy)} maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} />
           </label>
           <label className={styles.field}>
             공통 교육 본문
-            <textarea className={styles.input} rows={6} maxLength={12000} value={body} onChange={(e) => setBody(e.target.value)} />
+            <textarea className={styles.input} disabled={bundleInputsDisabled(busy)} rows={6} maxLength={12000} value={body} onChange={(e) => setBody(e.target.value)} />
           </label>
           <label className={styles.field}>
             확인 체크리스트 (한 줄에 하나)
-            <textarea className={styles.input} rows={4} value={checklist} onChange={(e) => setChecklist(e.target.value)} />
+            <textarea className={styles.input} disabled={bundleInputsDisabled(busy)} rows={4} value={checklist} onChange={(e) => setChecklist(e.target.value)} />
           </label>
           <div className={styles.actions}>
             {activeBundle ? (
