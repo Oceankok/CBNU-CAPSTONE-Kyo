@@ -11,6 +11,7 @@ export interface SuspectedDuplicateSummary {
   staleCount: number;
   releasedCount: number;
   partialResults: boolean;
+  savedUnavailable: boolean;
 }
 
 const relationPeerId = (eventId: string, relation: SavedSuspectedRelation) =>
@@ -22,23 +23,25 @@ const uniqueWithoutSelf = (eventId: string, ids: string[]) =>
 export function buildSuspectedDuplicateSummary(
   eventId: string,
   preview: SuspectedDuplicatePreview | null,
-  saved: SavedSuspectedRelation[],
+  saved: SavedSuspectedRelation[] | null,
   savedHasMore = false,
 ): SuspectedDuplicateSummary {
-  const partialResults = Boolean(preview?.has_more || savedHasMore);
+  const savedUnavailable = saved === null;
+  const partialResults = Boolean(preview?.has_more || savedHasMore || savedUnavailable);
+  const savedItems = saved ?? [];
   const computedPeerIds = uniqueWithoutSelf(
     eventId,
     preview?.items.map((candidate) => candidate.event_id) ?? [],
   );
   const activeSavedPeerIds = uniqueWithoutSelf(
     eventId,
-    saved
+    savedItems
       .filter((relation) => relation.state === 'saved' && !relation.stale)
       .map((relation) => relationPeerId(eventId, relation)),
   );
   const historicalPeerIds = uniqueWithoutSelf(
     eventId,
-    saved
+    savedItems
       .filter((relation) => relation.state === 'released' || relation.stale)
       .map((relation) => relationPeerId(eventId, relation)),
   );
@@ -50,8 +53,9 @@ export function buildSuspectedDuplicateSummary(
       ? []
       : computedPeerIds.filter((peerId) => !activeSavedPeerIds.includes(peerId)),
     historicalPeerIds,
-    staleCount: saved.filter((relation) => relation.stale).length,
-    releasedCount: saved.filter((relation) => relation.state === 'released').length,
+    staleCount: savedItems.filter((relation) => relation.stale).length,
+    releasedCount: savedItems.filter((relation) => relation.state === 'released').length,
     partialResults,
+    savedUnavailable,
   };
 }

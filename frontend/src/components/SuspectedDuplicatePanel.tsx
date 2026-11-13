@@ -187,9 +187,9 @@ export default function SuspectedDuplicatePanel({
         }
         return;
       }
+      onRelationsChanged?.();
       if (!isCurrentWrite()) return;
       if (!(await load())) return;
-      onRelationsChanged?.();
       if (
         !isCurrentWrite() ||
         !isLatestRequest(requestAtSave, evidenceRequest.current) ||
@@ -215,9 +215,9 @@ export default function SuspectedDuplicatePanel({
     setNotice(null);
     try {
       await releaseSuspectedRelation(relation.relation_id, relation.fingerprint, eventId);
+      onRelationsChanged?.();
       if (!isCurrentWrite()) return;
       if (!(await load())) return;
-      onRelationsChanged?.();
       if (isCurrentWrite()) {
         setNotice('저장된 관계를 해제했습니다. 계산 후보와 해제 이력은 서로 독립적으로 유지됩니다.');
       }
@@ -249,9 +249,9 @@ export default function SuspectedDuplicatePanel({
       const result = (await executeConfirmedReconcile(true, () =>
         reconcileSuspectedRelations(eventId),
       )) as { created_count?: number };
+      onRelationsChanged?.();
       if (!isCurrentWrite()) return;
       if (!(await load())) return;
-      onRelationsChanged?.();
       if (isCurrentWrite()) {
         setReconcileArmed(false);
         setNotice(`명시적 재확인을 완료했고 새로 저장된 관계는 ${result.created_count ?? 0}건입니다.`);

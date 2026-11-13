@@ -139,4 +139,38 @@ assert(
   partialSummary.computedOnlyPeerIds.length === 0,
   'summary must not claim an unsaved difference when either list is truncated',
 );
+const unavailableSummary = buildSuspectedDuplicateSummary(
+  'EVENT_SELF',
+  {
+    event_id: 'EVENT_SELF',
+    mode: 'metadata_preview',
+    eligible: true,
+    reason: null,
+    total: 1,
+    limit: 20,
+    offset: 0,
+    has_more: false,
+    next_offset: null,
+    pagination_truncated: false,
+    items: [
+      {
+        event_id: 'EVENT_B',
+        camera_id: 'CAM',
+        ppe_type: 'helmet',
+        timestamp_start: '',
+        timestamp_end: '',
+        event_status: 'pending',
+        overlap_seconds: 1,
+        shared_group_snapshots: [],
+        reason: '',
+      },
+    ],
+  },
+  null,
+);
+assert(unavailableSummary.savedUnavailable, 'summary must expose saved-list failures');
+assert(
+  unavailableSummary.computedOnlyPeerIds.length === 0,
+  'summary must not claim an unsaved difference when saved relations are unavailable',
+);
 console.log('schema31 contracts ok');

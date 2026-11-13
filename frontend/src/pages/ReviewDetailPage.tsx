@@ -169,7 +169,7 @@ function SuspectedDuplicateSummary({
   const summary = buildSuspectedDuplicateSummary(
     eventId,
     preview,
-    saved?.items ?? [],
+    saved?.items ?? null,
     saved?.has_more ?? false,
   );
   const hasLinks =
@@ -191,7 +191,12 @@ function SuspectedDuplicateSummary({
       {loading && <p className={styles.optional}>의심 관계를 불러오는 중...</p>}
       {previewError && <p className={styles.optional}>{previewError}</p>}
       {savedError && <p className={styles.optional}>{savedError}</p>}
-      {summary.partialResults && (
+      {summary.savedUnavailable && (
+        <p className={styles.optional}>
+          저장 관계를 확인하지 못해 계산 후보와 저장 여부의 차이는 단정하지 않습니다.
+        </p>
+      )}
+      {!summary.savedUnavailable && summary.partialResults && (
         <p className={styles.optional}>
           일부 관계만 조회되어 계산 후보와 저장 여부의 차이는 단정하지 않습니다.
         </p>
