@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
 import EventMediaPanel from '../components/EventMediaPanel';
 import EventMergePanel from '../components/EventMergePanel';
+import SuspectedDuplicatePanel from '../components/SuspectedDuplicatePanel';
 import { fetchEvent, submitReview, updateReview } from '../api/events';
 import { getSession } from '../api/auth';
 import type {
@@ -127,7 +128,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
   const [mediaKey, setMediaKey] = useState(0);
   useEffect(() => {
     if (!event_id) return;
-    fetchEvent(event_id)
+    fetchEvent(event_id, { includeSuspectedDuplicates: true })
       .then(({ event: ev, review, review_history = [] }) => {
         // Opening an event counts as checking it, whether or not it gets reviewed
         markEventsSeen([ev.event_id]);
@@ -168,7 +169,9 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
 
   const reloadEvent = async () => {
     if (!event_id) return;
-    const data = await fetchEvent(event_id);
+    const data = await fetchEvent(event_id, {
+      includeSuspectedDuplicates: true,
+    });
     setEvent(data.event);
     setExistingReview(data.review);
     setReviewHistory(data.review_history ?? []);
@@ -307,6 +310,11 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
               </dl>
             </details>
           </div>
+
+          <SuspectedDuplicatePanel
+            eventId={event.event_id}
+            tag={event.suspected_duplicate_tag}
+          />
 
           {/* Merged source: the review happens on the representative event */}
           {event.event_status === 'merged' && event.merged_into_event_id && (

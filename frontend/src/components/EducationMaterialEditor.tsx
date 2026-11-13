@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import ConfirmButton from './ConfirmButton';
 import {
   MATERIAL_ERRORS,
@@ -10,7 +10,12 @@ import {
   unpublishMaterial,
   updateMaterial,
 } from '../api/materials';
-import type { EducationMaterial, GenerationStatus } from '../api/materials';
+import type {
+  EducationMaterial,
+  EducationMaterialScope,
+  GenerationStatus,
+} from '../api/materials';
+import { ApiError } from '../api/client';
 import { formatSeoul } from '../time';
 import styles from './EducationMaterialEditor.module.css';
 
@@ -24,8 +29,10 @@ const STATUS_LABEL = {
 // Workers only see a material once it is published.
 export default function EducationMaterialEditor({
   recommendationId,
+  scope,
 }: {
   recommendationId: string;
+  scope: EducationMaterialScope;
 }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<EducationMaterial[] | null>(null);
@@ -37,16 +44,40 @@ export default function EducationMaterialEditor({
   const [editing, setEditing] = useState<EducationMaterial | 'new' | null>(
     null,
   );
+  const [editingScope, setEditingScope] =
+    useState<EducationMaterialScope | null>(null);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [checklist, setChecklist] = useState('');
+  const loadRequest = useRef(0);
 
   const fail = (e: Error) => setError(MATERIAL_ERRORS[e.message] ?? e.message);
 
-  const load = () =>
-    fetchMaterials(recommendationId)
-      .then((r) => setItems(r.items))
-      .catch(fail);
+  const load = () => {
+    const request = ++loadRequest.current;
+    return fetchMaterials(recommendationId)
+      .then((r) => {
+        if (request === loadRequest.current) setItems(r.items);
+        return r;
+      })
+      .catch((e) => {
+        if (request === loadRequest.current) fail(e);
+        throw e;
+      });
+  };
+
+  const refreshAfterScopeConflict = async () => {
+    try {
+      await load();
+      setError(
+        '추천 대상이 바뀌었습니다. 작성 중인 내용은 보존했습니다. 최신 자료 목록을 확인한 뒤 대상을 명시적으로 다시 선택하세요.',
+      );
+    } catch (e) {
+      setError(
+        `추천 대상이 바뀌었고 최신 자료 목록을 불러오지 못했습니다. 작성 중인 내용은 보존했습니다. (${e instanceof Error ? e.message : String(e)})`,
+      );
+    }
+  };
 
   const toggle = () => {
     const next = !open;
@@ -62,14 +93,21 @@ export default function EducationMaterialEditor({
   const generate = () => {
     setGenerating(true);
     setError(null);
-    generateMaterial(recommendationId)
+    generateMaterial(recommendationId, structuredClone(scope))
       .then(() => load())
-      .catch(fail)
+      .catch((e: unknown) => {
+        if (e instanceof ApiError && (e.status === 404 || e.status === 409)) {
+          void refreshAfterScopeConflict();
+        } else {
+          fail(e instanceof Error ? e : new Error(String(e)));
+        }
+      })
       .finally(() => setGenerating(false));
   };
 
   const startEdit = (m: EducationMaterial | 'new') => {
     setEditing(m);
+    setEditingScope(structuredClone(scope));
     setError(null);
     setTitle(m === 'new' ? '' : m.title);
     setBody(m === 'new' ? '' : m.body);
@@ -93,14 +131,26 @@ export default function EducationMaterialEditor({
     setError(null);
     const request =
       editing === 'new'
-        ? createMaterial(recommendationId, content())
+        ? createMaterial(
+            recommendationId,
+            content(),
+            editingScope ?? structuredClone(scope),
+          )
         : updateMaterial(editing.material_id, content(), editing.version);
     request
       .then(() => {
         setEditing(null);
         return load();
       })
-      .catch(fail)
+      .catch((e: unknown) => {
+        if (e instanceof ApiError && (e.status === 404 || e.status === 409)) {
+          // Keep the editor mounted and its draft fields untouched. A stale
+          // recommendation is never retried against a newly selected ID.
+          void refreshAfterScopeConflict();
+        } else {
+          fail(e instanceof Error ? e : new Error(String(e)));
+        }
+      })
       .finally(() => setBusy(false));
   };
 

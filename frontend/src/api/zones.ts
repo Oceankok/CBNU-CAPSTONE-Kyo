@@ -2,6 +2,7 @@ import { apiFetch, ApiError } from './client';
 import { MOCK_AUTH, getSession } from './auth';
 import { mockZonesOf } from './users';
 import type { ZoneRule } from '../types';
+import { zoneSaveBody } from './schema31Contracts';
 
 // ponytail: in-memory mock for VITE_AUTH_MOCK=true until the #101 API exists; resets on reload
 export const mockZones: ZoneRule[] = [
@@ -28,11 +29,7 @@ export async function fetchZones(): Promise<ZoneRule[]> {
 }
 
 export async function saveZone(rule: ZoneRule): Promise<ZoneRule> {
-  const body = {
-    required_ppe: rule.required_ppe,
-    rules: rule.rules,
-    ...(rule.risk_level != null ? { risk_level: rule.risk_level } : {}),
-  };
+  const body = zoneSaveBody(rule);
   if (MOCK_AUTH) {
     const i = mockZones.findIndex((z) => z.zone_name === rule.zone_name);
     const saved = {

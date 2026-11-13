@@ -30,7 +30,13 @@ function ScoreRow({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function RecommendCard({ item }: { item: EducationRecommendation }) {
+function RecommendCard({
+  item,
+  quarter,
+}: {
+  item: EducationRecommendation;
+  quarter: string;
+}) {
   const rankColor = RANK_COLORS[item.recommendation_rank - 1] ?? '#718096';
   return (
     <div className={styles.card}>
@@ -98,7 +104,16 @@ function RecommendCard({ item }: { item: EducationRecommendation }) {
         )}
       </details>
 
-      <EducationMaterialEditor recommendationId={item.recommendation_id} />
+      <EducationMaterialEditor
+        recommendationId={item.recommendation_id}
+        scope={{
+          recommendation_id: item.recommendation_id,
+          quarter,
+          zone_name: item.zone_name,
+          ppe_type: item.ppe_type,
+          education_topic: item.education_topic,
+        }}
+      />
     </div>
   );
 }
@@ -155,7 +170,11 @@ export default function RecommendPage() {
       {data && (
         <div className={styles.cardList}>
           {data.items.map((item) => (
-            <RecommendCard key={item.recommendation_id} item={item} />
+              <RecommendCard
+                key={item.recommendation_id}
+                item={item}
+                quarter={data.quarter}
+              />
           ))}
         </div>
       )}
