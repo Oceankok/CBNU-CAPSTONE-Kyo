@@ -20,6 +20,11 @@ class ReferenceUnavailable(ValueError):
     pass
 
 
+class ReferencePending(ValueError):
+    """The requested stream is not visible yet; retry until the deadline."""
+    pass
+
+
 def select_context_stream(request, streams):
     """Select exactly the request's stream/context tuple, never by camera only."""
     candidates = [row for row in streams if row.get('camera_id') == request.get('camera_id')]
@@ -31,6 +36,8 @@ def select_context_stream(request, streams):
         candidates = [row for row in candidates if row.get('capture_context_id') == expected]
     elif expected_stream is None and any(row.get('capture_context_id') is not None for row in candidates):
         raise ReferenceUnavailable('reference_context_required')
+    if not candidates:
+        raise ReferencePending('reference_stream_pending')
     if len(candidates) != 1:
         raise ReferenceUnavailable('reference_stream_ambiguous')
     selected = candidates[0]
@@ -147,6 +154,10 @@ class ReferenceCollector:
             return
         try:
             stream = select_context_stream(request, streams)
+        except ReferencePending:
+            if self._deadline_reached(request, end):
+                self.unavailable(request, 'reference_interval_unavailable')
+            return
         except ReferenceUnavailable as error:
             self.unavailable(request, str(error))
             return

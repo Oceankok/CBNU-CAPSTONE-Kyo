@@ -9,7 +9,9 @@ import cv2
 import httpx
 import numpy as np
 
-from inference_worker.reference_collector import ReferenceCollector, ReferenceUnavailable, assemble, select_chunks
+from inference_worker.reference_collector import (ReferenceCollector, ReferencePending,
+                                                   ReferenceUnavailable, assemble,
+                                                   select_chunks, select_context_stream)
 
 
 class ReferenceCollectorTests(unittest.TestCase):
@@ -74,6 +76,27 @@ class ReferenceCollectorTests(unittest.TestCase):
         client.report_clip_failure.assert_called_once_with('event', 'reference',
             'reference_interval_unavailable', status='unavailable')
         client.upload_clip.assert_not_called()
+
+    def test_selector_distinguishes_pending_from_duplicate_streams(self):
+        with self.assertRaises(ReferencePending):
+            select_context_stream(self.request, [])
+        duplicate_streams = [
+            {'camera_id': 'B', 'stream_id': 'one'},
+            {'camera_id': 'B', 'stream_id': 'two'},
+        ]
+        with self.assertRaisesRegex(ReferenceUnavailable, 'reference_stream_ambiguous'):
+            select_context_stream(self.request, duplicate_streams)
+
+    def test_duplicate_streams_fail_immediately_before_deadline(self):
+        client = Mock()
+        streams = [
+            {'camera_id': 'B', 'stream_id': 'one'},
+            {'camera_id': 'B', 'stream_id': 'two'},
+        ]
+        collector = ReferenceCollector(client, clock=Mock(return_value=self.end.timestamp()))
+        collector.collect(self.request, streams)
+        client.report_clip_failure.assert_called_once_with('event', 'reference',
+            'reference_stream_ambiguous', status='unavailable')
 
     def test_oversized_interval_has_explicit_reason(self):
         client = Mock()
