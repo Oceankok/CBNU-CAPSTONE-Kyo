@@ -592,3 +592,7 @@ app.include_router(capture_context_router)
 
 from backend.capture_context.routes import legacy_router as legacy_capture_stop_router
 app.include_router(legacy_capture_stop_router)
+
+from backend.education_bundles.routes import router as education_bundles_router, worker as worker_bundles_router
+app.include_router(education_bundles_router)
+app.include_router(worker_bundles_router)
