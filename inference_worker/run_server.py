@@ -10,7 +10,9 @@ Unredacted clips are temporary and removed on success or failure.
 
 import argparse
 import json
+import logging
 import math
+import re
 import httpx
 import time
 import tempfile
@@ -39,15 +41,106 @@ from inference_worker.inference_load import InferenceLoad
 from backend.runtime_version import local_version
 
 
+logger = logging.getLogger(__name__)
+_EVENT_ERROR_CODES = frozenset({
+    'capture_context_required',
+    'capture_interval_outside_context_or_future',
+    'capture_interval_crosses_stop',
+    'review_only_confidence_forbidden',
+    'event_submission_mode_conflict',
+    'event_context_capture_conflict',
+})
+_VALIDATION_LOCATIONS = frozenset({'body', 'query', 'path', 'header'})
+_VALIDATION_TYPES = frozenset({
+    'missing', 'extra_forbidden', 'value_error', 'value_error.extra',
+    'string_type', 'string_pattern_mismatch', 'datetime_parsing',
+    'int_type', 'greater_than_equal', 'less_than_equal',
+})
+
+
+def _log_event_submission_failure(response):
+    """Log only safe status/detail signatures; never request data or raw body."""
+    detail_code = 'unknown'
+    validation = []
+    try:
+        detail = response.json().get('detail')
+    except (ValueError, AttributeError, TypeError):
+        detail = None
+    if isinstance(detail, str):
+        detail_code = detail if detail in _EVENT_ERROR_CODES else 'unknown'
+    elif isinstance(detail, list):
+        for item in detail:
+            if not isinstance(item, dict):
+                continue
+            loc = item.get('loc')
+            kind = item.get('type')
+            safe_loc = tuple(part if part in _VALIDATION_LOCATIONS else 'field'
+                             for part in loc if isinstance(part, str)) if isinstance(loc, list) else ()
+            # Validation libraries may return malformed/non-string ``type``
+            # values.  Keep diagnostics fail-closed and never let logging mask
+            # the original HTTP error with an unhashable-membership TypeError.
+            safe_kind = kind if isinstance(kind, str) and kind in _VALIDATION_TYPES else 'unknown'
+            validation.append((safe_loc, safe_kind))
+    logger.warning('Event submission rejected status=%s detail_code=%s validation=%s',
+                   getattr(response, 'status_code', 'unknown'), detail_code,
+                   tuple(validation) if validation else 'none')
+
+
+def _submit_event(client, event):
+    try:
+        return _retry(lambda: client.submit_event(event))
+    except httpx.HTTPStatusError as error:
+        _log_event_submission_failure(error.response)
+        raise
+
+
 def create_detector(model_path=None):
     # Offline contract tests do not import Ultralytics or load weights.
     from inference_worker.ppe_detector import PPEDetector
     return PPEDetector(model_path=model_path) if model_path is not None else PPEDetector()
 
 
-def build_review_candidate_event(candidate, *, camera_id, start_time, end_time, model_version):
+def _context_record(row, *, label):
+    """Return an immutable stream/chunk context or None for legacy metadata."""
+    fields = ('capture_context_id', 'capture_session_id', 'assignment_version')
+    values = tuple(row.get(field) for field in fields)
+    if not any(value is not None for value in values):
+        return None
+    context, session, version = values
+    if (not isinstance(context, str) or not re.fullmatch(r'[0-9a-f-]{36}', context)
+            or not isinstance(session, str) or not re.fullmatch(
+                r'(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})', session)
+            or isinstance(version, bool) or not isinstance(version, int) or version <= 0):
+        raise ValueError(f'invalid_{label}_context')
+    return dict(capture_context_id=context, capture_session_id=session,
+                assignment_version=version)
+
+
+def _assert_chunk_context(chunk, bound):
+    observed = _context_record(chunk, label='chunk')
+    if observed != bound:
+        raise ValueError('chunk_capture_context_changed')
+
+
+def _select_camera_stream(streams, camera_id):
+    """Prefer one active context stream; never attach to an old stream by order."""
+    candidates = [row for row in streams if row.get('camera_id') == camera_id]
+    context_candidates = [row for row in candidates if row.get('capture_context_id') is not None]
+    if context_candidates:
+        active = [row for row in context_candidates
+                  if row.get('capture_stopped') is not True and row.get('status') != 'closed']
+        if len(active) == 1:
+            return active[0]
+        if len(active) > 1:
+            return None
+        return context_candidates[0] if len(context_candidates) == 1 else None
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def build_review_candidate_event(candidate, *, camera_id, start_time, end_time,
+                                 model_version, capture_context_id=None):
     """Produce metadata for human review, never verified no-helmet evidence."""
-    return {
+    event = {
         "event_id": "EVT_" + uuid4().hex,
         "camera_id": camera_id,
         "tracking_id": str(candidate["tracking_id"]),
@@ -59,6 +152,9 @@ def build_review_candidate_event(candidate, *, camera_id, start_time, end_time, 
         "model_version": model_version,
         "review_only": True,
     }
+    if capture_context_id is not None:
+        event["capture_context_id"] = capture_context_id
+    return event
 
 
 def main():
@@ -129,6 +225,7 @@ def main():
     last_sequence = -1
     previous_chunk = None
     previous_policy = None
+    bound_context = None
 
     processed = 0
     candidate_count = 0
@@ -146,14 +243,7 @@ def main():
                 # 1. Find active camera stream.
                 streams = client.list_streams()
 
-                selected = next(
-                    (
-                        stream
-                        for stream in streams
-                        if stream["camera_id"] == args.camera_id
-                    ),
-                    None,
-                )
+                selected = _select_camera_stream(streams, args.camera_id)
 
                 if selected is None:
                     if stream_id is not None:
@@ -164,10 +254,13 @@ def main():
                         previous_chunk = None
                         last_sequence = -1
                         previous_policy = None
+                        bound_context = None
 
                     print("[WAIT] No active stream")
                     time.sleep(args.poll)
                     continue
+
+                selected_context = _context_record(selected, label='stream')
 
                 # 2. Check camera PPE policy.
                 policy = client.get_ppe_policy(args.camera_id)
@@ -210,7 +303,7 @@ def main():
                     continue
 
                 # 3. Reset on stream change.
-                if stream_id != selected["stream_id"]:
+                if stream_id != selected["stream_id"] or bound_context != selected_context:
                     stream_id = selected["stream_id"]
                     # Establish a live boundary once per stream. Reopening the process
                     # must not replay old footage under newly generated event IDs.
@@ -221,6 +314,7 @@ def main():
                         last_sequence = -1
                     print(f"[START BOUNDARY] stream={stream_id} after_sequence={last_sequence}")
                     previous_chunk = None
+                    bound_context = selected_context
 
                     tracker, violations = reset_tracking()
                     clip_buffer = new_clip_buffer()
@@ -240,6 +334,8 @@ def main():
                         break
 
                     sequence = chunk["sequence"]
+
+                    _assert_chunk_context(chunk, bound_context)
 
                     if sequence <= last_sequence:
                         continue
@@ -471,11 +567,12 @@ def main():
                                     start_time=start_time,
                                     end_time=end_time,
                                     model_version=getattr(detector, "model_version", "helmet-3class-review"),
+                                    capture_context_id=(bound_context or {}).get("capture_context_id"),
                                 )
                                 # Register the sustained observation now; post-roll is
                                 # uploaded later under the same idempotent event ID.
                                 priority.release()
-                                _retry(lambda: client.submit_event(event))
+                                _submit_event(client, event)
                                 ready_count += 1
                                 pending_clips.add(candidate, args.camera_id, event=event)
                                 print(f"[REVIEW CANDIDATE READY] {event['event_id']}")
@@ -505,11 +602,12 @@ def main():
                                 frame_sample_count=candidate.get("frame_sample_count", max(
                                     1, round(candidate["duration_seconds"] * fps))),
                                 model_version=getattr(detector, "model_version", "helmet-yolov8n-v1"),
+                                    capture_context_id=(bound_context or {}).get("capture_context_id"),
                             )
 
                             if args.submit_events:
                                 priority.release()
-                                _retry(lambda: client.submit_event(event))
+                                _submit_event(client, event)
                             ready_count += 1
 
                             pending_clips.add(candidate, args.camera_id, event=event)

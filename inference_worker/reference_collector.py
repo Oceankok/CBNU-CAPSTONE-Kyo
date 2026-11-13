@@ -20,13 +20,46 @@ class ReferenceUnavailable(ValueError):
     pass
 
 
-def select_chunks(chunks, start, end):
+class ReferencePending(ValueError):
+    """The requested stream is not visible yet; retry until the deadline."""
+    pass
+
+
+def select_context_stream(request, streams):
+    """Select exactly the request's stream/context tuple, never by camera only."""
+    candidates = [row for row in streams if row.get('camera_id') == request.get('camera_id')]
+    expected_stream = request.get('stream_id')
+    expected = request.get('capture_context_id')
+    if expected_stream is not None:
+        candidates = [row for row in candidates if row.get('stream_id') == expected_stream]
+    if expected is not None:
+        candidates = [row for row in candidates if row.get('capture_context_id') == expected]
+    elif expected_stream is None and any(row.get('capture_context_id') is not None for row in candidates):
+        raise ReferenceUnavailable('reference_context_required')
+    if not candidates:
+        raise ReferencePending('reference_stream_pending')
+    if len(candidates) != 1:
+        raise ReferenceUnavailable('reference_stream_ambiguous')
+    selected = candidates[0]
+    for field in ('capture_context_id', 'capture_session_id', 'assignment_version'):
+        if request.get(field) is not None and selected.get(field) != request[field]:
+            raise ReferenceUnavailable('reference_stream_binding_mismatch')
+    return selected
+
+
+def select_chunks(chunks, start, end, *, final_sequence=None, capture_context_id=None):
     """Require one continuous interval, never fill missing footage with other time."""
     selected = sorted((row for row in chunks
         if parse_capture_time(row['capture_start_at']) < end
-        and parse_capture_time(row['capture_start_at']) + timedelta(milliseconds=row['duration_ms']) > start),
+        and parse_capture_time(row['capture_start_at']) + timedelta(milliseconds=row['duration_ms']) > start
+        and (final_sequence is None or row.get('sequence', final_sequence) <= final_sequence)
+        and (capture_context_id is None or row.get('capture_context_id') == capture_context_id)),
         key=lambda row: parse_capture_time(row['capture_start_at']))
     covered = start
+    for prior, row in zip(selected, selected[1:]):
+        if row.get('sequence') is not None and prior.get('sequence') is not None:
+            if row['sequence'] != prior['sequence'] + 1:
+                return []
     for row in selected:
         stamp = parse_capture_time(row['capture_start_at'])
         if (stamp-covered).total_seconds() > 0.25:
@@ -103,17 +136,44 @@ class ReferenceCollector:
         _retry(lambda: self.client.report_clip_failure(request['event_id'], request['request_id'],
                                                        code, status='unavailable'))
 
+    def _deadline_reached(self, request, end):
+        return self.clock() >= request['deadline_at'] or self.clock() - end.timestamp() >= 30
+
     def collect(self, request, streams):
         start = parse_capture_time(request['clip_start_at'])
         end = parse_capture_time(request['clip_end_at'])
         if not 0 < (end-start).total_seconds() <= 20:
             self.unavailable(request, 'reference_window_unsupported')
             return
-        stream = next((row for row in streams if row['camera_id'] == request['camera_id']), None)
-        chunks = self.client.list_chunks(stream['stream_id']) if stream else []
-        chosen = select_chunks(chunks, start, end)
+        if request.get('capture_context_state') == 'unavailable':
+            self.unavailable(request, request.get('capture_context_error', 'reference_context_unavailable'))
+            return
+        if request.get('capture_context_state') == 'pending' and request.get('stream_id') is None:
+            if self._deadline_reached(request, end):
+                self.unavailable(request, 'reference_interval_unavailable')
+            return
+        try:
+            stream = select_context_stream(request, streams)
+        except ReferencePending:
+            if self._deadline_reached(request, end):
+                self.unavailable(request, 'reference_interval_unavailable')
+            return
+        except ReferenceUnavailable as error:
+            self.unavailable(request, str(error))
+            return
+        chunks = self.client.list_chunks(stream['stream_id'])
+        expected_context = request.get('capture_context_id')
+        if expected_context is not None and any(
+                row.get('capture_context_id') != expected_context for row in chunks):
+            self.unavailable(request, 'reference_chunk_context_mismatch')
+            return
+        chosen = select_chunks(
+            chunks, start, end,
+            final_sequence=stream.get('final_sequence') if stream.get('capture_stopped') else None,
+            capture_context_id=expected_context,
+        )
         if not chosen:
-            if self.clock() >= request['deadline_at'] or self.clock()-end.timestamp() >= 30:
+            if self._deadline_reached(request, end):
                 self.unavailable(request, 'reference_interval_unavailable')
             return
         try:

@@ -3,6 +3,7 @@
 
 from datetime import datetime, timezone
 from math import isfinite
+import re
 from uuid import uuid4
 
 
@@ -15,6 +16,7 @@ def build_event(
     frame_sample_count,
     model_version="helmet-yolov8n-v1",
     event_id=None,
+    capture_context_id=None,
 ):
     if (
         not isinstance(start_time, datetime)
@@ -39,8 +41,13 @@ def build_event(
 
     if not 1 <= frame_sample_count <= 100000:
         raise ValueError("Invalid frame sample count")
+    if capture_context_id is not None and (
+        not isinstance(capture_context_id, str)
+        or not re.fullmatch(r"[0-9a-f-]{36}", capture_context_id)
+    ):
+        raise ValueError("Invalid capture context")
 
-    return {
+    event = {
         "event_id": event_id or f"EVT_{uuid4().hex}",
         "camera_id": camera_id,
         "tracking_id": tracking_id,
@@ -51,3 +58,6 @@ def build_event(
         "frame_sample_count": frame_sample_count,
         "model_version": model_version,
     }
+    if capture_context_id is not None:
+        event["capture_context_id"] = capture_context_id
+    return event
