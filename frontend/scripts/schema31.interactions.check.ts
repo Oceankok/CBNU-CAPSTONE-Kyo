@@ -2,6 +2,7 @@ import {
   acceptLatestResponse,
   executeConfirmedReconcile,
   fetchLatestEvidence,
+  isCurrentWrite,
   refreshAfterScopeConflict,
   saveEvidenceWithConflictRecovery,
 } from '../src/api/schema31Interactions.ts';
@@ -129,6 +130,27 @@ async function runMockInteractions() {
   assert(reconcilePosts === 0, 'reconcile must not POST before confirmation');
   await executeConfirmedReconcile(true, post);
   assert(reconcilePosts === 1, 'reconcile POST requires explicit confirmation');
+
+  // User action: save, close, reopen, then let the old save resolve while the new load owns busy.
+  let oldWriteLoads = 0;
+  let busy = true;
+  let panelEpoch = 1;
+  const currentWrite = 1;
+  const oldWriteCompletion = new Deferred<void>();
+  const oldWrite = oldWriteCompletion.promise.then(() => {
+    if (!isCurrentWrite(1, currentWrite, 1, panelEpoch)) return;
+    oldWriteLoads += 1;
+    busy = false;
+  });
+  panelEpoch = 2;
+  oldWriteCompletion.resolve();
+  await oldWrite;
+  assert(oldWriteLoads === 0, 'old write must not start a load after reopen');
+  assert(busy, 'old write must not clear busy owned by the reopened panel');
+  const reopenedLoadRequest = 2;
+  const currentLoadRequest = 2;
+  if (isLatestRequest(reopenedLoadRequest, currentLoadRequest)) busy = false;
+  assert(!busy, 'the reopened panel load must be able to clear busy');
 }
 
 assert(isEducationScopeConflictStatus(404), 'education 404 must refresh the latest list');

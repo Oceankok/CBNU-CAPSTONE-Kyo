@@ -19,6 +19,7 @@ import {
   acceptLatestResponse,
   executeConfirmedReconcile,
   fetchLatestEvidence,
+  isCurrentWrite as isCurrentWriteOperation,
   saveEvidenceWithConflictRecovery,
 } from '../api/schema31Interactions';
 import styles from './SuspectedDuplicatePanel.module.css';
@@ -168,7 +169,7 @@ export default function SuspectedDuplicatePanel({
     const operation = ++writeRequest.current;
     const epoch = panelEpoch.current;
     const isCurrentWrite = () =>
-      operation === writeRequest.current && epoch === panelEpoch.current;
+      isCurrentWriteOperation(operation, writeRequest.current, epoch, panelEpoch.current);
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -184,6 +185,7 @@ export default function SuspectedDuplicatePanel({
         }
         return;
       }
+      if (!isCurrentWrite()) return;
       if (!(await load())) return;
       if (
         !isCurrentWrite() ||
@@ -204,12 +206,13 @@ export default function SuspectedDuplicatePanel({
     const operation = ++writeRequest.current;
     const epoch = panelEpoch.current;
     const isCurrentWrite = () =>
-      operation === writeRequest.current && epoch === panelEpoch.current;
+      isCurrentWriteOperation(operation, writeRequest.current, epoch, panelEpoch.current);
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
       await releaseSuspectedRelation(relation.relation_id, relation.fingerprint, eventId);
+      if (!isCurrentWrite()) return;
       if (!(await load())) return;
       if (isCurrentWrite()) {
         setNotice('저장된 관계를 해제했습니다. 계산 후보와 해제 이력은 서로 독립적으로 유지됩니다.');
@@ -234,7 +237,7 @@ export default function SuspectedDuplicatePanel({
     const operation = ++writeRequest.current;
     const epoch = panelEpoch.current;
     const isCurrentWrite = () =>
-      operation === writeRequest.current && epoch === panelEpoch.current;
+      isCurrentWriteOperation(operation, writeRequest.current, epoch, panelEpoch.current);
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -242,6 +245,7 @@ export default function SuspectedDuplicatePanel({
       const result = (await executeConfirmedReconcile(true, () =>
         reconcileSuspectedRelations(eventId),
       )) as { created_count?: number };
+      if (!isCurrentWrite()) return;
       if (!(await load())) return;
       if (isCurrentWrite()) {
         setReconcileArmed(false);

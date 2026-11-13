@@ -11,6 +11,15 @@ export function acceptLatestResponse<T>(
   return isLatestRequest(requestId, currentRequestId) ? value : null;
 }
 
+export function isCurrentWrite(
+  operation: number,
+  currentOperation: number,
+  epoch: number,
+  currentEpoch: number,
+): boolean {
+  return operation === currentOperation && epoch === currentEpoch;
+}
+
 export async function fetchLatestEvidence<T>(
   peerId: string,
   requestId: number,
