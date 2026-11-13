@@ -542,6 +542,8 @@ from backend.consents.service import ConsentError
 app.include_router(consents_router)
 from backend.education.routes import router as education_router
 app.include_router(education_router)
+from backend.education.translation_routes import router as education_translation_router
+app.include_router(education_translation_router)
 
 
 @app.exception_handler(ConsentError)
@@ -592,3 +594,7 @@ app.include_router(capture_context_router)
 
 from backend.capture_context.routes import legacy_router as legacy_capture_stop_router
 app.include_router(legacy_capture_stop_router)
+
+from backend.education_bundles.routes import router as education_bundles_router, worker as worker_bundles_router
+app.include_router(education_bundles_router)
+app.include_router(worker_bundles_router)

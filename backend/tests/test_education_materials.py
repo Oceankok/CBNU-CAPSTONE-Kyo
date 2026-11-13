@@ -218,13 +218,21 @@ class EducationMaterialTests(unittest.TestCase):
     def test_v11_upgrade_preserves_consent_and_existing_accounts(self):
         from backend.db.init_db import init_database
         with get_connection() as conn:
-            users = conn.execute('SELECT COUNT(*) FROM app_user').fetchone()[0]
-            conn.execute('DROP TABLE education_material')
+            users = [dict(row) for row in conn.execute('SELECT * FROM app_user ORDER BY user_id').fetchall()]
+            consents = [dict(row) for row in conn.execute('SELECT * FROM consent_record').fetchall()]
+            # Recreate the pre-v12 education boundary, not a modern parent table
+            # with v33 FK children still attached. These synthetic tables must
+            # be empty before removing them; never use CASCADE to hide dependencies.
+            for table in ('education_translation', 'education_bundle', 'education_material'):
+                self.assertEqual(conn.execute('SELECT COUNT(*) FROM ' + table).fetchone()[0], 0)
+                conn.execute('DROP TABLE ' + table)
             conn.execute('UPDATE app_schema_version SET version=11 WHERE singleton=1' if is_postgres() else 'PRAGMA user_version=11')
         init_database()
         init_database()
         with get_connection() as conn:
             self.assertEqual(schema_version(conn), LATEST_VERSION)
-            self.assertEqual(conn.execute('SELECT COUNT(*) FROM app_user').fetchone()[0], users)
-            self.assertEqual(conn.execute('SELECT COUNT(*) FROM consent_record').fetchone()[0], 0)
+            self.assertEqual([dict(row) for row in conn.execute('SELECT * FROM app_user ORDER BY user_id').fetchall()], users)
+            self.assertEqual([dict(row) for row in conn.execute('SELECT * FROM consent_record').fetchall()], consents)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM education_bundle').fetchone()[0], 0)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM education_translation').fetchone()[0], 0)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM education_material').fetchone()[0], 0)
