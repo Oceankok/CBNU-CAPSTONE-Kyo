@@ -44,7 +44,8 @@ export interface EventPageQuery {
   offset?: number;
   status?: string;
   ppeType?: string;
-  zone?: string;
+  // Exact zone names; the server returns events from any of them
+  zones?: string[];
   // YYYY-MM-DD in Korea time, both ends inclusive (#194)
   dateFrom?: string;
   dateTo?: string;
@@ -56,7 +57,7 @@ const eventQuery = (q: Omit<EventPageQuery, 'limit' | 'offset'>) => {
   const p = new URLSearchParams();
   if (q.status) p.set('status', q.status);
   if (q.ppeType) p.set('ppe_type', q.ppeType);
-  if (q.zone) p.set('zone', q.zone);
+  for (const z of q.zones ?? []) p.append('zones', z);
   if (q.dateFrom) p.set('date_from', q.dateFrom);
   if (q.dateTo) p.set('date_to', q.dateTo);
   if (q.minConfidence) p.set('min_confidence', String(q.minConfidence));

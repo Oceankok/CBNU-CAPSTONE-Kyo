@@ -57,20 +57,45 @@ function RecommendCard({ item }: { item: EducationRecommendation }) {
           label="확정 위반 건수"
           value={`${item.score_breakdown.confirmed_count}건`}
         />
-        <ScoreRow
-          label="반복 발생 주수"
-          value={`${item.score_breakdown.repeat_weeks}주`}
-        />
-        <ScoreRow
-          label="구역 집중도"
-          value={
-            (item.score_breakdown.zone_concentration * 100).toFixed(0) + '%'
-          }
-        />
-        <ScoreRow
-          label="공정 위험 가중치"
-          value={item.score_breakdown.process_risk_weight.toFixed(1)}
-        />
+        {item.score_version === 'zone_ppe_v2' ? (
+          <>
+            <ScoreRow
+              label="발생한 주"
+              value={`${item.score_breakdown.repeat_weeks}주 / 분기 ${item.score_breakdown.period_weeks ?? '-'}주`}
+            />
+            <ScoreRow
+              label="구역 위험도 배율"
+              value={`${item.score_breakdown.process_risk_weight.toFixed(2)}배`}
+            />
+            <p className={styles.scoreNote}>
+              점수 = 확정 건수 × (1 + 0.2 × 발생한 주 비율) × 위험도 배율. 교육
+              순서를 정하는 상대 점수이며 확률이나 정확도가 아닙니다.
+            </p>
+          </>
+        ) : (
+          <>
+            <ScoreRow
+              label="반복 발생 주수"
+              value={`${item.score_breakdown.repeat_weeks}주`}
+            />
+            <ScoreRow
+              label="구역 집중도"
+              value={
+                (item.score_breakdown.zone_concentration * 100).toFixed(0) + '%'
+              }
+            />
+            <ScoreRow
+              label="공정 위험 가중치"
+              value={item.score_breakdown.process_risk_weight.toFixed(1)}
+            />
+            {item.score_version === 'legacy_unversioned' && (
+              <p className={styles.scoreNote}>
+                이전 방식으로 계산한 점수입니다. 새 방식 점수와 직접 비교할 수
+                없습니다.
+              </p>
+            )}
+          </>
+        )}
       </details>
 
       <EducationMaterialEditor recommendationId={item.recommendation_id} />

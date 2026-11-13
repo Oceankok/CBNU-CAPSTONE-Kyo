@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   useNavigate,
   useOutletContext,
@@ -30,7 +30,7 @@ function readFilters(q: URLSearchParams): FilterState {
   return {
     status: (q.get('status') as EventStatus | null) ?? 'all',
     ppeType: (q.get('ppe') as PpeType | null) ?? 'all',
-    zone: q.get('zone') ?? '',
+    zones: q.getAll('zone'),
     dateFrom: q.get('from') ?? '',
     dateTo: q.get('to') ?? '',
     minConfidence: Number.isFinite(conf) && conf > 0 && conf <= 1 ? conf : 0,
@@ -41,7 +41,7 @@ function writeFilters(f: FilterState, page: number): URLSearchParams {
   const q = new URLSearchParams();
   if (f.status !== 'all') q.set('status', f.status);
   if (f.ppeType !== 'all') q.set('ppe', f.ppeType);
-  if (f.zone) q.set('zone', f.zone);
+  for (const z of f.zones) q.append('zone', z);
   if (f.dateFrom) q.set('from', f.dateFrom);
   if (f.dateTo) q.set('to', f.dateTo);
   if (f.minConfidence > 0) q.set('conf', String(f.minConfidence));
@@ -65,12 +65,30 @@ export default function ReviewListPage() {
   const [error, setError] = useState<string | null>(null);
   const { isUnseen, markSeen } = useSeenEvents();
 
-  const setFilters = (next: FilterState) =>
+  // The newest filters, updated before the address re-renders the page: two quick changes
+  // (e.g. unchecking two zones in a row) must build on each other instead of on a stale render
+  const latest = useRef(filters);
+  useEffect(() => {
+    latest.current = filters;
+  });
+  const setFilters = (change: (current: FilterState) => FilterState) => {
+    const next = change(latest.current);
+    latest.current = next;
     setParams(writeFilters(next, 1), { replace: true });
+  };
   const goToPage = (next: number) => setParams(writeFilters(filters, next));
 
   // The server filters, orders (unreviewed first, then newest) and pages the list
-  const { status, ppeType, zone, dateFrom, dateTo, minConfidence } = filters;
+  const {
+    status,
+    ppeType,
+    zones: zoneFilter,
+    dateFrom,
+    dateTo,
+    minConfidence,
+  } = filters;
+  // A stable string so the effect does not rerun for an equal list
+  const zoneKey = JSON.stringify(zoneFilter);
   useEffect(() => {
     // An older, slower request must not overwrite the latest view
     let stale = false;
@@ -81,7 +99,7 @@ export default function ReviewListPage() {
         offset: (page - 1) * pageSize,
         status: status === 'all' ? undefined : status,
         ppeType: ppeType === 'all' ? undefined : ppeType,
-        zone: zone || undefined,
+        zones: JSON.parse(zoneKey) as string[],
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
         minConfidence: minConfidence || undefined,
@@ -103,7 +121,16 @@ export default function ReviewListPage() {
       stale = true;
       window.clearTimeout(timer);
     };
-  }, [status, ppeType, zone, dateFrom, dateTo, minConfidence, page, pageSize]);
+  }, [
+    status,
+    ppeType,
+    zoneKey,
+    dateFrom,
+    dateTo,
+    minConfidence,
+    page,
+    pageSize,
+  ]);
 
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   // The page ran out (e.g. events were reviewed elsewhere): step back to the last one that exists

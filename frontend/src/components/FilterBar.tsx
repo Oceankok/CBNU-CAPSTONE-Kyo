@@ -3,7 +3,8 @@ import styles from './FilterBar.module.css';
 
 interface FilterBarProps {
   filters: FilterState;
-  onChange: (filters: FilterState) => void;
+  // Receives an updater so quick successive changes are applied to the newest filters
+  onChange: (change: (current: FilterState) => FilterState) => void;
   zones: string[];
 }
 
@@ -28,13 +29,13 @@ export default function FilterBar({
   zones,
 }: FilterBarProps) {
   const update = (patch: Partial<FilterState>) =>
-    onChange({ ...filters, ...patch });
+    onChange((current) => ({ ...current, ...patch }));
 
   const advancedActive =
     !!filters.dateFrom ||
     !!filters.dateTo ||
     filters.minConfidence > 0 ||
-    !!filters.zone;
+    filters.zones.length > 0;
 
   return (
     <div className={styles.filterBar}>
@@ -110,20 +111,26 @@ export default function FilterBar({
             )}
           </div>
 
-          {/* One zone at a time: the server filters the list */}
-          <select
-            className={styles.select}
-            value={filters.zone}
-            onChange={(e) => update({ zone: e.target.value })}
-            aria-label="구역"
-          >
-            <option value="">전체 구역</option>
+          {/* Several zones can be combined; the server returns events from any of them */}
+          <div className={styles.zoneGroup}>
             {zones.map((zone) => (
-              <option key={zone} value={zone}>
+              <label key={zone} className={styles.zoneLabel}>
+                <input
+                  type="checkbox"
+                  checked={filters.zones.includes(zone)}
+                  onChange={() =>
+                    onChange((current) => ({
+                      ...current,
+                      zones: current.zones.includes(zone)
+                        ? current.zones.filter((z) => z !== zone)
+                        : [...current.zones, zone],
+                    }))
+                  }
+                />
                 {zone}
-              </option>
+              </label>
             ))}
-          </select>
+          </div>
         </div>
       </details>
     </div>

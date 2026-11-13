@@ -196,7 +196,11 @@ export interface ScoreBreakdown {
   confirmed_count: number;
   repeat_weeks: number;
   zone_concentration: number;
+  // v2: the zone risk multiplier saved with the recommendation (1 to 2)
   process_risk_weight: number;
+  // Only on zone_ppe_v2 recommendations
+  period_weeks?: number;
+  occurrence_week_ratio?: number;
 }
 
 export interface EducationRecommendation {
@@ -207,6 +211,8 @@ export interface EducationRecommendation {
   education_topic: string;
   priority_score: number;
   score_breakdown: ScoreBreakdown;
+  // 'zone_ppe_v2' = new formula; older rows keep their previous score and are not recalculated
+  score_version?: 'zone_ppe_v2' | 'legacy_unversioned';
   generated_at: string;
 }
 
@@ -220,7 +226,7 @@ export interface EducationRecommendationList {
 export interface FilterState {
   ppeType: PpeType;
   status: EventStatus | 'all';
-  zone: string; // '' = every zone (the server filters by one zone)
+  zones: string[]; // empty = every zone; several are combined with OR by the server (#240)
   dateFrom: string;
   dateTo: string;
   minConfidence: number;
@@ -274,6 +280,8 @@ export interface ZoneRule {
   zone_name: string;
   required_ppe: ZonePpe[];
   rules: string[];
+  // 1-5, null = not set (multiplier 1). Used only by newly generated recommendations
+  risk_level?: number | null;
   updated_at?: string;
 }
 
