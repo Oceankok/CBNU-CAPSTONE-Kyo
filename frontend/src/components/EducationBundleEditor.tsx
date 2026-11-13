@@ -13,6 +13,11 @@ import {
   type BundlePreview,
 } from '../api/educationBundles';
 import { ApiError } from '../api/client';
+import {
+  bundleActionBlocked,
+  bundleDraftIsDirty,
+  previewIsCurrent,
+} from '../api/educationBundleEditorContracts';
 import type { EducationBundle } from '../types';
 import { formatSeoul } from '../time';
 import styles from './EducationBundleEditor.module.css';
@@ -40,7 +45,10 @@ export default function EducationBundleEditor({
   const [busy, setBusy] = useState(false);
   const [loadingBundles, setLoadingBundles] = useState(true);
   const [showBundles, setShowBundles] = useState(false);
+  const [previewSelectionKey, setPreviewSelectionKey] = useState<string | null>(null);
+  const [conflictBundle, setConflictBundle] = useState<EducationBundle | null>(null);
   const requestRef = useRef(0);
+  const selectionKey = recommendationIds.join('|');
 
   const loadBundles = () => {
     const request = ++requestRef.current;
@@ -83,7 +91,20 @@ export default function EducationBundleEditor({
         .split('\n')
         .some((line) => line.trim()),
   );
-  const selectedSnapshot = preview?.snapshot ?? null;
+  const currentPreview = previewIsCurrent(previewSelectionKey, selectionKey)
+    ? preview
+    : null;
+  const selectedSnapshot = currentPreview?.snapshot ?? null;
+  const activeDraft = activeBundle ? { title, body, checklist } : null;
+  const conflictNeedsReview = Boolean(conflictBundle);
+  const activeDirty = Boolean(
+    activeBundle && activeDraft && bundleDraftIsDirty(activeBundle, activeDraft),
+  );
+  const activeActionsBlocked = Boolean(
+    activeBundle &&
+      activeDraft &&
+      bundleActionBlocked(activeBundle, activeDraft, conflictNeedsReview),
+  );
   const selectedSources = useMemo(
     () => activeBundle?.sources ?? preview?.sources ?? [],
     [activeBundle, preview],
@@ -100,14 +121,20 @@ export default function EducationBundleEditor({
   const refreshSelectionAfterConflict = () => {
     setError('추천이 변경되어 최신 미리보기를 다시 확인해야 합니다. 입력한 내용은 보존됩니다.');
     return previewEducationBundle(recommendationIds)
-      .then(setPreview)
+      .then((next) => {
+        setPreview(next);
+        setPreviewSelectionKey(selectionKey);
+      })
       .catch(showError);
   };
 
   const refreshBundleAfterConflict = (bundleId: string) => {
     setError('다른 관리자가 자료를 변경했습니다. 최신 자료를 확인해 주세요. 입력한 내용은 보존됩니다.');
     return fetchEducationBundle(bundleId)
-      .then(setActiveBundle)
+      .then((latest) => {
+        setActiveBundle(latest);
+        setConflictBundle(latest);
+      })
       .catch(showError);
   };
 
@@ -117,10 +144,9 @@ export default function EducationBundleEditor({
     previewEducationBundle(recommendationIds)
       .then((next) => {
         setPreview(next);
+        setPreviewSelectionKey(selectionKey);
         setActiveBundle(null);
-        setTitle('');
-        setBody('');
-        setChecklist('');
+        setConflictBundle(null);
       })
       .catch(showError)
       .finally(() => setBusy(false));
@@ -128,6 +154,8 @@ export default function EducationBundleEditor({
 
   const startNewDraft = () => {
     setActiveBundle(null);
+    setConflictBundle(null);
+    setPreviewSelectionKey(null);
     setTitle('');
     setBody('');
     setChecklist('');
@@ -137,6 +165,8 @@ export default function EducationBundleEditor({
   const openBundle = (bundle: EducationBundle) => {
     setActiveBundle(bundle);
     setPreview(null);
+    setPreviewSelectionKey(null);
+    setConflictBundle(null);
     setTitle(bundle.title);
     setBody(bundle.body);
     setChecklist(bundle.checklist.join('\n'));
@@ -163,7 +193,9 @@ export default function EducationBundleEditor({
     request
       .then((next) => {
         setActiveBundle(next);
+        setConflictBundle(null);
         setPreview(null);
+        setPreviewSelectionKey(null);
         setTitle(next.title);
         setBody(next.body);
         setChecklist(next.checklist.join('\n'));
@@ -188,7 +220,9 @@ export default function EducationBundleEditor({
     generateEducationBundle(recommendationIds, selectedSnapshot)
       .then((next) => {
         setActiveBundle(next);
+        setConflictBundle(null);
         setPreview(null);
+        setPreviewSelectionKey(null);
         setTitle(next.title);
         setBody(next.body);
         setChecklist(next.checklist.join('\n'));
@@ -210,6 +244,7 @@ export default function EducationBundleEditor({
     publishEducationBundle(bundle.bundle_id, bundle.version)
       .then((next) => {
         setActiveBundle(next);
+        setConflictBundle(null);
         return loadBundles();
       })
       .catch((e: unknown) => {
@@ -228,6 +263,7 @@ export default function EducationBundleEditor({
     unpublishEducationBundle(bundle.bundle_id, bundle.version)
       .then((next) => {
         setActiveBundle(next);
+        setConflictBundle(null);
         return loadBundles();
       })
       .catch((e: unknown) => {
@@ -290,7 +326,7 @@ export default function EducationBundleEditor({
                     question="검토한 공통 본문을 작업자에게 게시하시겠습니까?"
                     confirmLabel="게시"
                     danger={false}
-                    disabled={busy}
+                    disabled={busy || (activeBundle?.bundle_id === bundle.bundle_id && activeActionsBlocked)}
                     onConfirm={() => publish(bundle)}
                   />
                 )}
@@ -300,7 +336,7 @@ export default function EducationBundleEditor({
                     label="게시 취소"
                     question="게시를 취소하면 작업자는 이 자료를 더 이상 볼 수 없습니다."
                     confirmLabel="게시 취소"
-                    disabled={busy}
+                    disabled={busy || (activeBundle?.bundle_id === bundle.bundle_id && activeActionsBlocked)}
                     onConfirm={() => unpublish(bundle)}
                   />
                 )}
@@ -324,14 +360,20 @@ export default function EducationBundleEditor({
         </div>
       )}
 
-      {preview && (
+      {preview && !currentPreview && (
+        <p className={styles.warning}>
+          선택이 변경되어 이전 snapshot을 사용할 수 없습니다. 입력한 초안은 보존되어 있으니 최신 미리보기를 다시 조회해 확인하세요.
+        </p>
+      )}
+
+      {currentPreview && preview && (
         <div className={styles.preview}>
           <div className={styles.previewHead}>
             <strong>원본 추천 미리보기</strong>
             <span>{preview.ppe_type} · {preview.quarter}</span>
           </div>
           <div className={styles.sourceList}>
-            {preview.sources.map((source) => (
+            {currentPreview.sources.map((source) => (
               <div key={source.recommendation_id} className={styles.source}>
                 <strong>{source.zone_name}</strong>
                 <span>{source.confirmed_count}건 · 점수 {source.priority_score.toFixed(1)}</span>
@@ -342,7 +384,7 @@ export default function EducationBundleEditor({
           <p className={styles.note}>
             확정 건수 합계 {preview.confirmed_count_sum}건 · 서로 다른 사람 수나 중복 제거 수가 아닙니다.
           </p>
-          <p className={styles.snapshot}>snapshot: {preview.snapshot}</p>
+          <p className={styles.snapshot}>snapshot: {currentPreview.snapshot}</p>
           <p className={styles.warning}>
             AI 초안은 일반 PPE 교육만 작성합니다. 구역별 특수 지침은 관리자가 직접 보완하고, 검토 후 명시적으로 게시하세요.
           </p>
@@ -366,6 +408,46 @@ export default function EducationBundleEditor({
         </div>
       )}
 
+      {conflictBundle && activeBundle?.bundle_id === conflictBundle.bundle_id && (
+        <div className={styles.conflict} role="alert">
+          <strong>최신 서버 자료와 충돌했습니다.</strong>
+          <p>현재 입력은 보존했으며 자동 저장·게시하지 않았습니다. 아래 최신 서버본을 검토한 뒤 명시적으로 선택하세요.</p>
+          <p><b>서버 제목:</b> {conflictBundle.title}</p>
+          <p className={styles.serverBody}><b>서버 본문:</b> {conflictBundle.body}</p>
+          <div className={styles.actions}>
+            <button
+              type="button"
+              className={styles.secondary}
+              onClick={() => {
+                setTitle(conflictBundle.title);
+                setBody(conflictBundle.body);
+                setChecklist(conflictBundle.checklist.join('\n'));
+                setConflictBundle(null);
+                setError(null);
+              }}
+            >
+              최신 서버본으로 다시 시작
+            </button>
+            <button
+              type="button"
+              className={styles.primary}
+              onClick={() => {
+                setConflictBundle(null);
+                setError(null);
+              }}
+            >
+              내 초안으로 해결
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeBundle && activeDirty && !conflictNeedsReview && (
+        <p className={styles.warning}>
+          저장하지 않은 수정이 있습니다. 현재 화면의 수정본은 저장한 뒤 다시 검토해야 게시할 수 있습니다.
+        </p>
+      )}
+
       {(preview || activeBundle) && (
         <div className={styles.form}>
           <label className={styles.field}>
@@ -382,7 +464,7 @@ export default function EducationBundleEditor({
           </label>
           <div className={styles.actions}>
             {activeBundle ? (
-              <button type="button" className={styles.primary} disabled={busy || !validContent || activeBundle.status !== 'draft'} onClick={save}>
+              <button type="button" className={styles.primary} disabled={busy || !validContent || activeBundle.status !== 'draft' || conflictNeedsReview} onClick={save}>
                 초안 저장
               </button>
             ) : (
@@ -396,7 +478,7 @@ export default function EducationBundleEditor({
                   question="AI가 일반 PPE 교육 초안을 생성합니다. 생성 후에도 관리자의 검토와 명시적 게시가 필요합니다."
                   confirmLabel="생성"
                   danger={false}
-                  disabled={busy}
+                  disabled={busy || conflictNeedsReview}
                   onConfirm={generate}
                 />
               </>
@@ -408,7 +490,7 @@ export default function EducationBundleEditor({
                 question="현재 버전의 공통 교육자료를 작업자에게 게시하시겠습니까?"
                 confirmLabel="게시"
                 danger={false}
-                disabled={busy}
+                disabled={busy || activeActionsBlocked}
                 onConfirm={() => publish(activeBundle)}
               />
             )}
@@ -418,7 +500,7 @@ export default function EducationBundleEditor({
                 label="게시 취소"
                 question="게시를 취소하면 작업자는 이 자료를 더 이상 볼 수 없습니다."
                 confirmLabel="게시 취소"
-                disabled={busy}
+                disabled={busy || activeActionsBlocked}
                 onConfirm={() => unpublish(activeBundle)}
               />
             )}

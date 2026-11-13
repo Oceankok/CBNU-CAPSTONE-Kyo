@@ -284,7 +284,6 @@ export default function RecommendPage() {
 
       {data && (
         <EducationBundleEditor
-          key={selectedIds.join('|')}
           quarter={data.quarter}
           recommendationIds={selectedIds}
         />

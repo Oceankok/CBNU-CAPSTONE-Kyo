@@ -132,6 +132,27 @@
   border-radius: 5px;
 }
 
+.conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  color: #742a2a;
+  background: #fff5f5;
+  border: 1px solid #feb2b2;
+  border-radius: 6px;
+  line-height: 1.5;
+  font-size: 13px;
+}
+
+.conflict p {
+  margin: 0;
+}
+
+.serverBody {
+  white-space: pre-wrap;
+}
+
 .badge {
   padding: 2px 8px;
   border-radius: 999px;
