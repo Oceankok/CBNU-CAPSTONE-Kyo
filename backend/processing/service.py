@@ -9,6 +9,8 @@ from backend.db.connection import begin_write
 from backend.db.event_repository import get_connection
 from backend.media.paths import private_source_path
 
+from backend.media.retention_access import expired as retention_expired, require_unexpired
+
 LEASE_SECONDS = 90
 MAX_SECONDS = 1800
 
@@ -32,6 +34,8 @@ def authorized(conn, job_id, node_id, token, *, terminal=False):
         raise HTTPException(403, 'processing_lease_invalid')
     media = conn.execute('SELECT * FROM event_media WHERE media_id=?', (row['media_id'],)).fetchone()
     retention = conn.execute('SELECT decision FROM event_retention WHERE event_id=?', (media['event_id'],)).fetchone()
+    if retention_expired(conn,media['event_id']):
+        raise HTTPException(409,'event_media_expired')
     if terminal and row['status'] == 'succeeded' and retention['decision'] != 'delete' and media['processing_generation'] == row['generation']:
         return row
     if row['status'] != 'running' or row['lease_until'] <= time.time() or media['status'] != 'processing' or \
@@ -49,6 +53,7 @@ def enqueue(media_id):
         retention = conn.execute('SELECT decision FROM event_retention WHERE event_id=?', (media['event_id'],)).fetchone()
         if retention['decision'] == 'delete':
             raise ValueError('event_media_deleted')
+        require_unexpired(conn,media['event_id'])
         if conn.execute("SELECT 1 FROM processing_job WHERE media_id=? AND status IN ('queued','running')", (media_id,)).fetchone():
             raise ValueError('processing_in_progress')
         generation = media['processing_generation'] + 1
@@ -85,8 +90,11 @@ def claim(node_id):
                     if not clip or clip[0] != 'received':
                         continue
                 retention = conn.execute('SELECT decision FROM event_retention WHERE event_id=?', (media['event_id'],)).fetchone()
-                if retention and retention[0] == 'delete':
+                expired=retention_expired(conn,media['event_id'])
+                if (retention and retention[0] == 'delete') or expired:
                     conn.execute("UPDATE processing_job SET status='cancelled',updated_at=? WHERE job_id=?", (time.time(), candidate['job_id']))
+                    if expired:
+                        conn.execute("UPDATE event_media SET status='failed',redaction_status='failed',error_code='event_media_expired',processing_started_at=NULL WHERE media_id=? AND status='processing' AND processing_generation=?",(media['media_id'],candidate['generation']))
                     continue
             if not media or media['status'] != 'processing' or not media['source_path'] or \
                     media['source_expires_at'] <= time.time() or not private_source_path(media['source_path']).is_file():
@@ -149,7 +157,11 @@ def cleanup(job_id, node_id):
         if row['worker_node_id'] != node_id:
             raise HTTPException(403, 'processing_worker_mismatch')
         if row['status'] in {'queued', 'running'}:
-            raise HTTPException(409, 'processing_still_active')
+            event=conn.execute('SELECT event_id FROM event_media WHERE media_id=?',(row['media_id'],)).fetchone()[0]
+            if not retention_expired(conn,event):
+                raise HTTPException(409, 'processing_still_active')
+            conn.execute("UPDATE processing_job SET status='cancelled',error_code='event_media_expired',finished_at=?,updated_at=? WHERE job_id=?",(time.time(),time.time(),job_id))
+            conn.execute("UPDATE event_media SET status='failed',redaction_status='failed',error_code='event_media_expired',processing_started_at=NULL WHERE media_id=? AND status='processing' AND processing_generation=?",(row['media_id'],row['generation']))
         conn.execute("UPDATE processing_job SET local_cleanup_status='confirmed',updated_at=? WHERE job_id=?", (time.time(), job_id))
         event = conn.execute('SELECT event_id FROM event_media WHERE media_id=?', (row['media_id'],)).fetchone()[0]
     from backend.media.service import get_retention, delete_event_media
@@ -187,6 +199,8 @@ def ingest(event_id, camera_id, kind, role, source, mode, request_id=None):
         if len(signature) < 12 or signature[4:8] != b'ftyp':
             raise ValueError('invalid_video_source')
     from backend.media.service import register_media, _preserve_source, get_media, _fail, _finish_processing
+    from backend.processing import receipts
+    measurement=receipts.measure(source) if request_id else None
     ident = register_media(event_id, camera_id, kind, role, mode, request_id)
     try:
         _preserve_source(ident, source=source, consume_source=True)
@@ -200,6 +214,7 @@ def ingest(event_id, camera_id, kind, role, source, mode, request_id=None):
                 changed = conn.execute("UPDATE event_clip_request SET status='received',updated_at=? WHERE request_id=? AND status='pending'", (time.time(), request_id))
                 if changed.rowcount != 1:
                     raise ValueError('clip_request_already_finished')
+                receipts.record(conn,event_id,request_id,ident,measurement)
     except Exception as error:
         with get_connection() as conn:
             begin_write(conn)
@@ -220,6 +235,7 @@ def reprocess(media_id, mode):
         if not row:
             raise ValueError('media_not_found')
         retention = conn.execute('SELECT decision FROM event_retention WHERE event_id=?', (row['event_id'],)).fetchone()
+        require_unexpired(conn,row['event_id'])
         reason = reprocess_unavailable_reason(dict(row), retention['decision'])
         if reason:
             raise ValueError(reason)

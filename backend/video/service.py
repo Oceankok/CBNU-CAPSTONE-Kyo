@@ -1,4 +1,5 @@
 """Private, bounded short-video buffer. Only trusted processors can read raw chunks."""
+from backend.capture_context.service import begin as capture_begin
 from datetime import datetime, timezone
 import hashlib
 import math
@@ -16,6 +17,15 @@ from backend.media.paths import WORK_ROOT
 
 ROOT = WORK_ROOT / 'video_ingest'
 BUFFER_SECONDS = 30
+
+def context_raw_retention_seconds():
+    """Explicit deployment opt-in, never a lease or quota expansion."""
+    import os
+    value=os.environ.get("PPE_CONTEXT_RAW_RETENTION_SECONDS","30")
+    if value not in {"30","60","120"}:
+        raise HTTPException(503,"invalid_context_raw_retention_policy")
+    return int(value)
+
 MAX_BYTES = 8 * 1024 * 1024
 CAMERA_BYTES = 64 * 1024 * 1024
 TOTAL_BYTES = 256 * 1024 * 1024
@@ -46,7 +56,10 @@ def stream(conn, ident, node_id=None):
     if node_id is not None and row['node_id'] != node_id:
         raise HTTPException(403, 'video_stream_owner_required')
     source_allowed(conn, row['camera_id'], row['node_id'])
-    if row['status'] != 'active' or row['last_seen_at'] + BUFFER_SECONDS <= time.time():
+    from backend.capture_context import service as contexts
+    extra=contexts.stream_fields(conn,ident)
+    if extra:contexts.owned(conn,extra['capture_context_id'],node_id,row['camera_id'],active=True)
+    if row['status'] != 'active' or (not extra and row['last_seen_at'] + BUFFER_SECONDS <= time.time()):
         raise HTTPException(409, 'video_stream_expired')
     return row
 
@@ -74,8 +87,8 @@ def cleanup():
     timestamp = time.time()
     removed = 0
     with get_connection() as conn:
-        begin_write(conn)
-        conn.execute("UPDATE video_stream SET status='expired' WHERE status='active' AND last_seen_at<=?", (timestamp-BUFFER_SECONDS,))
+        capture_begin(conn)
+        conn.execute("UPDATE video_stream SET status='expired' WHERE status='active' AND last_seen_at<=? AND NOT EXISTS (SELECT 1 FROM capture_context_stream m WHERE m.stream_id=video_stream.stream_id)", (timestamp-BUFFER_SECONDS,))
         removed += _delete_expired_chunks(conn, timestamp)
         referenced = {row[0] for row in conn.execute('SELECT chunk_id FROM video_chunk')}
         # Orphan files may remain after a process dies between file publish and DB commit.
@@ -88,25 +101,45 @@ def cleanup():
                 except (OSError, HTTPException):
                     pass
         # Empty, inactive sessions contain no raw data; bound their metadata lifetime too.
-        conn.execute("DELETE FROM video_stream WHERE status!='active' AND last_seen_at<? AND NOT EXISTS (SELECT 1 FROM video_chunk c WHERE c.stream_id=video_stream.stream_id)", (timestamp-86400,))
+        conn.execute("DELETE FROM video_stream WHERE status!='active' AND last_seen_at<? AND NOT EXISTS (SELECT 1 FROM video_chunk c WHERE c.stream_id=video_stream.stream_id) AND NOT EXISTS (SELECT 1 FROM capture_context_stream m WHERE m.stream_id=video_stream.stream_id)", (timestamp-86400,))
     return removed
 
 
-def create_stream(camera_id, node_id):
+def create_stream(camera_id, node_id, *, capture_context_id=None,requested_id=None):
     cleanup()
+    policy_fields=({'raw_retention_seconds_for_new_uploads':context_raw_retention_seconds()}
+                   if capture_context_id else {})
     with get_connection() as conn:
-        begin_write(conn)
+        capture_begin(conn)
         source_allowed(conn, camera_id, node_id)
+        from backend.capture_context import service as contexts
+        if capture_context_id is None and (contexts.enabled() or conn.execute('SELECT 1 FROM capture_context_registry WHERE camera_id=?',(camera_id,)).fetchone()):
+            raise HTTPException(422,'capture_context_required')
+        if capture_context_id is not None:
+            contexts.require_enabled();contexts.owned(conn,capture_context_id,node_id,camera_id,active=True)
+            if requested_id is None:raise HTTPException(422,'idempotent_stream_id_required')
+        if requested_id:
+            old=conn.execute('SELECT * FROM video_stream WHERE stream_id=?',(requested_id,)).fetchone()
+            if old:
+                extra=contexts.stream_fields(conn,requested_id)
+                if old['camera_id']!=camera_id or old['node_id']!=node_id or extra.get('capture_context_id')!=capture_context_id:
+                    raise HTTPException(409,'video_stream_request_conflict')
+                return {'stream_id':requested_id,'camera_id':camera_id,'buffer_seconds':BUFFER_SECONDS,'max_chunk_bytes':MAX_BYTES,**extra,**policy_fields}
+        if capture_context_id and conn.execute('SELECT 1 FROM capture_context_stream WHERE context_id=?',(capture_context_id,)).fetchone():
+            raise HTTPException(409,'capture_context_stream_already_exists')
         # An authenticated current source node may replace its camera's old session.
         conn.execute("UPDATE video_stream SET status='closed' WHERE camera_id=? AND status='active'", (camera_id,))
         if conn.execute("SELECT COUNT(*) FROM video_stream WHERE status='active'").fetchone()[0] >= 8:
             raise HTTPException(429, 'video_stream_capacity_reached')
         if conn.execute('SELECT COUNT(*) FROM video_stream').fetchone()[0] >= 10000:
             raise HTTPException(429, 'video_stream_history_full')
-        ident, timestamp = str(uuid4()), time.time()
+        ident, timestamp = requested_id or str(uuid4()), time.time()
         conn.execute("INSERT INTO video_stream(stream_id,camera_id,node_id,status,created_at,last_seen_at) VALUES(?,?,?,'active',?,?)", (ident, camera_id, node_id, timestamp, timestamp))
+        if capture_context_id:
+            conn.execute('INSERT INTO capture_context_stream(stream_id,context_id) VALUES(?,?)',(ident,capture_context_id))
+        extra=contexts.stream_fields(conn,ident)
         conn.execute('UPDATE field_node SET last_seen_at=? WHERE node_id=?', (timestamp, node_id))
-    return {'stream_id': ident, 'camera_id': camera_id, 'buffer_seconds': BUFFER_SECONDS, 'max_chunk_bytes': MAX_BYTES}
+    return {'stream_id': ident, 'camera_id': camera_id, 'buffer_seconds': BUFFER_SECONDS, 'max_chunk_bytes': MAX_BYTES,**extra,**policy_fields}
 
 
 def validate_video(path, duration_ms):
@@ -146,14 +179,28 @@ def accept(ident, node_id, sequence, capture_start, duration_ms, source):
     moved = None
     try:
         with get_connection() as conn:
-            begin_write(conn)
+            capture_begin(conn)
             current = stream(conn, ident, node_id)
+            from backend.capture_context.service import stream_fields,owned
+            extra=stream_fields(conn,ident)
+            if extra:
+                context=owned(conn,extra['capture_context_id'],node_id,current['camera_id'],active=True)
+                if datetime.fromisoformat(capture_start)<datetime.fromisoformat(context['valid_from']) or datetime.fromisoformat(capture_start).timestamp()+duration_ms/1000>time.time():
+                    raise HTTPException(422,'capture_before_session')
+            if extra:
+                receipt=conn.execute('SELECT * FROM capture_chunk_receipt WHERE stream_id=? AND sequence=?',(ident,sequence)).fetchone()
+                if receipt:
+                    if receipt['sha256']!=digest or receipt['capture_start_at']!=capture_start or receipt['duration_ms']!=duration_ms:
+                        raise HTTPException(409,'video_chunk_conflict')
+                    return {'received':True,'duplicate':True,'sequence':sequence,'chunk_id':receipt['chunk_id']}
             old = conn.execute('SELECT * FROM video_chunk WHERE stream_id=? AND sequence=?', (ident, sequence)).fetchone()
             if old:
                 if old['sha256'] != digest or old['capture_start_at'] != capture_start or old['duration_ms'] != duration_ms:
                     raise HTTPException(409, 'video_chunk_conflict')
                 return {'received': True, 'duplicate': True, 'sequence': sequence, 'chunk_id': old['chunk_id']}
             previous = current['last_sequence']
+            if extra and sequence > previous + 1:
+                raise HTTPException(409, 'capture_sequence_gap')
             if sequence <= previous:
                 raise HTTPException(409, 'video_sequence_out_of_order')
             if _buffer_full(conn, current['camera_id'], size):
@@ -162,11 +209,14 @@ def accept(ident, node_id, sequence, capture_start, duration_ms, source):
                 _delete_expired_chunks(conn, time.time())
                 if _buffer_full(conn, current['camera_id'], size):
                     raise HTTPException(429, 'video_buffer_full', headers={'Retry-After':'1'})
+            retention=context_raw_retention_seconds() if extra else BUFFER_SECONDS
             key, timestamp = str(uuid4()), time.time()
             target = chunk_path(key)
             source.replace(target)
             moved = target
-            conn.execute('INSERT INTO video_chunk VALUES(?,?,?,?,?,?,?,?,?)', (key, ident, sequence, digest, size, capture_start, duration_ms, timestamp, timestamp+BUFFER_SECONDS))
+            conn.execute('INSERT INTO video_chunk VALUES(?,?,?,?,?,?,?,?,?)', (key, ident, sequence, digest, size, capture_start, duration_ms, timestamp, timestamp+retention))
+            if extra:
+                conn.execute('INSERT INTO capture_chunk_receipt VALUES(?,?,?,?,?,?)',(ident,sequence,key,digest,capture_start,duration_ms))
             conn.execute('UPDATE video_stream SET last_seen_at=?,last_sequence=?,sequence_gap_count=sequence_gap_count+? WHERE stream_id=?',
                          (timestamp, sequence, sequence-previous-1, ident))
             conn.execute('UPDATE field_node SET last_seen_at=? WHERE node_id=?', (timestamp, node_id))

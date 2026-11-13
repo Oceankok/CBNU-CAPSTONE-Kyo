@@ -81,6 +81,12 @@ def list_cameras(zone_name: str | None = Query(default=None, max_length=100)):
 def link_camera(camera_id: str, body: CameraLink):
     try:
         with get_connection() as conn:
+            from backend.capture_context.service import begin
+            begin(conn)
+            old=conn.execute('SELECT source_node_id FROM camera_node WHERE camera_id=?',(camera_id,)).fetchone()
+            if old and old['source_node_id']!=body.source_node_id:
+                from backend.capture_context.service import assert_reassignment_allowed
+                assert_reassignment_allowed(conn,camera_id)
             conn.execute("""INSERT INTO camera_node(camera_id,source_node_id,output_node_id) VALUES(?,?,?)
                             ON CONFLICT(camera_id) DO UPDATE SET source_node_id=excluded.source_node_id,output_node_id=excluded.output_node_id""",
                          (camera_id, body.source_node_id, body.output_node_id))

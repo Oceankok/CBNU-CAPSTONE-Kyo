@@ -87,7 +87,8 @@ app.include_router(worker_router)
 admin_router = APIRouter(dependencies=[Depends(require_admin)])
 
 
-@app.api_route("/storage/{media_path:path}", methods=["GET", "HEAD"])
+@app.get("/storage/{media_path:path}", operation_id="read_media_get")
+@app.head("/storage/{media_path:path}", operation_id="read_media_head")
 def read_media(media_path: str, request: Request):
     token = request.cookies.get("ppe_media")
     if not token:
@@ -105,7 +106,10 @@ def read_media(media_path: str, request: Request):
         permitted = conn.execute("""SELECT 1 FROM event_media m
             LEFT JOIN event_retention r ON r.event_id=m.event_id
             WHERE m.storage_path=? AND m.status='ready' AND m.redaction_status='complete'
-              AND COALESCE(r.decision,'pending')!='delete' LIMIT 1""", (key,)).fetchone()
+              AND COALESCE(r.decision,'pending')!='delete'
+              AND (COALESCE(r.decision,'pending')!='retain' OR r.retain_until IS NULL
+                   OR r.retain_until>?) LIMIT 1""",
+            (key, datetime.now(timezone.utc).timestamp())).fetchone()
     if not permitted:
         raise HTTPException(404, "Media unavailable")
     return FileResponse(target, headers={"Cache-Control": "private, no-store"})
@@ -163,6 +167,16 @@ def read_root() -> dict[str, str]:
     return {"message": "PPE Analysis API is running"}
 
 
+def _validate_event_zones(zone: str | None, zones: list[str] | None) -> list[str] | None:
+    if zone is not None and zones is not None:
+        raise HTTPException(400, 'ambiguous_event_zone_filter')
+    if zones is not None:
+        if any(not value or len(value) > 100 for value in zones):
+            raise HTTPException(422, 'invalid_event_zone_filter')
+        return list(dict.fromkeys(zones))
+    return None
+
+
 @admin_router.get("/api/events")
 def read_events(
     date_from: date | None = None,
@@ -172,17 +186,20 @@ def read_events(
     status: str | None = Query(default=None, min_length=1, max_length=30),
     ppe_type: str | None = Query(default=None, min_length=1, max_length=30),
     zone: str | None = Query(default=None, min_length=1, max_length=100),
+    zones: list[str] | None = Query(default=None, max_length=50),
     min_confidence: float | None = Query(default=None, ge=0, le=1),
+    include_suspected_duplicates: bool = False,
 ) -> dict:
     """
     후보 이벤트 전체 목록 조회.
     """
+    zones = _validate_event_zones(zone, zones)
     if date_from and date_to and date_from > date_to:
         raise HTTPException(400, 'invalid_event_date_range')
     total, events = get_candidate_events_page(
         limit=limit, offset=offset, date_from=date_from, date_to=date_to,
-        status=status, ppe_type=ppe_type, zone=zone,
-        min_confidence=min_confidence,
+        status=status, ppe_type=ppe_type, zone=zone, zones=zones,
+        min_confidence=min_confidence, include_relation_tags=include_suspected_duplicates,
     )
     return {"total": total, "offset": offset, "limit": limit, "has_more": offset + len(events) < total, "items": events,
             "reporting_timezone": "Asia/Seoul", "legacy_time_policy": "as_recorded"}
@@ -195,16 +212,18 @@ def read_event_summary(
     status: str | None = Query(default=None, min_length=1, max_length=30),
     ppe_type: str | None = Query(default=None, min_length=1, max_length=30),
     zone: str | None = Query(default=None, min_length=1, max_length=100),
+    zones: list[str] | None = Query(default=None, max_length=50),
     min_confidence: float | None = Query(default=None, ge=0, le=1),
     recent_limit: int = Query(default=10, ge=0, le=50),
 ) -> dict:
     """Return server-side counts for the same filters as the event list."""
+    zones = _validate_event_zones(zone, zones)
     if date_from and date_to and date_from > date_to:
         raise HTTPException(400, 'invalid_event_date_range')
     return {
         **get_candidate_event_summary(
             date_from=date_from, date_to=date_to, status=status,
-            ppe_type=ppe_type, zone=zone, min_confidence=min_confidence,
+            ppe_type=ppe_type, zone=zone, zones=zones, min_confidence=min_confidence,
             recent_limit=recent_limit,
         ),
         "reporting_timezone": "Asia/Seoul",
@@ -213,7 +232,7 @@ def read_event_summary(
 
 
 @admin_router.get("/api/events/{event_id}")
-def read_event(event_id: str) -> dict:
+def read_event(event_id: str, include_suspected_duplicates: bool = False) -> dict:
     """
     후보 이벤트 단건 조회.
 
@@ -225,7 +244,7 @@ def read_event(event_id: str) -> dict:
         dict:
             후보 이벤트 정보와 검토 결과 반환.
     """
-    event = get_candidate_event_by_id(event_id)
+    event = get_candidate_event_by_id(event_id, include_relation_tags=include_suspected_duplicates)
 
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
@@ -555,3 +574,21 @@ app.include_router(snapshots_router)
 @app.exception_handler(CameraStateError)
 async def camera_state_error(request: Request, error: CameraStateError):
     return JSONResponse(status_code=error.status_code, content={'detail': str(error)})
+
+from backend.processing.lifecycle_routes import router as continuous_event_router
+app.include_router(continuous_event_router)
+
+from backend.auto_decision.routes import router as auto_decision_preview_router
+app.include_router(auto_decision_preview_router)
+
+from backend.event_relations.routes import router as event_relations_router
+app.include_router(event_relations_router)
+
+from backend.auto_decision.shadow import router as shadow_diagnostic_router
+app.include_router(shadow_diagnostic_router)
+
+from backend.capture_context.routes import router as capture_context_router
+app.include_router(capture_context_router)
+
+from backend.capture_context.routes import legacy_router as legacy_capture_stop_router
+app.include_router(legacy_capture_stop_router)

@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.auth.service import current_user, require_admin
 from backend.db.event_repository import get_connection
@@ -21,14 +21,27 @@ class ZoneRuleRequest(BaseModel):
     )
     rules: list[str] = Field(max_length=100, description="작업자에게 표시할 안전 수칙 문구")
 
+    risk_level: int | None = Field(default=None, strict=True, ge=1, le=5,
+        description="Stored zone risk level only; used by newly generated zone_ppe_v2 education recommendations. Omit to preserve; null is rejected.")
 
-def _serialize(row) -> dict:
+    @field_validator("risk_level")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("risk_level cannot be null; omit it to preserve the current value")
+        return value
+
+
+def _serialize(row, *, include_risk=False) -> dict:
     try:
         required_ppe, rules = json.loads(row["required_ppe"]), json.loads(row["rules"])
     except (TypeError, json.JSONDecodeError) as exc:
         raise HTTPException(500, "Stored zone rule is invalid") from exc
-    return {"zone_name": row["zone_name"], "required_ppe": required_ppe,
+    result = {"zone_name": row["zone_name"], "required_ppe": required_ppe,
             "rules": rules, "updated_at": row["updated_at"]}
+    if include_risk:
+        result.update(risk_level=row["risk_level"], risk_scoring_enabled=True)
+    return result
 
 
 def _find(conn, zone_name: str):
@@ -39,12 +52,13 @@ def _find(conn, zone_name: str):
 def list_zone_rules():
     with get_connection() as conn:
         rows = conn.execute("SELECT * FROM zone_rule ORDER BY zone_name").fetchall()
-        return {"items": [{**_serialize(row), "member_count": conn.execute(
+        return {"items": [{**_serialize(row, include_risk=True), "member_count": conn.execute(
             "SELECT COUNT(*) FROM user_zone WHERE zone_name=?", (row["zone_name"],)).fetchone()[0]} for row in rows]}
 
 
 class ZoneMembersRequest(BaseModel):
     user_ids: list[str] = Field(max_length=1000)
+    expected_user_ids: list[str] | None = Field(default=None, max_length=1000)
 
 
 @admin.put("/{zone_name}/members")
@@ -52,15 +66,26 @@ def replace_zone_members(zone_name: str, body: ZoneMembersRequest):
     user_ids = [user_id.strip() for user_id in body.user_ids]
     if any(not user_id or len(user_id) > 100 for user_id in user_ids) or len(set(user_ids)) != len(user_ids):
         raise HTTPException(422, "user_ids must contain distinct nonblank IDs")
+    expected = None
+    if "expected_user_ids" in body.model_fields_set:
+        if body.expected_user_ids is None:
+            raise HTTPException(422, "expected_user_ids must be an array")
+        expected = [user_id.strip() for user_id in body.expected_user_ids]
+        if any(not user_id or len(user_id) > 100 for user_id in expected) or len(set(expected)) != len(expected):
+            raise HTTPException(422, "expected_user_ids must contain distinct nonblank IDs")
     with get_connection() as conn:
         begin_write(conn)
         if not _find(conn, zone_name):
             raise HTTPException(404, "Zone rule not found")
+        current = {row[0] for row in conn.execute(
+            "SELECT user_id FROM user_zone WHERE zone_name=?", (zone_name,))}
+        if expected is not None and current != set(expected):
+            raise HTTPException(409, "zone_members_changed")
         for user_id in user_ids:
             row = conn.execute("SELECT role FROM app_user WHERE user_id=?", (user_id,)).fetchone()
             if row is None or row[0] != "worker":
                 raise HTTPException(422, "Members must be existing worker accounts")
-        affected = {row[0] for row in conn.execute("SELECT user_id FROM user_zone WHERE zone_name=?", (zone_name,))} | set(user_ids)
+        affected = current | set(user_ids)
         conn.execute("DELETE FROM user_zone WHERE zone_name=?", (zone_name,))
         conn.executemany("INSERT INTO user_zone(user_id,zone_name) VALUES(?,?)", [(user_id, zone_name) for user_id in user_ids])
         for user_id in affected:
@@ -84,13 +109,16 @@ def save_zone_rule(zone_name: str, body: ZoneRuleRequest, user: dict = Depends(r
         raise HTTPException(422, "rules must not contain duplicates")
     updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with get_connection() as conn:
-        conn.execute("""INSERT INTO zone_rule(zone_name,required_ppe,rules,updated_at,updated_by)
-            VALUES(?,?,?,?,?) ON CONFLICT(zone_name) DO UPDATE SET
+        # Omitted risk must not overwrite a concurrent explicit risk update.
+        # Only server-chosen SQL fragments are interpolated, never client data.
+        risk_update = ",risk_level=excluded.risk_level" if "risk_level" in body.model_fields_set else ""
+        conn.execute(f"""INSERT INTO zone_rule(zone_name,required_ppe,rules,updated_at,updated_by,risk_level)
+            VALUES(?,?,?,?,?,?) ON CONFLICT(zone_name) DO UPDATE SET
             required_ppe=excluded.required_ppe,rules=excluded.rules,
-            updated_at=excluded.updated_at,updated_by=excluded.updated_by""",
+            updated_at=excluded.updated_at,updated_by=excluded.updated_by{risk_update}""",
             (zone_name, json.dumps(required_ppe, ensure_ascii=False), json.dumps(rules, ensure_ascii=False),
-             updated_at, user["user_id"]))
-        return _serialize(_find(conn, zone_name))
+             updated_at, user["user_id"], body.risk_level))
+        return _serialize(_find(conn, zone_name), include_risk=True)
 
 
 @admin.delete("/{zone_name}")
@@ -138,6 +166,12 @@ def get_my_education(user: dict = Depends(current_user)):
     if user["role"] != "worker":
         raise HTTPException(403, "Worker access required")
     with get_connection() as conn:
+        # Membership, latest quarter, rankings and published content must all be
+        # read from one snapshot while another transaction rebuilds rankings.
+        if getattr(conn, 'dialect', 'sqlite') == 'postgresql':
+            conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        else:
+            conn.execute('BEGIN')
         groups = []
         for zone in zones_for(conn, user["user_id"]):
             quarter = conn.execute("SELECT MAX(quarter) FROM education_recommendation WHERE zone_name=?", (zone,)).fetchone()[0]

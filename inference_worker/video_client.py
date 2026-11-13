@@ -37,6 +37,13 @@ class VideoClient:
         response.raise_for_status()
         return response.json()["items"]
 
+    def stream_availability(self, stream_id, after_sequence):
+        response=self.client.get(f'/api/processing/video/streams/{stream_id}/availability',
+                                 params={'after_sequence':after_sequence})
+        if response.status_code==404:return None
+        response.raise_for_status()
+        return response.json()
+
     def list_chunks(self, stream_id, after_sequence=-1):
         response = self.client.get(
             f"/api/processing/video/streams/{stream_id}/chunks",

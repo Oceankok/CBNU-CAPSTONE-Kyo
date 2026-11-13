@@ -13,14 +13,21 @@ from backend.db.event_repository import get_connection
 generation_slot = BoundedSemaphore(1)
 
 
-def generate_draft(recommendation_id, actor):
+def generate_draft(recommendation_id, actor, *, expected_scope=None):
     from backend.education import provider
     # A small per-process limit; this is not a distributed job or retry system.
     if not generation_slot.acquire(blocking=False):
         raise HTTPException(429, 'education_generation_busy')
     try:
         with get_connection() as conn:
-            scope = recommendation(conn, recommendation_id)
+            try:
+                scope = recommendation(conn, recommendation_id)
+            except HTTPException:
+                if expected_scope is not None:
+                    raise HTTPException(409, 'education_recommendation_changed') from None
+                raise
+            if expected_scope is not None and scope != expected_scope:
+                raise HTTPException(409, 'education_recommendation_changed')
         try:
             configured = provider.settings()
             from backend.runtime import processing_mode

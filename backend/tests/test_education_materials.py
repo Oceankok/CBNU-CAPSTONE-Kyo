@@ -55,6 +55,50 @@ class EducationMaterialTests(unittest.TestCase):
         self.assertIn(row['checklist'][0], material)
         self.assertNotIn('admin02', material)
 
+    def test_stats_regeneration_preserves_all_material_states_and_versions(self):
+        previous = self.draft(title='이전 게시본').json()
+        self.assertEqual(self.publish(previous['material_id']).status_code, 200)
+        published = self.draft(title='현재 게시본').json()
+        self.assertEqual(self.publish(published['material_id']).status_code, 200)
+        draft = self.draft(title='작성 중 초안').json()
+        edited = self.client.patch('/api/education/materials/'+draft['material_id'],
+                                  headers=self.admin, json={
+                                      'title': '수정 중인 초안', 'body': '보존할 본문',
+                                      'checklist': ['보존할 점검 항목'], 'expected_version': 0})
+        self.assertEqual(edited.status_code, 200, edited.text)
+        other_quarter = self.draft('REC_OLD', title='이전 분기 자료').json()
+        self.assertEqual(self.publish(other_quarter['material_id']).status_code, 200)
+        with get_connection() as conn:
+            before = [dict(row) for row in conn.execute(
+                'SELECT * FROM education_material ORDER BY material_id')]
+            conn.execute("UPDATE quarterly_summary SET candidate_count=999999 WHERE quarter='2026-Q3'")
+        self.assertEqual({row['status'] for row in before}, {'draft', 'published', 'superseded'})
+        self.assertEqual(edited.json()['version'], 1)
+
+        # The real stats endpoint must update its cache without deleting the
+        # quarter parent and cascading into durable education content.
+        for _ in range(2):
+            response = self.client.post('/api/stats/generate?quarter=2026-Q3', headers=self.admin)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertNotEqual(response.json()['summary']['candidate_count'], 999999)
+            with get_connection() as conn:
+                after = [dict(row) for row in conn.execute(
+                    'SELECT * FROM education_material ORDER BY material_id')]
+            self.assertEqual(after, before)
+            for row in before:
+                fetched = self.client.get('/api/education/materials/'+row['material_id'], headers=self.admin)
+                self.assertEqual(fetched.status_code, 200, fetched.text)
+                self.assertEqual(fetched.json()['version'], row['version'])
+
+    def test_stats_first_generation_and_repeat_create_only_one_summary(self):
+        for _ in range(2):
+            response = self.client.post('/api/stats/generate?quarter=2099-Q1', headers=self.admin)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()['summary']['candidate_count'], 0)
+            with get_connection() as conn:
+                self.assertEqual(conn.execute(
+                    "SELECT COUNT(*) FROM quarterly_summary WHERE quarter='2099-Q1'").fetchone()[0], 1)
+
     def test_draft_edit_versions_and_immutable_published_content(self):
         row = self.draft().json()
         url = '/api/education/materials/'+row['material_id']

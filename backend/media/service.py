@@ -15,6 +15,7 @@ from uuid import uuid4
 from backend.db.event_repository import get_connection
 from backend.media.paths import PROCESSED_ROOT, WORK_ROOT, SOURCE_ROOT, private_source_path, owned_path, storage_key, publish_file
 from backend.media.redaction import MediaError, redact_image, redact_video
+from backend.media.retention_access import expired as retention_expired, require_unexpired
 
 
 def now() -> str:
@@ -81,6 +82,10 @@ def public_media(row: dict, decision: str = "pending") -> dict:
     result["failure_category"] = failure_category(row.get("error_code"))
     with get_connection() as conn:
         job = conn.execute('SELECT job_id,status,local_cleanup_status FROM processing_job WHERE media_id=? ORDER BY created_at DESC LIMIT 1', (row['media_id'],)).fetchone()
+        if retention_expired(conn,row['event_id']):
+            result['url']=None
+            result['can_reprocess']=False
+            result['reprocess_unavailable_reason']='event_media_expired'
     result['job_id'] = job['job_id'] if job else None
     result['processing_state'] = job['status'] if job else None
     if row.get('error_code') == 'face_verification_failed':
@@ -128,6 +133,8 @@ def validate_review(conn, review: dict):
     result = review["review_result"]
     if result not in {"confirmed", "false_positive", "hold", "unreviewable"}:
         raise ValueError("invalid_review_result")
+    from backend.processing.lifecycle import require_finalizable
+    require_finalizable(conn, review["event_id"])
     if result == "hold":
         return
     retention = conn.execute("SELECT decision FROM event_retention WHERE event_id=?", (review["event_id"],)).fetchone()
@@ -163,6 +170,7 @@ def _preserve_source(media_id: str, source=None, frame=None, consume_source: boo
             row = conn.execute("SELECT m.status,r.decision FROM event_media m LEFT JOIN event_retention r ON r.event_id=m.event_id WHERE media_id=?", (media_id,)).fetchone()
             if not row or row["status"] != "processing" or row["decision"] == "delete":
                 raise ValueError("event_media_deleted")
+            require_unexpired(conn,conn.execute('SELECT event_id FROM event_media WHERE media_id=?',(media_id,)).fetchone()[0])
             if frame is not None:
                 if not cv2.imwrite(str(target), frame):
                     raise MediaError("image_encode_failed")
@@ -231,10 +239,20 @@ def register_media(event_id: str, camera_id: str, kind: str, role: str, mode: st
                 raise ValueError('invalid_clip_request_media')
             if conn.execute('SELECT 1 FROM event_media WHERE request_id=?', (request_id,)).fetchone():
                 raise ValueError('clip_request_upload_in_progress')
+        capture = dict(event)
+        continuous = conn.execute('SELECT 1 FROM processing_event_lifecycle WHERE event_id=?', (event_id,)).fetchone()
+        if continuous:
+            from backend.processing.lifecycle import require_segment_upload
+            require_segment_upload(conn,event_id,request_id)
+            segment = conn.execute('SELECT capture_start_at,capture_end_at FROM processing_event_segment WHERE request_id=? AND event_id=?', (request_id,event_id)).fetchone()
+            if not segment or kind != 'video':
+                raise ValueError('continuous_segment_request_required')
+            capture = {'timestamp_start': segment['capture_start_at'], 'timestamp_end': segment['capture_end_at']}
+        require_unexpired(conn,event_id)
         conn.execute("""INSERT INTO event_media (
             media_id,event_id,camera_id,kind,role,status,redaction_status,created_at,processing_started_at,capture_start_at,capture_end_at,redaction_mode,request_id)
             VALUES (?,?,?,?,?,'processing','unprocessed',?,?,?,?,?,?)""",
-            (media_id, event_id, camera_id, kind, role, now(), time.time(), event["timestamp_start"], event["timestamp_end"], mode, request_id))
+            (media_id, event_id, camera_id, kind, role, now(), time.time(), capture["timestamp_start"], capture["timestamp_end"], mode, request_id))
     return media_id
 
 
@@ -256,6 +274,7 @@ def _publish(media_id: str, output: Path, details: dict):
             retention = conn.execute("SELECT decision FROM event_retention WHERE event_id=?", (row["event_id"],)).fetchone()
             if row["status"] != "processing" or retention["decision"] == "delete":
                 return
+            require_unexpired(conn,row["event_id"])
             from backend.media.verification_policy import record as verification_record
             report = details.get('profile', {}).get('verification', {})
             verified = verification_record(report if report.get('status') == 'passed' else None,
@@ -266,6 +285,8 @@ def _publish(media_id: str, output: Path, details: dict):
                 error_code=NULL,faces_detected=?,processed_frames=?,redaction_mode=?,inference_backend=?,processing_seconds=?,verification_json=? WHERE media_id=?""",
                 (storage_key(target), details["faces_detected"], details["processed_frames"], details["redaction_mode"],
                  details["inference_backend"], details["processing_seconds"], verified, media_id))
+            from backend.auto_decision.writer import on_event_ready
+            on_event_ready(conn,row['event_id'])
     except Exception:
         if moved:
             target.unlink(missing_ok=True)
@@ -334,6 +355,7 @@ def reprocess_media(media_id: str, mode: str = "scrfd") -> dict:
         retention = conn.execute("SELECT decision FROM event_retention WHERE event_id=?", (row["event_id"],)).fetchone()
         if retention and retention["decision"] == "delete":
             raise ValueError("event_media_deleted")
+        require_unexpired(conn,row["event_id"])
         reason = reprocess_unavailable_reason(dict(row), retention["decision"] if retention else "pending")
         if reason:
             raise ValueError(reason)

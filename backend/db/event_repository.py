@@ -1,6 +1,8 @@
+from backend.db.recommendation_score import SCORE_VERSION, period_week_count, monday_expression, risk_multiplier, score
+from backend.db.quarterly_trends import normalize_quarterly_trends
 from backend.db.connection import week_expression
 from backend.event_time import stored_timestamp, public_timestamp, local_date, quarter_for, local_time_sql, REPORTING_TIMEZONE
-from backend.db.connection import begin_write
+from backend.db.connection import begin_write, run_stats_transaction
 import os
 """
 event_repository.py
@@ -132,7 +134,29 @@ def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, An
         event["media"] = by_event[event["event_id"]]
         requests = clip_requests.get(event["event_id"], [])
         event["clip_requests"] = requests
+        lifecycle = conn.execute('SELECT phase,revision,evidence_revision,observed_seconds,gap_seconds,gap_count,final_segment_count,close_reason FROM processing_event_lifecycle WHERE event_id=?', (event['event_id'],)).fetchone()
+        if lifecycle:
+            event['collection'] = dict(lifecycle)
+            event['auto_decision_enabled'] = False
+            segment_rows = [dict(item) for item in conn.execute("""SELECT s.camera_id,s.sequence,s.request_id,s.capture_start_at,s.capture_end_at,r.status,r.error_code
+                FROM processing_event_segment s JOIN event_clip_request r ON r.request_id=s.request_id
+                WHERE s.event_id=? ORDER BY s.sequence,s.camera_id""", (event['event_id'],))]
+            event['collection']['segments'] = segment_rows
+            from backend.processing.capture import cameras
+            event['collection']['cameras'] = cameras(conn,event['event_id'])
+            order = {part['request_id']: part['sequence'] for part in segment_rows}
+            event['media'].sort(key=lambda item: (order.get(item.get('clip_request_id'), 2147483647), item['camera_id'], item['media_id']))
+
+
         event["review_availability"] = review_availability(event["media"], requests)
+        if lifecycle:
+            from backend.processing.lifecycle import require_finalizable
+            try:
+                require_finalizable(conn, event['event_id'])
+            except ValueError as exc:
+                event['review_availability'] = {**event['review_availability'], 'state': str(exc),
+                    'can_review': False, 'can_mark_unreviewable': False}
+
         event["retention"] = retention.get(event["event_id"], {"event_id": event["event_id"], "decision": "pending", "version": 0})
         event["thumbnail_path"] = next((m["url"] for m in event["media"] if m["role"] == "thumbnail" and m["url"]), "")
         event["video_clip_path"] = next((m["url"] for m in event["media"] if m["role"] == "clip" and m["url"]), "")
@@ -146,8 +170,8 @@ def get_all_candidate_events() -> list[dict[str, Any]]:
     Returns:
         list[dict[str, Any]]:
             후보 이벤트 목록.
-            각 항목은 candidate_event 정보와 camera_info의 zone_name,
-            process_type을 함께 포함한다.
+            각 항목은 candidate_event 정보와 고정된 사건 zone_name,
+            카메라의 현재 process_type을 함께 포함한다.
 
     Example:
         events = get_all_candidate_events()
@@ -158,7 +182,7 @@ def get_all_candidate_events() -> list[dict[str, Any]]:
         SELECT
             ce.event_id,
             ce.camera_id,
-            ci.zone_name,
+            ez.zone_name,
             ci.process_type,
             ce.tracking_id,
             ce.ppe_type,
@@ -176,6 +200,7 @@ def get_all_candidate_events() -> list[dict[str, Any]]:
         FROM candidate_event ce
         LEFT JOIN camera_info ci
             ON ce.camera_id = ci.camera_id
+        LEFT JOIN event_zone_snapshot ez ON ez.event_id=ce.event_id
         WHERE ce.event_status != 'merged'
         ORDER BY ce.timestamp_start DESC;
     """
@@ -192,9 +217,16 @@ def _candidate_event_filters(
     status: str | None = None,
     ppe_type: str | None = None,
     zone: str | None = None,
+    zones: list[str] | None = None,
     min_confidence: float | None = None,
 ) -> tuple[str, list[Any]]:
     """Build the shared, bound filter clause for list and summary queries."""
+    if zone is not None and zones is not None:
+        raise ValueError("Specify zone or zones, not both")
+    if zones is not None:
+        if len(zones) > 50 or any(not isinstance(value, str) or not value or len(value) > 100 for value in zones):
+            raise ValueError("Invalid zones filter")
+        zones = list(dict.fromkeys(zones))
     clauses = ["ce.event_status != 'merged'"]
     parameters: list[Any] = []
     local_start = local_time_sql("ce.timestamp_start")
@@ -211,8 +243,11 @@ def _candidate_event_filters(
         clauses.append("ce.ppe_type = ?")
         parameters.append(ppe_type)
     if zone:
-        clauses.append("ci.zone_name = ?")
+        clauses.append("ez.zone_name = ?")
         parameters.append(zone)
+    if zones:
+        clauses.append("ez.zone_name IN (" + ",".join("?" for _ in zones) + ")")
+        parameters.extend(zones)
     if min_confidence is not None:
         # Review-only candidates intentionally have no measured confidence and
         # must remain visible when the screen applies a confidence filter.
@@ -244,7 +279,9 @@ def get_candidate_events_page(
     status: str | None = None,
     ppe_type: str | None = None,
     zone: str | None = None,
+    zones: list[str] | None = None,
     min_confidence: float | None = None,
+    include_relation_tags: bool = False,
 ) -> tuple[int, list[dict[str, Any]]]:
     """Return a filtered candidate-event page and the matching total count.
 
@@ -254,16 +291,17 @@ def get_candidate_events_page(
     """
     where, parameters = _candidate_event_filters(
         date_from=date_from, date_to=date_to, status=status, ppe_type=ppe_type,
-        zone=zone, min_confidence=min_confidence,
+        zone=zone, zones=zones, min_confidence=min_confidence,
     )
     query = f"""
-        SELECT ce.event_id, ce.camera_id, ci.zone_name, ci.process_type,
+        SELECT ce.event_id, ce.camera_id, ez.zone_name, ci.process_type,
                ce.tracking_id, ce.ppe_type, ce.timestamp_start, ce.timestamp_end,
                ce.duration_sec, ce.frame_sample_count, ce.thumbnail_path,
                ce.video_clip_path, ce.ai_confidence, ce.person_detected,
                ce.ppe_detected, ce.model_version, ce.event_status
         FROM candidate_event ce
         LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+        LEFT JOIN event_zone_snapshot ez ON ez.event_id=ce.event_id
         WHERE {where}
         ORDER BY CASE WHEN ce.event_status='pending' THEN 0 ELSE 1 END,
                  {_candidate_event_sort_time()} DESC, ce.event_id DESC
@@ -272,9 +310,13 @@ def get_candidate_events_page(
         SELECT COUNT(*)
         FROM candidate_event ce
         LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+        LEFT JOIN event_zone_snapshot ez ON ez.event_id=ce.event_id
         WHERE {where}
     """
     with get_connection() as conn:
+        if include_relation_tags:
+            from backend.event_relations.service import begin_tag_snapshot, automatic_tag
+            begin_tag_snapshot(conn)
         total = conn.execute(count_query, parameters).fetchone()[0]
         page_parameters = list(parameters)
         if limit is not None:
@@ -286,7 +328,11 @@ def get_candidate_events_page(
             query += " LIMIT ? OFFSET ?"
             page_parameters.extend([9223372036854775807, offset])
         rows = conn.execute(query, page_parameters).fetchall()
-        return total, _attach_event_media([dict(row) for row in rows], conn)
+        events = _attach_event_media([dict(row) for row in rows], conn)
+        if include_relation_tags:
+            for event in events:
+                event["suspected_duplicate_tag"] = automatic_tag(conn, event["event_id"])
+        return total, events
 
 
 def get_candidate_event_summary(
@@ -296,30 +342,33 @@ def get_candidate_event_summary(
     status: str | None = None,
     ppe_type: str | None = None,
     zone: str | None = None,
+    zones: list[str] | None = None,
     min_confidence: float | None = None,
     recent_limit: int = 10,
 ) -> dict[str, Any]:
     """Return compact counts for dashboard/filter summaries without media joins."""
     where, parameters = _candidate_event_filters(
         date_from=date_from, date_to=date_to, status=status, ppe_type=ppe_type,
-        zone=zone, min_confidence=min_confidence,
+        zone=zone, zones=zones, min_confidence=min_confidence,
     )
     with get_connection() as conn:
         rows = conn.execute(f"""
-            SELECT ce.event_status, ce.ppe_type, ci.zone_name, COUNT(*) AS count
+            SELECT ce.event_status, ce.ppe_type, ez.zone_name, COUNT(*) AS count
             FROM candidate_event ce
             LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+        LEFT JOIN event_zone_snapshot ez ON ez.event_id=ce.event_id
             WHERE {where}
-            GROUP BY ce.event_status, ce.ppe_type, ci.zone_name
+            GROUP BY ce.event_status, ce.ppe_type, ez.zone_name
         """, parameters).fetchall()
         recent_where = f"{where} AND ce.event_status='pending'"
         recent_rows = conn.execute(f"""
-            SELECT ce.event_id, ce.camera_id, ci.zone_name, ce.ppe_type,
+            SELECT ce.event_id, ce.camera_id, ez.zone_name, ce.ppe_type,
                    ce.timestamp_start, ce.event_status, ce.ai_confidence,
                    EXISTS (SELECT 1 FROM processing_review_only_event rof
                            WHERE rof.event_id=ce.event_id AND rof.review_only=1) AS review_only
             FROM candidate_event ce
             LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+        LEFT JOIN event_zone_snapshot ez ON ez.event_id=ce.event_id
             WHERE {recent_where}
             ORDER BY {_candidate_event_sort_time()} DESC, ce.event_id DESC
             LIMIT ?
@@ -355,7 +404,7 @@ def get_candidate_event_summary(
     }
 
 
-def get_candidate_event_by_id(event_id: str) -> Optional[dict[str, Any]]:
+def get_candidate_event_by_id(event_id: str, *, include_relation_tags: bool = False) -> Optional[dict[str, Any]]:
     """
     event_id를 기준으로 후보 이벤트 1건을 조회한다.
 
@@ -378,7 +427,7 @@ def get_candidate_event_by_id(event_id: str) -> Optional[dict[str, Any]]:
         SELECT
             ce.event_id,
             ce.camera_id,
-            ci.zone_name,
+            ez.zone_name,
             ci.process_type,
             ce.tracking_id,
             ce.ppe_type,
@@ -396,12 +445,18 @@ def get_candidate_event_by_id(event_id: str) -> Optional[dict[str, Any]]:
         FROM candidate_event ce
         LEFT JOIN camera_info ci
             ON ce.camera_id = ci.camera_id
+        LEFT JOIN event_zone_snapshot ez ON ez.event_id=ce.event_id
         WHERE ce.event_id = ?;
     """
 
     with get_connection() as conn:
+        if include_relation_tags:
+            from backend.event_relations.service import begin_tag_snapshot, automatic_tag
+            begin_tag_snapshot(conn)
         row = conn.execute(query, (event_id,)).fetchone()
         event = row_to_dict(row)
+        if event and include_relation_tags:
+            event["suspected_duplicate_tag"] = automatic_tag(conn, event_id)
         return _attach_event_media([event], conn)[0] if event else None
 
 
@@ -498,6 +553,8 @@ def insert_candidate_event(event: dict[str, Any], *, connection=None) -> None:
             begin_write(conn)
         require_camera(conn, event['camera_id'], active=True)
         conn.execute(query, event)
+        from backend.event_relations.service import capture_group_context
+        capture_group_context(conn, event)
         conn.execute("INSERT INTO event_retention(event_id) VALUES(?)", (event["event_id"],))
         from backend.camera_groups.service import register_references
         register_references(conn, event['event_id'], event['camera_id'])
@@ -532,73 +589,13 @@ def delete_candidate_event(event_id: str) -> None:
     """
 
     with get_connection() as conn:
+        begin_write(conn)
+        from backend.db.false_positives import group_for_event, refresh_group
+        current = conn.execute("SELECT event_status FROM candidate_event WHERE event_id=?", (event_id,)).fetchone()
+        group = group_for_event(conn, event_id) if current and current["event_status"] == "false_positive" else None
         conn.execute(query, (event_id,))
+        refresh_group(conn, group)
         conn.commit()
-
-
-def _upsert_false_positive_aggregate(
-    conn: sqlite3.Connection,
-    event: sqlite3.Row,
-) -> None:
-    """
-    오탐 이벤트를 비식별 집계 테이블에 반영함.
-
-    Args:
-        conn (sqlite3.Connection):
-            기존 DB connection.
-        event (sqlite3.Row):
-            오탐으로 판단된 후보 이벤트 정보.
-    """
-    quarter = _get_quarter_from_timestamp(event["timestamp_start"])
-    aggregate_id = (
-        f"FP_{quarter.replace('-', '')}_"
-        f"{event['zone_name'].replace(' ', '_')}_"
-        f"{event['ppe_type']}"
-    )
-    updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    existing = conn.execute(
-        """
-        SELECT false_positive_count
-        FROM false_positive_aggregate
-        WHERE aggregate_id = ?;
-        """,
-        (aggregate_id,),
-    ).fetchone()
-
-    if existing is None:
-        conn.execute(
-            """
-            INSERT INTO false_positive_aggregate (
-                aggregate_id,
-                quarter,
-                zone_name,
-                ppe_type,
-                false_positive_count,
-                updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?);
-            """,
-            (
-                aggregate_id,
-                quarter,
-                event["zone_name"],
-                event["ppe_type"],
-                1,
-                updated_at,
-            ),
-        )
-    else:
-        conn.execute(
-            """
-            UPDATE false_positive_aggregate
-            SET
-                false_positive_count = false_positive_count + 1,
-                updated_at = ?
-            WHERE aggregate_id = ?;
-            """,
-            (updated_at, aggregate_id),
-        )
 
 
 def insert_event_review(review: dict[str, Any]) -> None:
@@ -678,25 +675,8 @@ def insert_event_review(review: dict[str, Any]) -> None:
         begin_write(conn)
         from backend.media.service import validate_review
         validate_review(conn, review)
-        if review["review_result"] == "false_positive":
-            event = conn.execute(
-                """
-                SELECT
-                    ce.event_id,
-                    ci.zone_name,
-                    ce.ppe_type,
-                    ce.timestamp_start
-                FROM candidate_event ce
-                LEFT JOIN camera_info ci
-                    ON ce.camera_id = ci.camera_id
-                WHERE ce.event_id = ?;
-                """,
-                (review["event_id"],),
-            ).fetchone()
-
-            if event is not None:
-                _upsert_false_positive_aggregate(conn, event)
-
+        if conn.execute('SELECT 1 FROM event_review WHERE event_id=?', (review['event_id'],)).fetchone():
+            raise ValueError('Review already exists; reload and use re-review')
         # Keep the review and event for audit/statistics; media lifecycle is separate.
         conn.execute(review_query, review)
         conn.execute(
@@ -707,6 +687,9 @@ def insert_event_review(review: dict[str, Any]) -> None:
             },
         )
 
+        if review["review_result"] == "false_positive":
+            from backend.db.false_positives import refresh_event_group
+            refresh_event_group(conn, review["event_id"])
         conn.commit()
         
 
@@ -769,6 +752,17 @@ def update_event_review(review: dict[str, Any]) -> None:
         if existing_review is None:
             raise ValueError("Review does not exist")
 
+        # API checks are advisory: another reviewer may have finalized the
+        # event while this request waited for the database write lock.
+        event_state = conn.execute(
+            "SELECT event_status FROM candidate_event WHERE event_id=?",
+            (review["event_id"],),
+        ).fetchone()
+        if event_state is None:
+            raise ValueError("Event does not exist")
+        if event_state["event_status"] not in {"hold", "unreviewable"} and not existing_review["second_review_needed"]:
+            raise ValueError("Event is not eligible for re-review")
+
         previous = dict(existing_review)
         conn.execute(
             """INSERT INTO event_review_history (
@@ -785,27 +779,6 @@ def update_event_review(review: dict[str, Any]) -> None:
             ),
         )
 
-        if review["review_result"] == "false_positive":
-            event = conn.execute(
-                """
-                SELECT
-                    ce.event_id,
-                    ci.zone_name,
-                    ce.ppe_type,
-                    ce.timestamp_start
-                FROM candidate_event ce
-                LEFT JOIN camera_info ci
-                    ON ce.camera_id = ci.camera_id
-                WHERE ce.event_id = ?;
-                """,
-                (review["event_id"],),
-            ).fetchone()
-
-            if event is None:
-                raise ValueError("Event does not exist")
-
-            _upsert_false_positive_aggregate(conn, event)
-
         cursor = conn.execute(review_query, review)
         if cursor.rowcount == 0:
             raise ValueError("Review does not exist")
@@ -817,6 +790,9 @@ def update_event_review(review: dict[str, Any]) -> None:
             },
         )
 
+        if previous["review_result"] != review["review_result"] and "false_positive" in {previous["review_result"], review["review_result"]}:
+            from backend.db.false_positives import refresh_event_group
+            refresh_event_group(conn, review["event_id"])
         conn.commit()
 
 
@@ -883,63 +859,69 @@ def get_quarterly_stats(quarter: str) -> Optional[dict]:
         dict | None:
             프론트엔드 통계 화면에서 사용할 수 있는 형태의 통계 데이터.
     """
-    with get_connection() as conn:
-        summary_row = conn.execute(
-            """
-            SELECT
-                quarter,
-                candidate_count,
-                confirmed_count,
-                false_positive_count,
-                hold_count,
-                unreviewable_count
-            FROM quarterly_summary
-            WHERE quarter = ?;
-            """,
-            (quarter,),
-        ).fetchone()
+    return run_stats_transaction(
+        lambda conn: _read_quarterly_stats(conn, quarter), connection_factory=get_connection,
+    )
 
-        if summary_row is None:
-            return None
 
-        ppe_rows = conn.execute(
-            """
-            SELECT
-                ppe_type,
-                confirmed_count,
-                priority_score
-            FROM quarterly_ppe_stats
-            WHERE quarter = ?
-            ORDER BY priority_score DESC;
-            """,
-            (quarter,),
-        ).fetchall()
+def _read_quarterly_stats(conn, quarter: str) -> Optional[dict]:
+    """Read all cache components using the caller's snapshot."""
+    summary_row = conn.execute(
+        """
+        SELECT
+            quarter,
+            candidate_count,
+            confirmed_count,
+            false_positive_count,
+            hold_count,
+            unreviewable_count
+        FROM quarterly_summary
+        WHERE quarter = ?;
+        """,
+        (quarter,),
+    ).fetchone()
 
-        zone_rows = conn.execute(
-            """
-            SELECT
-                zone_name,
-                confirmed_count,
-                priority_score
-            FROM quarterly_zone_stats
-            WHERE quarter = ?
-            ORDER BY priority_score DESC;
-            """,
-            (quarter,),
-        ).fetchall()
+    if summary_row is None:
+        return None
 
-        trend_rows = conn.execute(
-            """
-            SELECT
-                quarter,
-                helmet,
-                vest
-            FROM quarterly_trend_stats
-            WHERE target_quarter = ?
-            ORDER BY quarter ASC;
-            """,
-            (quarter,),
-        ).fetchall()
+    ppe_rows = conn.execute(
+        """
+        SELECT
+            ppe_type,
+            confirmed_count,
+            priority_score
+        FROM quarterly_ppe_stats
+        WHERE quarter = ?
+        ORDER BY priority_score DESC;
+        """,
+        (quarter,),
+    ).fetchall()
+
+    zone_rows = conn.execute(
+        """
+        SELECT
+            zone_name,
+            confirmed_count,
+            priority_score
+        FROM quarterly_zone_stats
+        WHERE quarter = ?
+        ORDER BY priority_score DESC;
+        """,
+        (quarter,),
+    ).fetchall()
+
+    trend_rows = conn.execute(
+        """
+        SELECT
+            quarter,
+            helmet,
+            vest
+        FROM quarterly_trend_stats
+        WHERE target_quarter = ?
+        ORDER BY quarter ASC;
+        """,
+        (quarter,),
+    ).fetchall()
 
     return {
         "quarter": summary_row["quarter"],
@@ -953,7 +935,7 @@ def get_quarterly_stats(quarter: str) -> Optional[dict]:
         },
         "by_ppe_type": [dict(row) for row in ppe_rows],
         "by_zone": [dict(row) for row in zone_rows],
-        "trend": [dict(row) for row in trend_rows],
+        "trend": normalize_quarterly_trends(trend_rows, quarter),
     }
 
 
@@ -970,26 +952,32 @@ def get_education_recommendations(quarter: str) -> dict:
             프론트엔드 교육 추천 화면에서 사용할 수 있는 형태의 추천 데이터.
     """
     with get_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                recommendation_id,
-                recommendation_rank,
-                ppe_type,
-                zone_name,
-                education_topic,
-                priority_score,
-                confirmed_count,
-                repeat_weeks,
-                zone_concentration,
-                process_risk_weight,
-                generated_at
-            FROM education_recommendation
-            WHERE quarter = ?
-            ORDER BY recommendation_rank ASC;
-            """,
-            (quarter,),
-        ).fetchall()
+        return _read_education_recommendations(conn, quarter)
+
+
+def _read_education_recommendations(conn, quarter: str) -> dict:
+    """Materialize rankings before the generating transaction is committed."""
+    rows = conn.execute(
+        """
+        SELECT
+            recommendation_id,
+            recommendation_rank,
+            ppe_type,
+            zone_name,
+            education_topic,
+            priority_score,
+            confirmed_count,
+            repeat_weeks,
+            zone_concentration,
+            process_risk_weight,
+            generated_at,
+            score_version
+        FROM education_recommendation
+        WHERE quarter = ?
+        ORDER BY recommendation_rank ASC;
+        """,
+        (quarter,),
+    ).fetchall()
 
     items = []
     generated_at = None
@@ -1006,11 +994,16 @@ def get_education_recommendations(quarter: str) -> dict:
                 "zone_name": row["zone_name"],
                 "education_topic": row["education_topic"],
                 "priority_score": row["priority_score"],
+                "score_version": row["score_version"] or "legacy_unversioned",
                 "score_breakdown": {
                     "confirmed_count": row["confirmed_count"],
                     "repeat_weeks": row["repeat_weeks"],
                     "zone_concentration": row["zone_concentration"],
                     "process_risk_weight": row["process_risk_weight"],
+                    **({"period_weeks": period_week_count(*_get_quarter_date_range(quarter)),
+                        "occurrence_week_ratio": row["repeat_weeks"] / period_week_count(*_get_quarter_date_range(quarter)),
+                        "zone_concentration_used_in_score": False}
+                       if row["score_version"] == SCORE_VERSION else {}),
                 },
                 "generated_at": row["generated_at"],
             }
@@ -1087,243 +1080,254 @@ def generate_quarterly_stats(quarter: str) -> dict:
         dict:
             생성된 분기별 통계 데이터.
     """
+    return run_stats_transaction(
+        lambda conn: _generate_quarterly_stats(conn, quarter),
+        write=True, connection_factory=get_connection,
+    )
+
+
+def _generate_quarterly_stats(conn, quarter: str) -> dict:
     start_date, end_date = _get_quarter_date_range(quarter)
     local_start = local_time_sql('timestamp_start')
     camera_local_start = local_time_sql('ce.timestamp_start')
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    with get_connection() as conn:
-        candidate_count = conn.execute(
-            f"""
-            SELECT COUNT(*) AS count
-            FROM candidate_event
-            WHERE {local_start} >= ?
-              AND {local_start} < ?
-              AND event_status != 'merged';
-            """,
-            (start_date, end_date),
-        ).fetchone()["count"]
+    candidate_count = conn.execute(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM candidate_event
+        WHERE {local_start} >= ?
+          AND {local_start} < ?
+          AND event_status != 'merged';
+        """,
+        (start_date, end_date),
+    ).fetchone()["count"]
 
-        confirmed_count = conn.execute(
-            f"""
-            SELECT COUNT(*) AS count
-            FROM candidate_event
-            WHERE {local_start} >= ?
-              AND {local_start} < ?
-              AND event_status = 'confirmed';
-            """,
-            (start_date, end_date),
-        ).fetchone()["count"]
+    confirmed_count = conn.execute(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM candidate_event
+        WHERE {local_start} >= ?
+          AND {local_start} < ?
+          AND event_status = 'confirmed';
+        """,
+        (start_date, end_date),
+    ).fetchone()["count"]
 
-        hold_count = conn.execute(
-            f"""
-            SELECT COUNT(*) AS count
-            FROM candidate_event
-            WHERE {local_start} >= ?
-              AND {local_start} < ?
-              AND event_status = 'hold';
-            """,
-            (start_date, end_date),
-        ).fetchone()["count"]
+    hold_count = conn.execute(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM candidate_event
+        WHERE {local_start} >= ?
+          AND {local_start} < ?
+          AND event_status = 'hold';
+        """,
+        (start_date, end_date),
+    ).fetchone()["count"]
 
-        unreviewable_count = conn.execute(
-            f"SELECT COUNT(*) FROM candidate_event WHERE {local_start}>=? AND {local_start}<? AND event_status='unreviewable'",
-            (start_date, end_date),
-        ).fetchone()[0]
+    unreviewable_count = conn.execute(
+        f"SELECT COUNT(*) FROM candidate_event WHERE {local_start}>=? AND {local_start}<? AND event_status='unreviewable'",
+        (start_date, end_date),
+    ).fetchone()[0]
 
-        false_positive_count = conn.execute(
+    false_positive_count = conn.execute(
+        """
+        SELECT COALESCE(SUM(false_positive_count), 0) AS count
+        FROM false_positive_aggregate
+        WHERE quarter = ?;
+        """,
+        (quarter,),
+    ).fetchone()["count"]
+
+    conn.execute(
+        "DELETE FROM quarterly_ppe_stats WHERE quarter = ?;",
+        (quarter,),
+    )
+    conn.execute(
+        "DELETE FROM quarterly_zone_stats WHERE quarter = ?;",
+        (quarter,),
+    )
+    conn.execute(
+        "DELETE FROM quarterly_trend_stats WHERE target_quarter = ?;",
+        (quarter,),
+    )
+    # This row is also the FK parent of durable education materials.
+    # DELETE/INSERT would cascade into drafts, publications and their history.
+    # Update the cached counts in place on both SQLite and PostgreSQL.
+    conn.execute(
+        """
+        INSERT INTO quarterly_summary (
+            quarter,
+            candidate_count,
+            confirmed_count,
+            false_positive_count,
+            hold_count,
+            unreviewable_count,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (quarter) DO UPDATE SET
+            candidate_count = excluded.candidate_count,
+            confirmed_count = excluded.confirmed_count,
+            false_positive_count = excluded.false_positive_count,
+            hold_count = excluded.hold_count,
+            unreviewable_count = excluded.unreviewable_count,
+            created_at = excluded.created_at;
+        """,
+        (
+            quarter,
+            candidate_count,
+            confirmed_count,
+            false_positive_count,
+            hold_count,
+            unreviewable_count,
+            created_at,
+        ),
+    )
+
+    ppe_rows = conn.execute(
+        f"""
+        SELECT
+            ppe_type,
+            COUNT(*) AS confirmed_count,
+            COUNT(DISTINCT {week_expression(local_start)}) AS repeat_weeks
+        FROM candidate_event
+        WHERE {local_start} >= ?
+          AND {local_start} < ?
+          AND event_status = 'confirmed'
+        GROUP BY ppe_type
+        ORDER BY confirmed_count DESC;
+        """,
+        (start_date, end_date),
+    ).fetchall()
+
+    for index, row in enumerate(ppe_rows, start=1):
+        zone_concentration = (
+            row["confirmed_count"] / confirmed_count
+            if confirmed_count > 0
+            else 0
+        )
+        priority_score = (
+            row["confirmed_count"] * 0.5
+            + row["repeat_weeks"] * 0.2
+            + zone_concentration * 0.2
+            + 1.0 * 0.1
+        )
+
+        conn.execute(
             """
-            SELECT COALESCE(SUM(false_positive_count), 0) AS count
-            FROM false_positive_aggregate
-            WHERE quarter = ?;
-            """,
-            (quarter,),
-        ).fetchone()["count"]
-
-        conn.execute(
-            "DELETE FROM education_recommendation WHERE quarter = ?;",
-            (quarter,),
-        )
-        conn.execute(
-            "DELETE FROM quarterly_ppe_stats WHERE quarter = ?;",
-            (quarter,),
-        )
-        conn.execute(
-            "DELETE FROM quarterly_zone_stats WHERE quarter = ?;",
-            (quarter,),
-        )
-        conn.execute(
-            "DELETE FROM quarterly_trend_stats WHERE target_quarter = ?;",
-            (quarter,),
-        )
-        conn.execute(
-            "DELETE FROM quarterly_summary WHERE quarter = ?;",
-            (quarter,),
-        )
-
-        conn.execute(
-            """
-            INSERT INTO quarterly_summary (
+            INSERT INTO quarterly_ppe_stats (
+                stat_id,
                 quarter,
-                candidate_count,
+                ppe_type,
                 confirmed_count,
-                false_positive_count,
-                hold_count,
-                unreviewable_count,
-                created_at
+                priority_score
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?);
+            VALUES (?, ?, ?, ?, ?);
             """,
             (
+                f"STAT_PPE_{quarter.replace('-', '')}_{index:02d}",
                 quarter,
-                candidate_count,
-                confirmed_count,
-                false_positive_count,
-                hold_count,
-                unreviewable_count,
-                created_at,
+                row["ppe_type"],
+                row["confirmed_count"],
+                round(priority_score, 2),
             ),
         )
 
-        ppe_rows = conn.execute(
-            f"""
-            SELECT
-                ppe_type,
-                COUNT(*) AS confirmed_count,
-                COUNT(DISTINCT {week_expression(local_start)}) AS repeat_weeks
-            FROM candidate_event
-            WHERE {local_start} >= ?
-              AND {local_start} < ?
-              AND event_status = 'confirmed'
-            GROUP BY ppe_type
-            ORDER BY confirmed_count DESC;
-            """,
-            (start_date, end_date),
-        ).fetchall()
+    zone_rows = conn.execute(
+        f"""
+        SELECT
+            COALESCE(ez.zone_name, '') AS zone_name,
+            COUNT(*) AS confirmed_count,
+            COUNT(DISTINCT {week_expression(camera_local_start)}) AS repeat_weeks
+        FROM candidate_event ce
+        LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+        LEFT JOIN event_zone_snapshot ez ON ez.event_id=ce.event_id
+        WHERE {camera_local_start} >= ?
+          AND {camera_local_start} < ?
+          AND ce.event_status = 'confirmed'
+        GROUP BY ez.zone_name
+        ORDER BY confirmed_count DESC;
+        """,
+        (start_date, end_date),
+    ).fetchall()
 
-        for index, row in enumerate(ppe_rows, start=1):
-            zone_concentration = (
-                row["confirmed_count"] / confirmed_count
-                if confirmed_count > 0
-                else 0
-            )
-            priority_score = (
-                row["confirmed_count"] * 0.5
-                + row["repeat_weeks"] * 0.2
-                + zone_concentration * 0.2
-                + 1.0 * 0.1
-            )
+    for index, row in enumerate(zone_rows, start=1):
+        zone_concentration = (
+            row["confirmed_count"] / confirmed_count
+            if confirmed_count > 0
+            else 0
+        )
+        priority_score = (
+            row["confirmed_count"] * 0.5
+            + row["repeat_weeks"] * 0.2
+            + zone_concentration * 0.2
+            + 1.0 * 0.1
+        )
 
-            conn.execute(
-                """
-                INSERT INTO quarterly_ppe_stats (
-                    stat_id,
-                    quarter,
-                    ppe_type,
-                    confirmed_count,
-                    priority_score
-                )
-                VALUES (?, ?, ?, ?, ?);
-                """,
-                (
-                    f"STAT_PPE_{quarter.replace('-', '')}_{index:02d}",
-                    quarter,
-                    row["ppe_type"],
-                    row["confirmed_count"],
-                    round(priority_score, 2),
-                ),
-            )
-
-        zone_rows = conn.execute(
-            f"""
-            SELECT
-                ci.zone_name,
-                COUNT(*) AS confirmed_count,
-                COUNT(DISTINCT {week_expression(camera_local_start)}) AS repeat_weeks
-            FROM candidate_event ce
-            LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
-            WHERE {camera_local_start} >= ?
-              AND {camera_local_start} < ?
-              AND ce.event_status = 'confirmed'
-            GROUP BY ci.zone_name
-            ORDER BY confirmed_count DESC;
-            """,
-            (start_date, end_date),
-        ).fetchall()
-
-        for index, row in enumerate(zone_rows, start=1):
-            zone_concentration = (
-                row["confirmed_count"] / confirmed_count
-                if confirmed_count > 0
-                else 0
-            )
-            priority_score = (
-                row["confirmed_count"] * 0.5
-                + row["repeat_weeks"] * 0.2
-                + zone_concentration * 0.2
-                + 1.0 * 0.1
-            )
-
-            conn.execute(
-                """
-                INSERT INTO quarterly_zone_stats (
-                    stat_id,
-                    quarter,
-                    zone_name,
-                    confirmed_count,
-                    priority_score
-                )
-                VALUES (?, ?, ?, ?, ?);
-                """,
-                (
-                    f"STAT_ZONE_{quarter.replace('-', '')}_{index:02d}",
-                    quarter,
-                    row["zone_name"],
-                    row["confirmed_count"],
-                    round(priority_score, 2),
-                ),
-            )
-
-        trend_rows = conn.execute(
-            f"""
-            SELECT
-                substr(({local_start}), 1, 4) ||
-                '-Q' ||
-                ((CAST(substr(({local_start}), 6, 2) AS INTEGER) - 1) / 3 + 1)
-                AS quarter,
-                SUM(CASE WHEN ppe_type = 'helmet' THEN 1 ELSE 0 END) AS helmet,
-                SUM(CASE WHEN ppe_type = 'vest' THEN 1 ELSE 0 END) AS vest
-            FROM candidate_event
-            WHERE event_status = 'confirmed'
-            GROUP BY quarter
-            ORDER BY quarter ASC;
+        conn.execute(
             """
-        ).fetchall()
-
-        for index, row in enumerate(trend_rows, start=1):
-            conn.execute(
-                """
-                INSERT INTO quarterly_trend_stats (
-                    trend_id,
-                    target_quarter,
-                    quarter,
-                    helmet,
-                    vest
-                )
-                VALUES (?, ?, ?, ?, ?);
-                """,
-                (
-                    f"TREND_{quarter.replace('-', '')}_{index:02d}",
-                    quarter,
-                    row["quarter"],
-                    row["helmet"] or 0,
-                    row["vest"] or 0,
-                ),
+            INSERT INTO quarterly_zone_stats (
+                stat_id,
+                quarter,
+                zone_name,
+                confirmed_count,
+                priority_score
             )
+            VALUES (?, ?, ?, ?, ?);
+            """,
+            (
+                f"STAT_ZONE_{quarter.replace('-', '')}_{index:02d}",
+                quarter,
+                row["zone_name"],
+                row["confirmed_count"],
+                round(priority_score, 2),
+            ),
+        )
 
-        conn.commit()
+    trend_rows = conn.execute(
+        f"""
+        SELECT
+            substr(({local_start}), 1, 4) ||
+            '-Q' ||
+            ((CAST(substr(({local_start}), 6, 2) AS INTEGER) - 1) / 3 + 1)
+            AS quarter,
+            SUM(CASE WHEN ppe_type = 'helmet' THEN 1 ELSE 0 END) AS helmet,
+            SUM(CASE WHEN ppe_type = 'vest' THEN 1 ELSE 0 END) AS vest
+        FROM candidate_event
+        WHERE event_status = 'confirmed' AND {local_start} < ?
+        GROUP BY quarter
+        ORDER BY quarter ASC;
+        """,
+        (end_date,),
+    ).fetchall()
 
-    stats = get_quarterly_stats(quarter)
+    for index, row in enumerate(normalize_quarterly_trends(trend_rows, quarter), start=1):
+        conn.execute(
+            """
+            INSERT INTO quarterly_trend_stats (
+                trend_id,
+                target_quarter,
+                quarter,
+                helmet,
+                vest
+            )
+            VALUES (?, ?, ?, ?, ?);
+            """,
+            (
+                f"TREND_{quarter.replace('-', '')}_{index:02d}",
+                quarter,
+                row["quarter"],
+                row["helmet"] or 0,
+                row["vest"] or 0,
+            ),
+        )
+
+    # Rebuild rankings before committing so worker education never observes
+    # an invalidated/empty cache between stats refresh and a later page visit.
+    _replace_education_recommendations(conn, quarter)
+
+    stats = _read_quarterly_stats(conn, quarter)
 
     if stats is None:
         raise RuntimeError("Failed to generate quarterly stats")
@@ -1334,6 +1338,7 @@ def _get_education_topic(ppe_type: str, zone_name: str) -> str:
     """
     PPE 유형과 구역을 기반으로 교육 주제를 생성함.
     """
+    zone_name = zone_name or "구역 미지정"
     if ppe_type == "helmet":
         return f"{zone_name} 안전모 착용 기준 및 착용 전 점검 절차 교육"
 
@@ -1344,132 +1349,137 @@ def _get_education_topic(ppe_type: str, zone_name: str) -> str:
 
 
 def generate_education_recommendations(quarter: str) -> dict:
-    """
-    확정 위반 데이터를 기반으로 교육 추천 결과를 생성함.
+    """Replace rankings and return the same snapshot; publication policy is unchanged."""
+    def generate(conn):
+        # A waiter may hold a snapshot from before another generator committed.
+        # Touch the existing parent before reading sources: under PostgreSQL RR
+        # that stale row version raises 40001 (retried by the transaction helper),
+        # instead of inserting a duplicate rank into a cache absent in its snapshot.
+        conn.execute("UPDATE quarterly_summary SET created_at=created_at WHERE quarter=?", (quarter,))
+        if conn.execute("SELECT 1 FROM quarterly_summary WHERE quarter=?", (quarter,)).fetchone() is None:
+            # Recommendations reference this summary. Build real source counts,
+            # not a placeholder, in this same transaction for a new quarter.
+            _generate_quarterly_stats(conn, quarter)
+        else:
+            _replace_education_recommendations(conn, quarter)
+        return _read_education_recommendations(conn, quarter)
 
-    Args:
-        quarter (str):
-            생성할 분기. 예: "2026-Q2"
+    return run_stats_transaction(generate, write=True, connection_factory=get_connection)
 
-    Returns:
-        dict:
-            생성된 교육 추천 데이터.
-    """
+
+
+def _replace_education_recommendations(conn, quarter: str) -> None:
+    """Rebuild in the caller's transaction, without committing a cache gap."""
     start_date, end_date = _get_quarter_date_range(quarter)
-    local_start = local_time_sql('timestamp_start')
     camera_local_start = local_time_sql('ce.timestamp_start')
+    period_weeks = period_week_count(start_date, end_date)
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    with get_connection() as conn:
-        total_confirmed = conn.execute(
-            f"""
-            SELECT COUNT(*) AS count
-            FROM candidate_event
-            WHERE {local_start} >= ?
-              AND {local_start} < ?
-              AND event_status = 'confirmed';
-            """,
-            (start_date, end_date),
-        ).fetchone()["count"]
+    rows = conn.execute(
+        f"""
+        SELECT
+            ce.ppe_type,
+            COALESCE(ez.zone_name, '') AS zone_name,
+            COUNT(*) AS confirmed_count,
+            COUNT(DISTINCT {monday_expression(camera_local_start)}) AS repeat_weeks,
+            MAX(zr.risk_level) AS risk_level
+        FROM candidate_event ce
+        LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
+        LEFT JOIN event_zone_snapshot ez ON ez.event_id=ce.event_id
+        LEFT JOIN zone_rule zr ON zr.zone_name=COALESCE(ez.zone_name, '')
+        WHERE {camera_local_start} >= ?
+          AND {camera_local_start} < ?
+          AND ce.event_status = 'confirmed'
+        GROUP BY ce.ppe_type, COALESCE(ez.zone_name, '')
+        ORDER BY confirmed_count DESC;
+        """,
+        (start_date, end_date),
+    ).fetchall()
 
-        rows = conn.execute(
-            f"""
-            SELECT
-                ce.ppe_type,
-                ci.zone_name,
-                COUNT(*) AS confirmed_count,
-                COUNT(DISTINCT {week_expression(camera_local_start)}) AS repeat_weeks
-            FROM candidate_event ce
-            LEFT JOIN camera_info ci ON ce.camera_id = ci.camera_id
-            WHERE {camera_local_start} >= ?
-              AND {camera_local_start} < ?
-              AND ce.event_status = 'confirmed'
-            GROUP BY ce.ppe_type, ci.zone_name
-            ORDER BY confirmed_count DESC;
-            """,
-            (start_date, end_date),
-        ).fetchall()
+    conn.execute(
+        "DELETE FROM education_recommendation WHERE quarter = ?;",
+        (quarter,),
+    )
+
+    # Education-only meaning: this PPE's share of all confirmed events in
+    # this same quarter and frozen event zone. Build denominators from the
+    # exact same source rows, before applying the top-three ranking limit.
+    zone_totals = {}
+    for row in rows:
+        zone_totals[row["zone_name"]] = zone_totals.get(row["zone_name"], 0) + row["confirmed_count"]
+
+    scored_items = []
+
+    for row in rows:
+        zone_concentration = (
+            row["confirmed_count"] / zone_totals[row["zone_name"]]
+            if zone_totals[row["zone_name"]] > 0
+            else 0
+        )
+
+        process_risk_weight = risk_multiplier(row["risk_level"])
+
+        priority_score = score(row["confirmed_count"], row["repeat_weeks"], period_weeks, row["risk_level"])
+
+        scored_items.append(
+            {
+                "ppe_type": row["ppe_type"],
+                "zone_name": row["zone_name"],
+                "confirmed_count": row["confirmed_count"],
+                "repeat_weeks": row["repeat_weeks"],
+                "zone_concentration": zone_concentration,
+                "process_risk_weight": process_risk_weight,
+                "priority_score": round(priority_score, 2),
+                "raw_priority_score": priority_score,
+            }
+        )
+
+    scored_items.sort(
+        key=lambda item: (-item["raw_priority_score"], item["zone_name"], item["ppe_type"]),
+    )
+
+    from backend.education.identity import recommendation_id as semantic_recommendation_id
+    for rank, item in enumerate(scored_items[:3], start=1):
+        topic = _get_education_topic(item["ppe_type"], item["zone_name"])
+        recommendation_id = semantic_recommendation_id(quarter, item["zone_name"], item["ppe_type"], topic)
 
         conn.execute(
-            "DELETE FROM education_recommendation WHERE quarter = ?;",
-            (quarter,),
+            """
+            INSERT INTO education_recommendation (
+                recommendation_id,
+                quarter,
+                recommendation_rank,
+                ppe_type,
+                zone_name,
+                education_topic,
+                priority_score,
+                confirmed_count,
+                repeat_weeks,
+                zone_concentration,
+                process_risk_weight,
+                generated_at,
+                score_version
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            (
+                recommendation_id,
+                quarter,
+                rank,
+                item["ppe_type"],
+                item["zone_name"],
+                topic,
+                item["priority_score"],
+                item["confirmed_count"],
+                item["repeat_weeks"],
+                round(item["zone_concentration"], 2),
+                item["process_risk_weight"],
+                generated_at,
+                SCORE_VERSION,
+            ),
         )
 
-        scored_items = []
 
-        for row in rows:
-            zone_concentration = (
-                row["confirmed_count"] / total_confirmed
-                if total_confirmed > 0
-                else 0
-            )
-
-            process_risk_weight = 1.0
-
-            priority_score = (
-                row["confirmed_count"] * 0.5
-                + row["repeat_weeks"] * 0.2
-                + zone_concentration * 0.2
-                + process_risk_weight * 0.1
-            )
-
-            scored_items.append(
-                {
-                    "ppe_type": row["ppe_type"],
-                    "zone_name": row["zone_name"],
-                    "confirmed_count": row["confirmed_count"],
-                    "repeat_weeks": row["repeat_weeks"],
-                    "zone_concentration": zone_concentration,
-                    "process_risk_weight": process_risk_weight,
-                    "priority_score": round(priority_score, 2),
-                }
-            )
-
-        scored_items.sort(
-            key=lambda item: item["priority_score"],
-            reverse=True,
-        )
-
-        for rank, item in enumerate(scored_items[:3], start=1):
-            recommendation_id = f"EDU_{quarter.replace('-', '')}_{rank:02d}"
-
-            conn.execute(
-                """
-                INSERT INTO education_recommendation (
-                    recommendation_id,
-                    quarter,
-                    recommendation_rank,
-                    ppe_type,
-                    zone_name,
-                    education_topic,
-                    priority_score,
-                    confirmed_count,
-                    repeat_weeks,
-                    zone_concentration,
-                    process_risk_weight,
-                    generated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-                """,
-                (
-                    recommendation_id,
-                    quarter,
-                    rank,
-                    item["ppe_type"],
-                    item["zone_name"],
-                    _get_education_topic(item["ppe_type"], item["zone_name"]),
-                    item["priority_score"],
-                    item["confirmed_count"],
-                    item["repeat_weeks"],
-                    round(item["zone_concentration"], 2),
-                    item["process_risk_weight"],
-                    generated_at,
-                ),
-            )
-
-        conn.commit()
-
-    return get_education_recommendations(quarter)
 
 def get_broadcast_settings() -> dict[str, Any]:
     """

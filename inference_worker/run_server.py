@@ -66,6 +66,8 @@ def main():
     parser.add_argument("--buffer-mib", type=int, default=256,
                         help="Maximum retained raw frame MiB per camera (default: 256)")
     parser.add_argument("--camera-id", required=True)
+    parser.add_argument("--continuous-config", type=Path,
+                        help="Opt-in continuous two-camera runner; requires explicit calibrated resource configuration")
     parser.add_argument("--stop-file", type=Path,
                         help="Exit cleanly when the supervisor creates this file")
     parser.add_argument("--model-path", type=Path,
@@ -90,6 +92,10 @@ def main():
 
     if args.buffer_mib < 8:
         parser.error("--buffer-mib must be at least 8")
+
+    if args.continuous_config is not None:
+        from inference_worker.run_continuous import run
+        return run(args)
 
     def new_clip_buffer():
         return ClipBuffer(retention_seconds=30.0, max_bytes=args.buffer_mib*1024*1024, max_frame_pixels=640*480, max_fps=15)
