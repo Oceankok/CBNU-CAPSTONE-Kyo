@@ -86,21 +86,29 @@ export default function RecommendPage() {
 
   // AppLayout remounts this page when the quarter changes, so this runs once per quarter
   useEffect(() => {
+    const noData = `${quarter}에는 추천을 만들 확정 위반 기록이 아직 없습니다.`;
     fetchRecommendations(quarter)
       .then(setData)
-      .catch(() =>
-        // If no recommendations exist yet, auto-generate for the current quarter
-        generateRecommendations(quarter)
+      .catch((e) => {
+        // Only "no recommendations yet" (404) triggers generation. An expired login, a
+        // permission or server error, or a network failure must not start a write (#240)
+        if (!(e instanceof ApiError && e.status === 404)) {
+          setError(e instanceof Error ? e.message : String(e));
+          return;
+        }
+        return generateRecommendations(quarter)
           .then(setData)
-          .catch((e) =>
+          .catch((ge) =>
             setError(
-              // 4xx here means the quarter has no confirmed violations to rank yet
-              e instanceof ApiError && e.status < 500
-                ? `${quarter}에는 추천을 만들 확정 위반 기록이 아직 없습니다.`
-                : e.message,
+              // 404 here = the quarter has no confirmed violations to rank yet
+              ge instanceof ApiError && ge.status === 404
+                ? noData
+                : ge instanceof Error
+                  ? ge.message
+                  : String(ge),
             ),
-          ),
-      )
+          );
+      })
       .finally(() => setLoading(false));
   }, [quarter]);
 
