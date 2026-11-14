@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ConfirmButton from './ConfirmButton';
 import {
   bundleErrorMessage,
@@ -19,6 +19,7 @@ import {
   bundleDraftIsDirty,
   bundleInputsDisabled,
   bundleMutationIsAllowed,
+  bundleSelectionKey,
   previewIsCurrent,
 } from '../api/educationBundleEditorContracts';
 import type { EducationBundle } from '../types';
@@ -34,9 +35,11 @@ const STATUS_LABEL: Record<EducationBundle['status'], string> = {
 export default function EducationBundleEditor({
   quarter,
   recommendationIds,
+  selectionRevision,
 }: {
   quarter: string;
   recommendationIds: string[];
+  selectionRevision: number;
 }) {
   const [preview, setPreview] = useState<BundlePreview | null>(null);
   const [bundles, setBundles] = useState<EducationBundle[]>([]);
@@ -53,7 +56,13 @@ export default function EducationBundleEditor({
   const requestRef = useRef(0);
   const conflictEpochRef = useRef(0);
   const activeBundleIdRef = useRef<string | null>(null);
-  const selectionKey = recommendationIds.join('|');
+  const selectionKey = bundleSelectionKey(selectionRevision, recommendationIds);
+  const currentSelectionKey = useRef(selectionKey);
+  const previewRequestRef = useRef(0);
+
+  useLayoutEffect(() => {
+    currentSelectionKey.current = selectionKey;
+  }, [selectionKey]);
 
   useEffect(() => {
     activeBundleIdRef.current = activeBundle?.bundle_id ?? null;
@@ -127,14 +136,21 @@ export default function EducationBundleEditor({
     e.status === 409 &&
     ['education_bundle_version_conflict', 'education_bundle_invalid_status', 'education_bundle_publication_conflict'].includes(e.message);
 
+  const isCurrentPreviewRequest = (request: number) =>
+    request === previewRequestRef.current && previewIsCurrent(selectionKey, currentSelectionKey.current);
+
   const refreshSelectionAfterConflict = () => {
     setError('추천이 변경되어 최신 미리보기를 다시 확인해야 합니다. 입력한 내용은 보존됩니다.');
+    const request = ++previewRequestRef.current;
     return previewEducationBundle(recommendationIds)
       .then((next) => {
+        if (!isCurrentPreviewRequest(request)) return;
         setPreview(next);
         setPreviewSelectionKey(selectionKey);
       })
-      .catch(showError);
+      .catch((error: unknown) => {
+        if (isCurrentPreviewRequest(request)) showError(error);
+      });
   };
 
   const refreshBundleAfterConflict = (bundleId: string) => {
@@ -164,17 +180,21 @@ export default function EducationBundleEditor({
 
   const previewSelection = () => {
     ++conflictEpochRef.current;
+    const request = ++previewRequestRef.current;
     setBusy(true);
     setError(null);
     previewEducationBundle(recommendationIds)
       .then((next) => {
+        if (!isCurrentPreviewRequest(request)) return;
         setPreview(next);
         setPreviewSelectionKey(selectionKey);
         setActiveBundle(null);
         activeBundleIdRef.current = null;
         setConflictBundle(null);
       })
-      .catch(showError)
+      .catch((error: unknown) => {
+        if (isCurrentPreviewRequest(request)) showError(error);
+      })
       .finally(() => setBusy(false));
   };
 
@@ -525,7 +545,7 @@ export default function EducationBundleEditor({
               </button>
             ) : (
               <>
-                <button type="button" className={styles.primary} disabled={busy || !validContent} onClick={save}>
+                <button type="button" className={styles.primary} disabled={busy || !validContent || !selectedSnapshot} onClick={save}>
                   수동 초안 저장
                 </button>
                 <ConfirmButton
@@ -534,7 +554,7 @@ export default function EducationBundleEditor({
                   question="AI가 일반 PPE 교육 초안을 생성합니다. 생성 후에도 관리자의 검토와 명시적 게시가 필요합니다."
                   confirmLabel="생성"
                   danger={false}
-                  disabled={busy || conflictNeedsReview}
+                  disabled={busy || conflictNeedsReview || !selectedSnapshot}
                   onConfirm={generate}
                 />
               </>

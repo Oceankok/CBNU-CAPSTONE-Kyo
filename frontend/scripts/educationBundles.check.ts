@@ -11,7 +11,9 @@ import {
   bundleDraftIsDirty,
   bundleInputsDisabled,
   bundleMutationIsAllowed,
+  bundleSelectionKey,
   previewIsCurrent,
+  retainBundleSelection,
 } from '../src/api/educationBundleEditorContracts.ts';
 import type { EducationBundle } from '../src/types/index.ts';
 
@@ -95,3 +97,23 @@ assert(
 assert(bundleInputsDisabled(true), 'bundle fields must be disabled while a write is pending');
 assert(!bundleInputsDisabled(false), 'bundle fields may be edited when no write is pending');
 console.log('education bundle editor safety contracts ok');
+
+const refreshed = [
+  { recommendation_id: 'REC_B', ppe_type: 'helmet' as const },
+  { recommendation_id: 'REC_C', ppe_type: 'vest' as const },
+];
+assert(retainBundleSelection(['REC_A', 'REC_B'], refreshed).join() === 'REC_B',
+  'adoption removes hidden IDs without dropping valid IDs');
+assert(retainBundleSelection(['REC_A'], refreshed).length === 0,
+  'no stale selection remains when all IDs disappear');
+assert(retainBundleSelection(['REC_A', 'REC_B', 'REC_C'], refreshed).join() === 'REC_B',
+  'adoption preserves the first surviving PPE cohort if scope changed');
+assert(retainBundleSelection([...Array.from({length: 19}, (_, i) => `hidden-${i}`), 'REC_B'], refreshed).length === 1,
+  'hidden IDs must not consume the selection cap');
+const before = bundleSelectionKey(1, ['REC_B']);
+assert(!previewIsCurrent(before, bundleSelectionKey(2, ['REC_B'])),
+  'same-ID source refresh or delayed previous response must invalidate preview');
+assert(!previewIsCurrent(before, bundleSelectionKey(3, ['REC_B'])),
+  'returning to the previous selection does not revive its preview');
+assert(previewIsCurrent(before, bundleSelectionKey(1, ['REC_B'])),
+  'current preview remains usable until selection or source revision changes');

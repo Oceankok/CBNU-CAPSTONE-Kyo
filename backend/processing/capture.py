@@ -1,5 +1,6 @@
 """Camera-specific cumulative capture reports; no network collector or classifier."""
 import json
+import logging
 import math
 import os
 import time
@@ -8,6 +9,9 @@ from fastapi import HTTPException
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from typing import Literal
 from backend.processing import lifecycle as lc
+
+
+logger = logging.getLogger(__name__)
 
 
 class Range(BaseModel):
@@ -71,6 +75,29 @@ def _covers(ranges,start,end):
 
 
 def report(event_id,camera_id,body,node_id):
+    result = _record_report(event_id,camera_id,body,node_id)
+    if body.state == 'complete':
+        # Capture has committed, including on an identical retry. Secondary
+        # shadow diagnostics must never reject an accepted evidence report.
+        try:
+            _refresh_capture_shadow(event_id)
+        except Exception as exc:
+            logger.warning('Capture shadow refresh failed after report commit (%s)', type(exc).__name__)
+    return result
+
+
+def _refresh_capture_shadow(event_id):
+    from backend.auto_decision.settings import process_ready
+
+    with lc.get_connection() as conn:
+        if getattr(conn, 'dialect', 'sqlite') == 'postgresql':
+            # Observe current policy/evidence after waiting for the write lock.
+            conn.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
+        lc.begin_write(conn)
+        process_ready(conn, event_id, capture_shadow_only=True)
+
+
+def _record_report(event_id,camera_id,body,node_id):
     lc.enabled();raw=lc.canonical(body)
     with lc.get_connection() as conn:
         lc.begin_write(conn)

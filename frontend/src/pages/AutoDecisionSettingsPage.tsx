@@ -22,14 +22,25 @@ export default function AutoDecisionSettingsPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [history, setHistory] = useState<AutoDecisionHistory | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [initialAttempt, setInitialAttempt] = useState(0);
 
   useEffect(() => {
     let stale = false;
     fetchAutoDecisionSettings().then(data => {
       if (!stale) { setSaved(data); setDraft(data); setTextFields({}); }
-    }).catch((error: Error) => { if (!stale) setMessage(error.message); });
+    }).catch((error: unknown) => {
+      if (!stale) setMessage(`설정 조회 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    }).finally(() => { if (!stale) setInitialLoading(false); });
     return () => { stale = true; };
-  }, []);
+  }, [initialAttempt]);
+
+  const retryInitialLoad = () => {
+    if (draft || initialLoading || busy) return;
+    setMessage('');
+    setInitialLoading(true);
+    setInitialAttempt(attempt => attempt + 1);
+  };
 
   const change = (update: Partial<AutoDecisionSettings>) => {
     setDraft(old => old ? { ...old, ...update } : old);
@@ -51,12 +62,14 @@ export default function AutoDecisionSettingsPage() {
     } finally { setBusy(false); }
   };
   const reload = async () => {
+    if (!draft || !conflict || busy) return;
     setBusy(true);
     try { setLatest(await fetchAutoDecisionSettings()); setMessage('최신 설정을 아래에 표시했습니다. 현재 입력은 아직 바꾸지 않았습니다.'); }
     catch (error) { setMessage(`최신 설정 조회 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`); }
     finally { setBusy(false); }
   };
   const loadHistory = async (offset = 0) => {
+    if (initialLoading || busy) return;
     setBusy(true);
     try { setHistory(await fetchAutoDecisionHistory(offset)); }
     catch (error) { setMessage(`감사 이력 조회 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`); }
@@ -75,9 +88,9 @@ export default function AutoDecisionSettingsPage() {
   return <main className={styles.page}>
     <h1>자동확정 설정 · 진단</h1>
     <p>사람 탐지 점수는 보호구 위반 확률이 아닙니다. 검토 전용·판단 불가·근거 부족 이벤트는 검토 대기로 남습니다.</p>
-    <p role="status">서버 자동확정: {saved ? (saved.automatic_confirmation_enabled === true ? '활성' : saved.automatic_confirmation_enabled === false ? '비활성' : '확인 불가') : '확인 중'}</p>
+    <p role="status">서버 자동확정: {saved ? (saved.automatic_confirmation_enabled === true ? '활성' : saved.automatic_confirmation_enabled === false ? '비활성' : '확인 불가') : initialLoading ? '확인 중' : '확인 불가'}</p>
     {message && <p role="status">{message}</p>}
-    {!draft ? <button onClick={reload} disabled={busy}>다시 조회</button> : <>
+    {!draft ? <button onClick={retryInitialLoad} disabled={initialLoading || busy}>다시 조회</button> : <>
       {(!Array.isArray(draft.activation_blockers) || draft.activation_blockers.length > 0) && <section><h2>활성화 차단 사유</h2><ul>{(Array.isArray(draft.activation_blockers) ? draft.activation_blockers : ['서버 준비 상태 응답 누락']).map(v => <li key={v}>{v}</li>)}</ul></section>}
       <fieldset disabled={busy}>
         <legend>정책 입력 (버전 {draft.version})</legend>
@@ -104,10 +117,10 @@ export default function AutoDecisionSettingsPage() {
         {preview && <ul>{preview.items.map(item => <li key={item.event_id}>{item.event_id}: {item.threshold_candidate ? '실험 임계값 후보 (확정 아님)' : '임계값 후보 아님'} · 점수 {item.observed_confidence ?? '없음'}<ul>{item.blocking_reasons.map(v => <li key={v}>{v}</li>)}</ul></li>)}</ul>}
       </section>
     </>}
-    <section><h2>설정 변경 감사 이력</h2><button disabled={busy} onClick={() => loadHistory()}>최근 20건 조회</button>
+    <section><h2>설정 변경 감사 이력</h2><button disabled={initialLoading || busy} onClick={() => loadHistory()}>최근 20건 조회</button>
       {history && <><ol>{history.items.map(item => <li key={item.version}>버전 {item.version} · {item.changed_at} · 변경자 {item.changed_by} · 사유 {item.reason}<pre>{JSON.stringify(item.policy, null, 2)}</pre></li>)}</ol>
-        <button disabled={busy || history.offset === 0} onClick={() => loadHistory(Math.max(0, history.offset - 20))}>이전 이력</button>
-        <button disabled={busy || history.items.length < history.limit} onClick={() => loadHistory(history.offset + history.limit)}>다음 이력</button></>}
+        <button disabled={initialLoading || busy || history.offset === 0} onClick={() => loadHistory(Math.max(0, history.offset - 20))}>이전 이력</button>
+        <button disabled={initialLoading || busy || history.items.length < history.limit} onClick={() => loadHistory(history.offset + history.limit)}>다음 이력</button></>}
     </section>
     {latest && <section><h2>최신 서버 설정 (현재 입력과 별도)</h2><pre>{JSON.stringify(latest, null, 2)}</pre>
       <button disabled={busy} onClick={() => { setDraft(latest); setSaved(latest); setTextFields({}); setLatest(null); setConflict(false); setReason(''); setPreview(null); setMessage('기존 입력을 버리고 최신 설정으로 다시 시작했습니다.'); }}>기존 입력을 버리고 최신 설정 사용</button>

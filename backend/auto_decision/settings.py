@@ -189,15 +189,18 @@ def settings_preview(body: SettingsPreview):
                 for event_id in body.event_ids])}
 
 
-def process_ready(conn, event_id):
+def process_ready(conn, event_id, *, capture_shadow_only=False):
     """Same caller-owned transaction and shared write lock as the dormant writer.
 
     No new polling worker, no automatic backfill. Hooks revisit an event when its
     lifecycle/media complete; future settings changes affect future hook calls.
+    The post-commit capture hook can only append a finalizable shadow snapshot.
     """
     policy, version, row = load(conn)
     if policy.mode == 'off':
         return {'applied':False,'reason':'automatic_confirmation_disabled'}
+    if capture_shadow_only and policy.mode != 'shadow':
+        return {'applied':False,'reason':'capture_shadow_only'}
     event=conn.execute('SELECT * FROM candidate_event WHERE event_id=?',(event_id,)).fetchone()
     if event is None:
         return {'applied':False,'reason':'event_not_found'}
@@ -212,6 +215,17 @@ def process_ready(conn, event_id):
     preview=PreviewRequest(event_ids=[event_id], threshold=policy.threshold,
         model_versions=policy.model_versions,ppe_types=policy.ppe_types,policy_label=f'settings-v{version}')
     if policy.mode == 'shadow':
+        if capture_shadow_only:
+            if event['event_status'] != 'pending':
+                return {'applied':False,'reason':'event_not_pending'}
+            from backend.processing.lifecycle import require_finalizable
+            try:
+                require_finalizable(conn,event_id)
+            except ValueError as exc:
+                if str(exc) not in {'continuous_event_not_closed', 'continuous_evidence_incomplete',
+                                    'event_media_deleted_or_expired'}:
+                    raise
+                return {'applied':False,'reason':str(exc)}
         from backend.auto_decision.shadow import record_policy_shadow
         diagnostic=preview_policy(conn,event_id,policy,f'settings-v{version}')
         record_policy_shadow(conn,event_id,version,row['updated_by'],preview,diagnostic)

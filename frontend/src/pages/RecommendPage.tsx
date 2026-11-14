@@ -13,6 +13,7 @@ import { isLatestRequest } from '../api/schema31Contracts';
 import { refreshAfterScopeConflict as refreshLatestAfterScopeConflict } from '../api/schema31Interactions';
 import EducationMaterialEditor from '../components/EducationMaterialEditor';
 import type { EducationMaterialDraft } from '../components/EducationMaterialEditor';
+import { retainBundleSelection } from '../api/educationBundleEditorContracts';
 import EducationBundleEditor from '../components/EducationBundleEditor';
 import type { EducationMaterialScope } from '../api/materials';
 import type { LayoutContext } from '../components/AppLayout';
@@ -154,7 +155,8 @@ export default function RecommendPage() {
   const [error, setError] = useState<string | null>(null);
   const [latest, setLatest] = useState<EducationRecommendationList | null>(null);
   const [drafts, setDrafts] = useState<Record<string, EducationMaterialDraft>>({});
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selection, setSelection] = useState({ ids: [] as string[], revision: 0 });
+  const selectedIds = selection.ids;
   const recommendationRequest = useRef(0);
   const latestRecommendationRequest = useRef(0);
 
@@ -186,25 +188,33 @@ export default function RecommendPage() {
     }
   };
 
-  const selectLatest = (next: EducationRecommendationList, recommendationId: string) => {
+  const selectLatest = (next: EducationRecommendationList, recommendationId?: string) => {
     const selected = next.items.find((item) => item.recommendation_id === recommendationId);
     setData(
       selected
         ? { ...next, items: [selected, ...next.items.filter((item) => item !== selected)] }
         : next,
     );
+    // Even unchanged IDs can represent new source data after the explicit refresh.
+    setSelection(current => ({
+      ids: retainBundleSelection(current.ids, next.items),
+      revision: current.revision + 1,
+    }));
     setLatest(null);
     setError(null);
   };
 
   const selectedPpe = data?.items.find((item) => selectedIds.includes(item.recommendation_id))?.ppe_type;
   const toggleSelection = (recommendationId: string, checked: boolean) => {
-    setSelectedIds((current) => {
-      if (checked) {
-        if (current.includes(recommendationId) || current.length >= 20) return current;
-        return [...current, recommendationId];
-      }
-      return current.filter((id) => id !== recommendationId);
+    setSelection(current => {
+      if (checked === current.ids.includes(recommendationId)) return current;
+      if (checked && current.ids.length >= 20) return current;
+      return {
+        ids: checked
+          ? [...current.ids, recommendationId]
+          : current.ids.filter(id => id !== recommendationId),
+        revision: current.revision + 1,
+      };
     });
   };
 
@@ -268,6 +278,11 @@ export default function RecommendPage() {
             명시적으로 다시 선택하면 최신 목록으로 전환합니다.
           </p>
           <div className={styles.cardList}>
+            {latest.items.length === 0 && (
+              <button type="button" className={styles.reselect} onClick={() => selectLatest(latest)}>
+                추천이 없는 최신 목록으로 전환
+              </button>
+            )}
             {latest.items.map((item) => (
               <button
                 key={item.recommendation_id}
@@ -286,6 +301,7 @@ export default function RecommendPage() {
         <EducationBundleEditor
           quarter={data.quarter}
           recommendationIds={selectedIds}
+          selectionRevision={selection.revision}
         />
       )}
 
