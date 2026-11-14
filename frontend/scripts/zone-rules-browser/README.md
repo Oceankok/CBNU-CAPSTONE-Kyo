@@ -8,17 +8,29 @@ database, cameras, inference, or automatic confirmation settings are used.
 
 ## Run
 
-Use the frontend's normal dependencies plus an available `@playwright/test` and
-browser installation. This change intentionally adds no package/lockfile dependency.
-For this verification, the already installed education-browser dependencies were
-reused through a local ignored `node_modules` junction.
+Node 20+ is required. `@playwright/test` is declared in the frontend development
+dependencies and locked to 1.65.1, matching PR #256. No changes from that PR's
+education scripts or CI are required. The original browser verification reused
+its installed dependencies through a local ignored `node_modules` junction.
 
 From `frontend` in PowerShell:
 
 ```powershell
+npm ci
 $env:PLAYWRIGHT_CHANNEL='msedge'
 node node_modules/@playwright/test/cli.js test --config playwright.zone-rules.config.ts
 ```
+
+The command above uses an installed Microsoft Edge. For Playwright-managed
+Chromium instead, run `node node_modules/@playwright/test/cli.js install chromium`,
+remove `PLAYWRIGHT_CHANNEL` from the environment, and run the same test command.
+
+Fresh setup was separately checked in an empty directory using these manifest and
+lock files: `npm ci --ignore-scripts --offline --no-audit --no-fund` installed 204
+packages from the existing npm cache. The fresh CLI reported 1.65.1 and discovered
+all 11 cases with `test --config playwright.zone-rules.config.ts --list`. All files
+in the three Playwright packages matched the previously tested installation.
+This setup check did not repeat browser execution or test an uncached download.
 
 The fixture owns loopback port **5189** and stops when the run finishes. Reports
 and failure traces live under `frontend/.private_media/zone-rules-browser/`.
