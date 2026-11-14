@@ -1,3 +1,4 @@
+import { formatErrorDetail } from './errorDetail';
 import { getSession, clearSession } from './auth';
 
 // Empty base URL uses the same-origin /api and /storage Vite proxy.
@@ -50,11 +51,7 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
-    // FastAPI validation errors (422) are an array of { msg, loc }; flatten to one message
-    const detail = Array.isArray(body.detail)
-      ? body.detail.map((d: { msg?: string }) => d.msg ?? String(d)).join(', ')
-      : body.detail;
-    throw new ApiError(res.status, detail ?? res.statusText);
+    throw new ApiError(res.status, formatErrorDetail(body.detail ?? res.statusText));
   }
   return res;
 }

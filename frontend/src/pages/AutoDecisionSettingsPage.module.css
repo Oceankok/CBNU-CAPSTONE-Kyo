@@ -1,0 +1,7 @@
+.page { max-width: 900px; margin: auto; padding: 24px; }
+.page fieldset, .page section { margin: 20px 0; padding: 16px; border: 1px solid #9aa8ba; border-radius: 8px; }
+.page label { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; }
+.page input, .page select, .page textarea, .page button { font: inherit; padding: 8px; }
+.page textarea { min-height: 64px; }
+.page pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.page button { margin: 6px 6px 6px 0; }

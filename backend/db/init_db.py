@@ -40,6 +40,11 @@ def init_database() -> None:
         if cursor.execute("PRAGMA user_version").fetchone()[0] > LATEST_VERSION:
             raise RuntimeError("Database version is newer than this application")
 
+        if cursor.execute("PRAGMA user_version").fetchone()[0] >= 33 and not cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='auto_decision_settings'"
+        ).fetchone():
+            raise RuntimeError('Incompatible schema33 lineage: explicit reconciliation required')
+
         # 외래키 제약 조건 활성화
         cursor.execute("PRAGMA foreign_keys = ON;")
 

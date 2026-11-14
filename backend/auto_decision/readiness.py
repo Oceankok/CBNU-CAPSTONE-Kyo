@@ -1,11 +1,11 @@
-"""Internal read-only preflight. No automatic writer or enable mechanism exists."""
+"""Internal read-only preflight. Dormant writer exists; no runtime is connected."""
 import re
 from backend.auto_decision.routes import PreviewRequest, inspect
 from backend.db.connection import run_stats_transaction
 
 _UNIMPLEMENTED_GATES = (
     'automatic_confirmation_disabled', 'validated_decision_policy_unavailable',
-    'full_evidence_decision_validation_unavailable', 'automatic_review_writer_unavailable',
+    'full_evidence_decision_validation_unavailable', 'automatic_review_runtime_not_connected',
 )
 
 

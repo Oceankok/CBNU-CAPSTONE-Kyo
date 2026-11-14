@@ -5,6 +5,7 @@ import unittest
 from backend.db.connection import is_postgres, schema_version
 from backend.db.event_repository import get_connection
 from backend.db.init_db import init_database
+from backend.db.migrations import LATEST_VERSION
 from backend.tests.support import database_environment
 
 
@@ -44,7 +45,7 @@ class EducationUpgradeTests(unittest.TestCase):
         for _ in range(2):
             init_database()
             with get_connection() as conn:
-                self.assertEqual(schema_version(conn), 32)
+                self.assertEqual(schema_version(conn), LATEST_VERSION)
                 self.assertEqual(self._snapshot(conn, before), before)
                 # A SELECT also proves the v32 table was created on the v31 path.
                 conn.execute('SELECT bundle_id FROM education_bundle').fetchall()

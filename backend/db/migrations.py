@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-LATEST_VERSION = 32
+LATEST_VERSION = 33
 
 
 def _now() -> str:
@@ -20,6 +20,13 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
             f"Database version {version} is newer than this application supports "
             f"(latest {LATEST_VERSION})."
         )
+
+    # #246's deferred translation candidate used 33 for another schema. Never
+    # silently accept that divergent lineage as the automatic-policy migration.
+    if version >= 33 and not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='auto_decision_settings'"
+    ).fetchone():
+        raise RuntimeError('Incompatible schema33 lineage: explicit reconciliation required')
 
     if version < 1:
         conn.execute("BEGIN IMMEDIATE")
@@ -531,6 +538,19 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
                 if statement.strip():
                     conn.execute(statement)
             conn.execute('PRAGMA user_version=32')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 33:
+        from pathlib import Path
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            script = (Path(__file__).resolve().parents[1] / 'auto_decision' / 'settings_schema.sql').read_text(encoding='utf-8')
+            for statement in script.split(';'):
+                if statement.strip(): conn.execute(statement)
+            conn.execute('PRAGMA user_version=33')
             conn.commit()
         except Exception:
             conn.rollback()
