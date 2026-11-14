@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fetchZones, saveZone, deleteZone } from '../api/zones';
 import { fetchUsers, setZoneMembers } from '../api/users';
 import { fetchCameras } from '../api/cameras';
@@ -43,9 +43,7 @@ const toRule = (d: Draft): ZoneRule => ({
   zone_name: d.zone_name,
   required_ppe: d.required_ppe,
   // Do not send a value read by an old screen when only rules changed.
-  ...(d.riskChanged && d.riskLevel != null
-    ? { risk_level: d.riskLevel }
-    : {}),
+  ...(d.riskChanged && d.riskLevel != null ? { risk_level: d.riskLevel } : {}),
   // Backend rejects duplicate lines (422), so drop repeats here
   rules: [
     ...new Set(
@@ -60,24 +58,61 @@ const toRule = (d: Draft): ZoneRule => ({
 export default function ZoneRulesPage() {
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null); // zone currently saving/deleting
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const busyRef = useRef(new Set<string>());
+  // A member refresh replaces the entire worker list. Serialize member writes
+  // across zones with initial/retry/conflict reads so none can overwrite another.
+  const [membersBusy, setMembersBusy] = useState(true);
+  const membersBusyRef = useRef(true);
   const [newZone, setNewZone] = useState('');
   const [workers, setWorkers] = useState<AppUser[]>([]);
   const [workersReloadFailed, setWorkersReloadFailed] = useState(false);
   const [cameras, setCameras] = useState<Camera[]>([]);
 
   useEffect(() => {
+    let active = true;
     fetchZones()
       .then((zones) => setDrafts(zones.map(toDraft)))
       .catch((e: Error) => setError(e.message));
     // Members and cameras are context for each zone; the rule editor works without them
     fetchUsers()
-      .then((users) => setWorkers(users.filter((u) => u.role === 'worker')))
-      .catch(() => {});
+      .then((users) => {
+        if (active) setWorkers(users.filter((u) => u.role === 'worker'));
+      })
+      .catch((e: Error) => {
+        if (!active) return;
+        setWorkersReloadFailed(true);
+        setError(`작업자 명단 조회 실패: ${e.message}`);
+      })
+      .finally(() => {
+        if (!active) return;
+        membersBusyRef.current = false;
+        setMembersBusy(false);
+      });
     fetchCameras()
       .then(setCameras)
       .catch(() => {});
+    return () => {
+      active = false;
+    };
   }, []);
+
+  const beginZoneOperation = (zone: string) => {
+    if (busyRef.current.has(zone)) return false;
+    busyRef.current.add(zone);
+    setBusy(new Set(busyRef.current));
+    return true;
+  };
+
+  const endZoneOperation = (zone: string) => {
+    busyRef.current.delete(zone);
+    setBusy(new Set(busyRef.current));
+  };
+
+  const setMembersLoading = (loading: boolean) => {
+    membersBusyRef.current = loading;
+    setMembersBusy(loading);
+  };
 
   const loadWorkers = () =>
     fetchUsers().then((users) => {
@@ -108,46 +143,51 @@ export default function ZoneRulesPage() {
   // Replaces this zone's worker list only; the workers' other zones stay (#127).
   // The list as we last loaded it goes along, so a change made by another admin
   // in the meantime is reported instead of silently overwritten (#240)
-  const assign = (zone: string, userIds: string[]) => {
+  const assign = async (zone: string, userIds: string[]) => {
+    if (
+      membersBusyRef.current ||
+      workersReloadFailed ||
+      !beginZoneOperation(zone)
+    )
+      return;
+    setMembersLoading(true);
     setError(null);
-    setBusy(zone);
     const expected = workers
       .filter((w) => w.zone_names.includes(zone))
       .map((w) => w.user_id);
-    setZoneMembers(zone, userIds, expected)
-      .then((saved) =>
-        setWorkers((prev) =>
-          prev.map((w) => {
-            const others = w.zone_names.filter((z) => z !== zone);
-            const names = saved.user_ids.includes(w.user_id)
-              ? [...others, zone].sort()
-              : others;
-            return { ...w, zone_names: names, zone_name: names[0] ?? null };
-          }),
-        ),
-      )
-      .catch((e: Error) => {
-        if (e.message === 'zone_members_changed') {
-          setError(
-            `${zone} 작업자 명단을 다른 관리자가 먼저 변경했습니다. 최신 명단을 다시 불러왔으니 확인한 뒤 다시 시도하세요.`,
-          );
-          void refreshWorkersAfterFailure(zone);
-          return;
-        }
-        setError(`${zone} 작업자 변경 실패: ${e.message}`);
-        // The request may have been applied even though the answer was lost
-        void refreshWorkersAfterFailure(zone, true);
-      })
-      .finally(() => setBusy(null));
+    try {
+      const saved = await setZoneMembers(zone, userIds, expected);
+      setWorkers((prev) =>
+        prev.map((w) => {
+          const others = w.zone_names.filter((z) => z !== zone);
+          const names = saved.user_ids.includes(w.user_id)
+            ? [...others, zone].sort()
+            : others;
+          return { ...w, zone_names: names, zone_name: names[0] ?? null };
+        }),
+      );
+    } catch (e) {
+      // The request may have been applied even though the answer was lost.
+      // Keep the lock until the full refresh succeeds or fails truthfully.
+      await refreshWorkersAfterFailure(
+        zone,
+        !(e instanceof Error && e.message === 'zone_members_changed'),
+      );
+    } finally {
+      endZoneOperation(zone);
+      setMembersLoading(false);
+    }
   };
 
-  const patch = (zone: string, p: Partial<Draft>) =>
+  const patch = (zone: string, p: Partial<Draft>) => {
+    if (busyRef.current.has(zone)) return;
     setDrafts(
       (prev) =>
         prev?.map((d) =>
           d.zone_name === zone ? { ...d, ...p, saved: false } : d,
         ) ?? prev,
     );
+  };
 
   const togglePpe = (d: Draft, ppe: ZonePpe) =>
     patch(d.zone_name, {
@@ -157,7 +197,7 @@ export default function ZoneRulesPage() {
     });
 
   const handleSave = (d: Draft) => {
-    setBusy(d.zone_name);
+    if (!beginZoneOperation(d.zone_name)) return;
     setError(null);
     saveZone(toRule(d))
       .then((saved) =>
@@ -169,22 +209,23 @@ export default function ZoneRulesPage() {
         ),
       )
       .catch((e: Error) => setError(`${d.zone_name} 저장 실패: ${e.message}`))
-      .finally(() => setBusy(null));
+      .finally(() => endZoneOperation(d.zone_name));
   };
 
   const handleDelete = (d: Draft) => {
+    if (busyRef.current.has(d.zone_name)) return;
     const removeLocal = () =>
       setDrafts(
         (prev) => prev?.filter((x) => x.zone_name !== d.zone_name) ?? prev,
       );
     // A zone that was never saved only exists locally
     if (d.isNew) return removeLocal();
-    setBusy(d.zone_name);
+    if (!beginZoneOperation(d.zone_name)) return;
     setError(null);
     deleteZone(d.zone_name)
       .then(removeLocal)
       .catch((e: Error) => setError(`${d.zone_name} 삭제 실패: ${e.message}`))
-      .finally(() => setBusy(null));
+      .finally(() => endZoneOperation(d.zone_name));
   };
 
   const handleAdd = (e: React.FormEvent) => {
@@ -224,11 +265,19 @@ export default function ZoneRulesPage() {
         <button
           type="button"
           className={styles.memberRetry}
-          onClick={() => {
+          disabled={membersBusy}
+          onClick={async () => {
+            if (membersBusyRef.current) return;
+            setMembersLoading(true);
             setError(null);
-            void loadWorkers()
-              .then(() => setError('최신 작업자 명단을 불러왔습니다.'))
-              .catch((e: Error) => setError(`작업자 명단 조회 실패: ${e.message}`));
+            try {
+              await loadWorkers();
+              setError('최신 작업자 명단을 불러왔습니다.');
+            } catch (e) {
+              setError(`작업자 명단 조회 실패: ${(e as Error).message}`);
+            } finally {
+              setMembersLoading(false);
+            }
           }}
         >
           작업자 명단 다시 불러오기
@@ -249,6 +298,7 @@ export default function ZoneRulesPage() {
                 type="button"
                 className={`${styles.ppeChip} ${d.required_ppe.includes(o.value) ? styles.ppeOn : ''}`}
                 aria-pressed={d.required_ppe.includes(o.value)}
+                disabled={busy.has(d.zone_name)}
                 onClick={() => togglePpe(d, o.value)}
               >
                 {o.icon} {o.label}
@@ -267,6 +317,7 @@ export default function ZoneRulesPage() {
               className={styles.textarea}
               rows={Math.max(3, d.rulesText.split('\n').length + 1)}
               value={d.rulesText}
+              disabled={busy.has(d.zone_name)}
               onChange={(e) =>
                 patch(d.zone_name, { rulesText: e.target.value })
               }
@@ -292,21 +343,13 @@ export default function ZoneRulesPage() {
                   type="button"
                   role="radio"
                   aria-checked={d.riskLevel === r.level}
+                  disabled={busy.has(d.zone_name)}
                   className={`${styles.riskBtn} ${d.riskLevel === r.level ? styles.riskOn : ''}`}
                   onClick={() =>
-                    setDrafts(
-                      (prev) =>
-                        prev?.map((x) =>
-                          x.zone_name === d.zone_name
-                            ? {
-                                ...x,
-                                riskLevel: r.level,
-                                riskChanged: true,
-                                saved: false,
-                              }
-                            : x,
-                        ) ?? prev,
-                    )
+                    patch(d.zone_name, {
+                      riskLevel: r.level,
+                      riskChanged: true,
+                    })
                   }
                 >
                   {r.level}
@@ -328,6 +371,9 @@ export default function ZoneRulesPage() {
           <ZoneMembers
             zone={d.zone_name}
             saved={!d.isNew}
+            disabled={
+              busy.has(d.zone_name) || membersBusy || workersReloadFailed
+            }
             workers={workers}
             cameras={cameras.filter((c) => c.zone_name === d.zone_name)}
             onAssign={assign}
@@ -340,14 +386,14 @@ export default function ZoneRulesPage() {
               question={`'${d.zone_name}' 규칙을 삭제할까요?`}
               confirmLabel="삭제"
               onConfirm={() => handleDelete(d)}
-              disabled={busy === d.zone_name}
+              disabled={busy.has(d.zone_name)}
             />
             <button
               className={styles.saveBtn}
               onClick={() => handleSave(d)}
-              disabled={d.saved || busy === d.zone_name}
+              disabled={d.saved || busy.has(d.zone_name)}
             >
-              {busy === d.zone_name ? '저장 중…' : '저장'}
+              {busy.has(d.zone_name) ? '저장 중…' : '저장'}
             </button>
           </div>
         </section>
@@ -378,12 +424,14 @@ export default function ZoneRulesPage() {
 function ZoneMembers({
   zone,
   saved,
+  disabled,
   workers,
   cameras,
   onAssign,
 }: {
   zone: string;
   saved: boolean;
+  disabled: boolean;
   workers: AppUser[];
   cameras: Camera[];
   onAssign: (zone: string, userIds: string[]) => void;
@@ -418,6 +466,7 @@ function ZoneMembers({
                     type="button"
                     className={styles.memberRemove}
                     aria-label={`${w.display_name} 구역에서 제외`}
+                    disabled={disabled}
                     onClick={() =>
                       onAssign(
                         zone,
@@ -436,6 +485,7 @@ function ZoneMembers({
               <select
                 className={styles.memberAdd}
                 value=""
+                disabled={disabled}
                 onChange={(e) => {
                   const w = others.find((x) => x.user_id === e.target.value);
                   if (w)
