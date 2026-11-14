@@ -35,6 +35,14 @@ shadow tables are reused; key(policy version,event,evidence fingerprint) prevent
 repeated unchanged hook calls from duplicating history. Policy actor means who
 configured it, not a human reviewer. Reads do not trigger scans or backfill.
 
+An accepted complete camera report is also a shadow-only trigger once all
+evidence is finalizable, including when clips arrived first. It runs after the
+report commit in a separate write transaction. A diagnostic failure cannot
+roll back capture, and an identical report retry can fill a missed snapshot
+without changing the report or duplicating an already-recorded snapshot.
+Previous shadow history remains immutable; there is no backfill or automatic
+confirmation through this capture-report hook.
+
 Enforce rechecks adapter policy gates at use time, rejects computed duplicate
 suspicions and invokes the existing writer. Writer still requires complete closed
 whole-event evidence, no human review, valid proof, usable media and matching
