@@ -48,6 +48,7 @@ export default function ConfirmButton({
       <button
         type="button"
         className={danger ? styles.danger : styles.ok}
+        disabled={disabled}
         onClick={() => {
           setAsking(false);
           onConfirm();

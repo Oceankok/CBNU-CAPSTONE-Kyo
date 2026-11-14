@@ -223,6 +223,52 @@ export interface EducationRecommendationList {
   items: EducationRecommendation[];
 }
 
+// Multi-zone education bundles (#244). The source fields are admin-only and
+// never appear in the worker response.
+export interface EducationBundleSource {
+  recommendation_id: string;
+  quarter: string;
+  zone_name: string;
+  ppe_type: Exclude<PpeType, 'all'>;
+  education_topic: string;
+  confirmed_count: number;
+  priority_score: number;
+  score_version?: 'zone_ppe_v2' | 'legacy_unversioned' | null;
+}
+
+export interface EducationBundle {
+  bundle_id: string;
+  quarter: string;
+  ppe_type: Exclude<PpeType, 'all'>;
+  sources: EducationBundleSource[];
+  snapshot: string;
+  confirmed_count_sum?: number;
+  title: string;
+  body: string;
+  checklist: string[];
+  status: 'draft' | 'published' | 'superseded';
+  provider: string;
+  model: string | null;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+  published_by: string | null;
+  published_at: string | null;
+  version: number;
+}
+
+// Deliberately contains only the fields exposed by GET /api/worker/education-bundles.
+export interface WorkerEducationBundle {
+  bundle_id: string;
+  quarter: string;
+  ppe_type: string;
+  assigned_zones: string[];
+  title: string;
+  body: string;
+  checklist: string[];
+}
+
 // Shared filter state used across event list and stats pages
 export interface FilterState {
   ppeType: PpeType;
