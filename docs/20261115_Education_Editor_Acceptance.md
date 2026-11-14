@@ -49,6 +49,8 @@ node --experimental-strip-types scripts/educationBundles.check.ts
 
 CI 또는 Chromium을 쓰는 환경은 `npx playwright install --with-deps chromium`을 실행하고 `PLAYWRIGHT_CHANNEL`을 설정하지 않습니다. JSON 결과는 `frontend/test-results/education.json`, 실패 trace는 같은 디렉터리에 생성됩니다. 테스트 서버는 재사용하지 않으므로 5187 포트는 비어 있어야 합니다.
 
+CI의 frontend job에도 Chromium 설치와 `npm run test:education:browser`를 추가했습니다. 기존 lint·unit·build와 함께 실제 브라우저에서 25개 시나리오를 실행하며, HTTP 응답은 동일하게 격리합니다. 성공·실패 결과는 `education-browser-results` artifact에 7일간 보관합니다. `education.json`에서 검사별 결과를 확인하고, 실패 시 함께 수집되는 trace로 조사할 수 있습니다. CI 실행 링크와 결과는 PR #256의 검증 항목에 기록합니다. 다른 CI job은 변경하지 않았습니다.
+
 기준 코드 실패 검사는 별도 작업본에 현재 검사 파일을 준비한 뒤 두 편집기 파일만 위 기준 SHA의 내용으로 교체하고 다음 필터를 사용합니다. 본 검사에서는 본인 worktree만 임시 교체하고 finally에서 복원했습니다.
 
 ```powershell
