@@ -1,5 +1,6 @@
 import { apiFetch } from './client';
 import { cached, invalidate } from './apiCache';
+import { appendRepeatedZones, relationFingerprintBody } from './schema31Contracts';
 import type {
   CandidateEvent,
   EventReview,
@@ -51,16 +52,19 @@ export interface EventPageQuery {
   dateTo?: string;
   // Review-only events have no confidence and are never excluded by this (server rule)
   minConfidence?: number;
+  includeSuspectedDuplicates?: boolean;
 }
 
 const eventQuery = (q: Omit<EventPageQuery, 'limit' | 'offset'>) => {
   const p = new URLSearchParams();
   if (q.status) p.set('status', q.status);
   if (q.ppeType) p.set('ppe_type', q.ppeType);
-  for (const z of q.zones ?? []) p.append('zones', z);
+  appendRepeatedZones(p, q.zones ?? []);
   if (q.dateFrom) p.set('date_from', q.dateFrom);
   if (q.dateTo) p.set('date_to', q.dateTo);
   if (q.minConfidence) p.set('min_confidence', String(q.minConfidence));
+  if (q.includeSuspectedDuplicates)
+    p.set('include_suspected_duplicates', 'true');
   return p;
 };
 
@@ -97,9 +101,14 @@ export interface EventSummary {
 }
 
 // Counts plus the newest unreviewed events: what the sidebar badge and the 20s poll need
-export function fetchEventSummary(recentLimit = 50): Promise<EventSummary> {
-  return cached(`events:summary:${recentLimit}`, LIST_TTL_MS, () =>
-    apiFetch<EventSummary>(`/api/events/summary?recent_limit=${recentLimit}`),
+export function fetchEventSummary(
+  recentLimit = 50,
+  zones: string[] = [],
+): Promise<EventSummary> {
+  const p = new URLSearchParams({ recent_limit: String(recentLimit) });
+  appendRepeatedZones(p, zones);
+  return cached(`events:summary:${p}`, LIST_TTL_MS, () =>
+    apiFetch<EventSummary>(`/api/events/summary?${p}`),
   );
 }
 
@@ -138,9 +147,177 @@ export function mergeEvents(
   );
 }
 
-export function fetchEvent(eventId: string): Promise<EventDetailResponse> {
-  return cached(`event:${eventId}`, DETAIL_TTL_MS, () =>
-    apiFetch<EventDetailResponse>(`/api/events/${eventId}`),
+export function fetchEvent(
+  eventId: string,
+  options: { includeSuspectedDuplicates?: boolean } = {},
+): Promise<EventDetailResponse> {
+  const suffix = options.includeSuspectedDuplicates
+    ? '?include_suspected_duplicates=true'
+    : '';
+  return cached(
+    `event:${eventId}:${options.includeSuspectedDuplicates ? 'tagged' : 'plain'}`,
+    DETAIL_TTL_MS,
+    () =>
+    apiFetch<EventDetailResponse>(`/api/events/${eventId}${suffix}`),
+  );
+}
+
+export interface SuspectedDuplicateTag {
+  tag: 'suspected_duplicate' | null;
+  candidate_count: number;
+  eligible: boolean;
+  reason: string | null;
+  rule_version: string;
+  mode: 'computed_metadata';
+  persisted: false;
+  identity_confirmed: false;
+  automatic_merge: false;
+  statistics_changed: false;
+  saved_record_count: number;
+  released_record_count: number;
+  saved_counts_are_current_matches: false;
+  release_suppresses_computed_tag: false;
+}
+
+export interface SuspectedDuplicateCandidate {
+  event_id: string;
+  camera_id: string;
+  ppe_type: string;
+  timestamp_start: string;
+  timestamp_end: string;
+  event_status: string;
+  overlap_seconds: number;
+  shared_group_snapshots: { group_id: string; group_version: number }[];
+  reason: string;
+}
+
+export interface SuspectedDuplicatePreview {
+  event_id: string;
+  mode: 'metadata_preview';
+  eligible: boolean;
+  reason: string | null;
+  total: number;
+  limit: number;
+  offset: number;
+  items: SuspectedDuplicateCandidate[];
+  has_more: boolean;
+  next_offset: number | null;
+  pagination_truncated: boolean;
+}
+
+export interface RelationEvidence {
+  eligible: boolean;
+  reason: string | null;
+  fingerprint: string | null;
+  evidence: Record<string, unknown> | null;
+}
+
+export interface SavedSuspectedRelation {
+  relation_id: string;
+  event_a: string;
+  event_b: string;
+  fingerprint: string;
+  evidence: Record<string, unknown>;
+  saved_by: string;
+  saved_at: string;
+  released_by: string | null;
+  released_at: string | null;
+  state: 'saved' | 'released';
+  stale: boolean;
+  current_fingerprint: string | null;
+  current_reason: string | null;
+  suppresses_preview: false;
+  automatic_merge: false;
+  statistics_changed: false;
+}
+
+export interface SavedSuspectedRelationList {
+  items: SavedSuspectedRelation[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+  next_offset: number | null;
+  pagination_truncated: boolean;
+}
+
+const relationPath = (eventId: string, suffix: string) =>
+  `/api/events/${encodeURIComponent(eventId)}/suspected-duplicates/${suffix}`;
+
+export function fetchSuspectedDuplicatesPreview(
+  eventId: string,
+  limit = 20,
+  offset = 0,
+): Promise<SuspectedDuplicatePreview> {
+  return apiFetch(
+    `${relationPath(eventId, 'preview')}?limit=${limit}&offset=${offset}`,
+  );
+}
+
+export function fetchRelationEvidence(
+  eventId: string,
+  peerId: string,
+): Promise<RelationEvidence> {
+  return apiFetch(
+    `/api/events/${encodeURIComponent(eventId)}/suspected-duplicates/evidence/${encodeURIComponent(peerId)}`,
+  );
+}
+
+export function saveSuspectedRelation(
+  eventId: string,
+  peerId: string,
+  expectedFingerprint: string,
+): Promise<SavedSuspectedRelation> {
+  return afterWrite(
+    apiFetch(
+      `/api/events/${encodeURIComponent(eventId)}/saved-suspected-relations/${encodeURIComponent(peerId)}`,
+      {
+        method: 'POST',
+        body: JSON.stringify(relationFingerprintBody(expectedFingerprint)),
+      },
+    ),
+    eventId,
+  );
+}
+
+export function fetchSavedSuspectedRelations(
+  eventId: string,
+  limit = 20,
+  offset = 0,
+): Promise<SavedSuspectedRelationList> {
+  return apiFetch(
+    `/api/events/${encodeURIComponent(eventId)}/saved-suspected-relations?limit=${limit}&offset=${offset}`,
+  );
+}
+
+export function releaseSuspectedRelation(
+  relationId: string,
+  expectedFingerprint: string,
+  eventId?: string,
+): Promise<SavedSuspectedRelation> {
+  return afterWrite(
+    apiFetch(
+      `/api/events/saved-suspected-relations/${encodeURIComponent(relationId)}/release`,
+      {
+        method: 'POST',
+        body: JSON.stringify(relationFingerprintBody(expectedFingerprint)),
+      },
+    ),
+    eventId,
+  );
+}
+
+export function reconcileSuspectedRelations(
+  eventId: string,
+  limit = 20,
+  offset = 0,
+): Promise<unknown> {
+  return afterWrite(
+    apiFetch(
+      `${relationPath(eventId, 'reconcile-current')}?limit=${limit}&offset=${offset}`,
+      { method: 'POST' },
+    ),
+    eventId,
   );
 }
 

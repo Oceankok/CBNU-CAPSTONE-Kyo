@@ -1,9 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
 import EventMediaPanel from '../components/EventMediaPanel';
 import EventMergePanel from '../components/EventMergePanel';
-import { fetchEvent, submitReview, updateReview } from '../api/events';
+import SuspectedDuplicatePanel from '../components/SuspectedDuplicatePanel';
+import {
+  fetchEvent,
+  fetchSavedSuspectedRelations,
+  fetchSuspectedDuplicatesPreview,
+  submitReview,
+  updateReview,
+} from '../api/events';
+import type {
+  SavedSuspectedRelationList,
+  SuspectedDuplicatePreview,
+  SuspectedDuplicateTag,
+} from '../api/events';
+import { buildSuspectedDuplicateSummary } from '../api/suspectedDuplicateSummary';
 import { getSession } from '../api/auth';
 import type {
   CandidateEvent,
@@ -92,6 +105,130 @@ function getReasonLabel(code: string): string {
   return REASON_LABEL[code] ?? code;
 }
 
+function relationLoadError(error: unknown): string {
+  const status = error instanceof Error && 'status' in error
+    ? (error as Error & { status?: number }).status
+    : undefined;
+  return status === 403 || status === 404
+    ? '권한 또는 자료 상태로 의심 관계를 확인할 수 없습니다.'
+    : '의심 관계 정보를 불러오지 못했습니다.';
+}
+
+function EventLinks({ ids }: { ids: string[] }) {
+  return (
+    <span>
+      {ids.map((peerId, index) => (
+        <span key={peerId}>
+          {index > 0 && ', '}
+          <Link to={`/review/${encodeURIComponent(peerId)}`}>{peerId}</Link>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function SuspectedDuplicateSummary({
+  eventId,
+  tag,
+  refreshKey,
+}: {
+  eventId: string;
+  tag?: SuspectedDuplicateTag;
+  refreshKey: number;
+}) {
+  const requestId = useRef(0);
+  const [preview, setPreview] = useState<SuspectedDuplicatePreview | null>(null);
+  const [saved, setSaved] = useState<SavedSuspectedRelationList | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [savedError, setSavedError] = useState<string | null>(null);
+  const enabled = Boolean(
+    tag &&
+      (tag.tag === 'suspected_duplicate' ||
+        tag.saved_record_count > 0 ||
+        tag.released_record_count > 0),
+  );
+
+  useEffect(() => {
+    const request = ++requestId.current;
+    if (!enabled) return;
+
+    void Promise.allSettled([
+      fetchSuspectedDuplicatesPreview(eventId),
+      fetchSavedSuspectedRelations(eventId),
+    ]).then(([previewResult, savedResult]) => {
+      if (request !== requestId.current) return;
+      if (previewResult.status === 'fulfilled') setPreview(previewResult.value);
+      else setPreviewError(relationLoadError(previewResult.reason));
+      if (savedResult.status === 'fulfilled') setSaved(savedResult.value);
+      else setSavedError(relationLoadError(savedResult.reason));
+    });
+  }, [eventId, enabled, refreshKey]);
+
+  if (!enabled) return null;
+
+  const summary = buildSuspectedDuplicateSummary(
+    eventId,
+    preview,
+    saved?.items ?? null,
+    saved?.has_more ?? false,
+  );
+  const hasLinks =
+    summary.computedPeerIds.length > 0 ||
+    summary.activeSavedPeerIds.length > 0 ||
+    summary.historicalPeerIds.length > 0;
+  const loading =
+    preview === null &&
+    saved === null &&
+    previewError === null &&
+    savedError === null;
+
+  return (
+    <section className={styles.card} aria-label="동일 사건 의심 요약">
+      <h4 className={styles.cardTitle}>동일 사건 의심</h4>
+      <p className={styles.headlineSub}>
+        자동 병합이나 동일인 확정 없이, 현재 계산 후보와 저장 이력을 구분해 보여줍니다.
+      </p>
+      {loading && <p className={styles.optional}>의심 관계를 불러오는 중...</p>}
+      {previewError && <p className={styles.optional}>{previewError}</p>}
+      {savedError && <p className={styles.optional}>{savedError}</p>}
+      {summary.savedUnavailable && (
+        <p className={styles.optional}>
+          저장 관계를 확인하지 못해 계산 후보와 저장 여부의 차이는 단정하지 않습니다.
+        </p>
+      )}
+      {!summary.savedUnavailable && summary.partialResults && (
+        <p className={styles.optional}>
+          일부 관계만 조회되어 계산 후보와 저장 여부의 차이는 단정하지 않습니다.
+        </p>
+      )}
+      {!loading && !hasLinks && !previewError && !savedError && (
+        <p className={styles.optional}>현재 표시할 의심 관계가 없습니다.</p>
+      )}
+      {summary.computedPeerIds.length > 0 && (
+        <p className={styles.headlineSub}>
+          현재 계산 후보: <EventLinks ids={summary.computedPeerIds} />
+        </p>
+      )}
+      {summary.activeSavedPeerIds.length > 0 && (
+        <p className={styles.headlineSub}>
+          현재 저장 관계: <EventLinks ids={summary.activeSavedPeerIds} />
+        </p>
+      )}
+      {summary.computedOnlyPeerIds.length > 0 && (
+        <p className={styles.optional}>
+          아직 저장하지 않은 계산 후보: <EventLinks ids={summary.computedOnlyPeerIds} />
+        </p>
+      )}
+      {summary.historicalPeerIds.length > 0 && (
+        <p className={styles.optional}>
+          stale/해제 저장 이력: <EventLinks ids={summary.historicalPeerIds} />
+          {` (${summary.staleCount}건 stale, ${summary.releasedCount}건 해제)`}
+        </p>
+      )}
+    </section>
+  );
+}
+
 // Keyed by event id so moving between events starts from a fresh loading state
 export default function ReviewDetailPage() {
   const { event_id } = useParams<{ event_id: string }>();
@@ -125,9 +262,10 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
   );
   // Bumped after a merge so the media panel reloads the reference media that moved in
   const [mediaKey, setMediaKey] = useState(0);
+  const [relationRefreshKey, setRelationRefreshKey] = useState(0);
   useEffect(() => {
     if (!event_id) return;
-    fetchEvent(event_id)
+    fetchEvent(event_id, { includeSuspectedDuplicates: true })
       .then(({ event: ev, review, review_history = [] }) => {
         // Opening an event counts as checking it, whether or not it gets reviewed
         markEventsSeen([ev.event_id]);
@@ -168,7 +306,9 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
 
   const reloadEvent = async () => {
     if (!event_id) return;
-    const data = await fetchEvent(event_id);
+    const data = await fetchEvent(event_id, {
+      includeSuspectedDuplicates: true,
+    });
     setEvent(data.event);
     setExistingReview(data.review);
     setReviewHistory(data.review_history ?? []);
@@ -260,6 +400,12 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
 
         {/* Right: event details + review form */}
         <div className={styles.infoCol}>
+          <SuspectedDuplicateSummary
+            key={`${event.event_id}-${event.suspected_duplicate_tag?.candidate_count ?? 0}-${event.suspected_duplicate_tag?.saved_record_count ?? 0}-${event.suspected_duplicate_tag?.released_record_count ?? 0}-${relationRefreshKey}`}
+            eventId={event.event_id}
+            tag={event.suspected_duplicate_tag}
+            refreshKey={relationRefreshKey}
+          />
           <div className={styles.card}>
             {/* Headline: what the reviewer is judging */}
             <p className={styles.headline}>
@@ -307,6 +453,12 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
               </dl>
             </details>
           </div>
+
+          <SuspectedDuplicatePanel
+            eventId={event.event_id}
+            tag={event.suspected_duplicate_tag}
+            onRelationsChanged={() => setRelationRefreshKey((key) => key + 1)}
+          />
 
           {/* Merged source: the review happens on the representative event */}
           {event.event_status === 'merged' && event.merged_into_event_id && (

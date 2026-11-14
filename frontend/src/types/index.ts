@@ -124,6 +124,7 @@ export interface CandidateEvent {
   merged_event_ids?: string[];
   merged_into_event_id?: string | null;
   merge_history?: EventMergeRecord[];
+  suspected_duplicate_tag?: import('../api/events').SuspectedDuplicateTag;
 }
 
 export interface EventMergeRecord {

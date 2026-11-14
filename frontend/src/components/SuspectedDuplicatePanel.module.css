@@ -1,0 +1,152 @@
+.openBtn,
+.closeBtn,
+.linkBtn,
+.primaryBtn {
+  border: 1px solid #cbd5e0;
+  border-radius: 6px;
+  background: #fff;
+  color: #4a5568;
+  padding: 7px 11px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.openBtn:hover,
+.linkBtn:hover,
+.primaryBtn:hover {
+  background: #f7fafc;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.header,
+.sectionHead,
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.title {
+  margin: 0;
+  color: #1a202c;
+  font-size: 14px;
+}
+
+.help,
+.meta {
+  display: block;
+  margin: 4px 0 0;
+  color: #718096;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.section,
+.evidence {
+  padding-top: 10px;
+  border-top: 1px solid #edf2f7;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f4f8;
+}
+
+.evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.primaryBtn {
+  align-self: flex-start;
+  border-color: #3182ce;
+  background: #ebf8ff;
+  color: #2b6cb0;
+}
+
+.error,
+.notice {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.error {
+  border: 1px solid #feb2b2;
+  background: #fff5f5;
+  color: #c53030;
+}
+
+.notice {
+  border: 1px solid #9ae6b4;
+  background: #f0fff4;
+  color: #276749;
+}
+
+.confirmBox {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid #f6ad55;
+  border-radius: 6px;
+  background: #fffaf0;
+  color: #744210;
+}
+
+.confirmBox p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.confirmBox .linkBtn {
+  margin-left: 6px;
+}
+
+.evidenceDetails {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0;
+  padding: 10px;
+  border-radius: 6px;
+  background: #f7fafc;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.evidenceDetails div {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.35fr) 1fr;
+  gap: 8px;
+}
+
+.evidenceDetails dt {
+  color: #4a5568;
+  font-weight: 600;
+}
+
+.evidenceDetails dd {
+  margin: 0;
+  color: #2d3748;
+  word-break: break-word;
+}

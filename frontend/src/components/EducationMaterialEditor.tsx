@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import ConfirmButton from './ConfirmButton';
 import {
   MATERIAL_ERRORS,
@@ -10,9 +10,23 @@ import {
   unpublishMaterial,
   updateMaterial,
 } from '../api/materials';
-import type { EducationMaterial, GenerationStatus } from '../api/materials';
+import type {
+  EducationMaterial,
+  EducationMaterialScope,
+  GenerationStatus,
+} from '../api/materials';
+import { ApiError } from '../api/client';
+import { isEducationScopeConflictStatus } from '../api/schema31Contracts';
 import { formatSeoul } from '../time';
 import styles from './EducationMaterialEditor.module.css';
+
+export interface EducationMaterialDraft {
+  editing: EducationMaterial | 'new';
+  editingScope: EducationMaterialScope;
+  title: string;
+  body: string;
+  checklist: string;
+}
 
 const STATUS_LABEL = {
   draft: '초안',
@@ -24,8 +38,16 @@ const STATUS_LABEL = {
 // Workers only see a material once it is published.
 export default function EducationMaterialEditor({
   recommendationId,
+  scope,
+  draft,
+  onDraftChange,
+  onScopeConflict,
 }: {
   recommendationId: string;
+  scope: EducationMaterialScope;
+  draft?: EducationMaterialDraft;
+  onDraftChange?: (draft: EducationMaterialDraft | null) => void;
+  onScopeConflict?: (scope: EducationMaterialScope) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<EducationMaterial[] | null>(null);
@@ -35,18 +57,48 @@ export default function EducationMaterialEditor({
   const [generating, setGenerating] = useState(false);
   // null: not editing; 'new': writing a new draft; otherwise the draft being edited
   const [editing, setEditing] = useState<EducationMaterial | 'new' | null>(
-    null,
+    draft?.editing ?? null,
   );
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
-  const [checklist, setChecklist] = useState('');
+  const [editingScope, setEditingScope] = useState<EducationMaterialScope | null>(
+    draft?.editingScope ?? null,
+  );
+  const [title, setTitle] = useState(draft?.title ?? '');
+  const [body, setBody] = useState(draft?.body ?? '');
+  const [checklist, setChecklist] = useState(draft?.checklist ?? '');
+  const loadRequest = useRef(0);
+  const scopeConflictRequest = useRef(0);
 
   const fail = (e: Error) => setError(MATERIAL_ERRORS[e.message] ?? e.message);
 
-  const load = () =>
-    fetchMaterials(recommendationId)
-      .then((r) => setItems(r.items))
-      .catch(fail);
+  const load = () => {
+    const request = ++loadRequest.current;
+    return fetchMaterials(recommendationId)
+      .then((r) => {
+        if (request === loadRequest.current) setItems(r.items);
+        return r;
+      })
+      .catch((e) => {
+        if (request === loadRequest.current) fail(e);
+        throw e;
+      });
+  };
+
+  const refreshAfterScopeConflict = async () => {
+    const request = ++scopeConflictRequest.current;
+    onScopeConflict?.(structuredClone(editingScope ?? scope));
+    try {
+      await load();
+      if (request !== scopeConflictRequest.current) return;
+      setError(
+        '추천 대상이 바뀌었습니다. 작성 중인 내용은 보존했습니다. 최신 자료 목록을 확인한 뒤 대상을 명시적으로 다시 선택하세요.',
+      );
+    } catch (e) {
+      if (request !== scopeConflictRequest.current) return;
+      setError(
+        `추천 대상이 바뀌었고 최신 자료 목록을 불러오지 못했습니다. 작성 중인 내용은 보존했습니다. (${e instanceof Error ? e.message : String(e)})`,
+      );
+    }
+  };
 
   const toggle = () => {
     const next = !open;
@@ -62,18 +114,50 @@ export default function EducationMaterialEditor({
   const generate = () => {
     setGenerating(true);
     setError(null);
-    generateMaterial(recommendationId)
+    generateMaterial(recommendationId, structuredClone(scope))
       .then(() => load())
-      .catch(fail)
+      .catch((e: unknown) => {
+        if (e instanceof ApiError && isEducationScopeConflictStatus(e.status)) {
+          void refreshAfterScopeConflict();
+        } else {
+          fail(e instanceof Error ? e : new Error(String(e)));
+        }
+      })
       .finally(() => setGenerating(false));
   };
 
   const startEdit = (m: EducationMaterial | 'new') => {
+    const nextScope = structuredClone(scope);
+    const nextTitle = m === 'new' ? '' : m.title;
+    const nextBody = m === 'new' ? '' : m.body;
+    const nextChecklist = m === 'new' ? '' : m.checklist.join('\n');
     setEditing(m);
+    setEditingScope(nextScope);
     setError(null);
-    setTitle(m === 'new' ? '' : m.title);
-    setBody(m === 'new' ? '' : m.body);
-    setChecklist(m === 'new' ? '' : m.checklist.join('\n'));
+    setTitle(nextTitle);
+    setBody(nextBody);
+    setChecklist(nextChecklist);
+    onDraftChange?.({
+      editing: m,
+      editingScope: nextScope,
+      title: nextTitle,
+      body: nextBody,
+      checklist: nextChecklist,
+    });
+  };
+
+  const updateDraft = (
+    patch: Partial<Pick<EducationMaterialDraft, 'title' | 'body' | 'checklist'>>,
+  ) => {
+    if (!editing) return;
+    onDraftChange?.({
+      editing,
+      editingScope: editingScope ?? structuredClone(scope),
+      title,
+      body,
+      checklist,
+      ...patch,
+    });
   };
 
   const content = () => ({
@@ -93,14 +177,27 @@ export default function EducationMaterialEditor({
     setError(null);
     const request =
       editing === 'new'
-        ? createMaterial(recommendationId, content())
+        ? createMaterial(
+            recommendationId,
+            content(),
+            editingScope ?? structuredClone(scope),
+          )
         : updateMaterial(editing.material_id, content(), editing.version);
     request
       .then(() => {
         setEditing(null);
+        onDraftChange?.(null);
         return load();
       })
-      .catch(fail)
+      .catch((e: unknown) => {
+        if (e instanceof ApiError && isEducationScopeConflictStatus(e.status)) {
+          // Keep the editor mounted and its draft fields untouched. A stale
+          // recommendation is never retried against a newly selected ID.
+          void refreshAfterScopeConflict();
+        } else {
+          fail(e instanceof Error ? e : new Error(String(e)));
+        }
+      })
       .finally(() => setBusy(false));
   };
 
@@ -210,7 +307,10 @@ export default function EducationMaterialEditor({
                   className={styles.input}
                   value={title}
                   maxLength={200}
-                  onChange={(e) => setTitle(e.target.value)}
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                    updateDraft({ title: e.target.value });
+                  }}
                 />
               </label>
               <label className={styles.field}>
@@ -220,7 +320,10 @@ export default function EducationMaterialEditor({
                   rows={5}
                   value={body}
                   maxLength={12000}
-                  onChange={(e) => setBody(e.target.value)}
+                  onChange={(e) => {
+                    setBody(e.target.value);
+                    updateDraft({ body: e.target.value });
+                  }}
                 />
               </label>
               <label className={styles.field}>
@@ -229,14 +332,20 @@ export default function EducationMaterialEditor({
                   className={styles.input}
                   rows={4}
                   value={checklist}
-                  onChange={(e) => setChecklist(e.target.value)}
+                  onChange={(e) => {
+                    setChecklist(e.target.value);
+                    updateDraft({ checklist: e.target.value });
+                  }}
                 />
               </label>
               <div className={styles.actions}>
                 <button
                   type="button"
                   className={styles.btn}
-                  onClick={() => setEditing(null)}
+                  onClick={() => {
+                    setEditing(null);
+                    onDraftChange?.(null);
+                  }}
                 >
                   취소
                 </button>
