@@ -1,7 +1,7 @@
 """Versioned administrator policy. No request can install a trusted model adapter.
 
 A future reviewed adapter must supply policy eligibility and whole-event proof.
-No adapter is distributed here: enforce fails closed, while OFF and shadow work.
+Only a diagnostic adapter is distributed: enforce fails closed; OFF/shadow work.
 """
 from datetime import datetime, timezone
 import json
@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from backend.auth.service import require_admin
 from backend.auto_decision.routes import PreviewRequest
+from backend.auto_decision.adapter import DiagnosticOnlyAdapter
 from backend.db.connection import run_stats_transaction
 from backend.zones.policy import ALLOWED_PPE
 
@@ -61,9 +62,10 @@ def trusted_adapter():
     Adapter requirements: policy_blockers(policy) returns current missing gates;
     validate(conn,event_id,preview_policy,diagnostic) returns writer.ValidationProof
     only after approved model/hash/score semantics/whole-event evidence checks.
-    Validation reference text alone is never sufficient. No live adapter ships.
+    Validation reference text alone is never sufficient. The default adapter is
+    diagnostic-only and always returns no validation proof.
     """
-    return None
+    return DiagnosticOnlyAdapter()
 
 
 def activation_blockers(policy):
@@ -158,12 +160,18 @@ def preview_policy(conn, event_id, policy, version_label):
         zone=conn.execute('SELECT zone_name FROM event_zone_snapshot WHERE event_id=?',(event_id,)).fetchone()
         if zone is None or zone['zone_name'] not in policy.zone_names:
             reasons.append('zone_out_of_scope')
+    # Current diagnostic-only implementation, not a future trusted scorer.
+    # A reviewed scorer must replace this diagnostic path together with
+    # trusted_adapter(), so preview/shadow and enforce share score semantics.
+    adapter_diagnostic=DiagnosticOnlyAdapter().diagnose(diagnostic)
     digest=hashlib.sha256(json.dumps({'diagnostic':diagnostic['evidence_fingerprint'],
-        'camera_ids':policy.camera_ids,'zone_names':policy.zone_names},sort_keys=True).encode()).hexdigest()
+        'camera_ids':policy.camera_ids,'zone_names':policy.zone_names,
+        'trusted_score_adapter':adapter_diagnostic},sort_keys=True).encode()).hexdigest()
     return {**diagnostic,'blocking_reasons':sorted(set(reasons)),
             'structural_eligible':not reasons,
             'threshold_candidate':not reasons and diagnostic['threshold_candidate'],
-            'evidence_fingerprint':digest,'scope_applied':True}
+            'evidence_fingerprint':digest,'scope_applied':True,
+            'trusted_score_adapter':adapter_diagnostic}
 
 
 @router.post('/preview')

@@ -177,7 +177,8 @@ def change(identifier, version, actor, *, action, content=None):
         raise
 
 
-def for_worker(user_id):
+def for_worker(user_id, language="ko"):
+    from backend.education.languages import requested
     def operation(conn):
         assigned = set(zones_for(conn, user_id))
         latest = {zone: conn.execute('SELECT MAX(quarter) FROM education_recommendation WHERE zone_name=?',
@@ -192,9 +193,13 @@ def for_worker(user_id):
                 (s['quarter'],s['zone_name'],s['ppe_type'],s['education_topic'])).fetchone()]
             if not matching:
                 continue
-            content = row
+            from backend.education.translations import published_content
+            translated = published_content(conn, row['bundle_id'], row['version'], language, kind='bundle') if language != 'ko' else None
+            content = translated if translated is not None else row
             result.append({'bundle_id': row['bundle_id'], 'quarter': row['quarter'], 'ppe_type': row['ppe_type'],
                            'assigned_zones': [s['zone_name'] for s in matching], 'title': content['title'],
-                           'body': content['body'], 'checklist': json.loads(content['checklist_json'])})
+                           'body': content['body'], 'checklist': json.loads(content['checklist_json']),
+                           'language': translated['language'] if translated is not None else 'ko',
+                           'requested_language': requested(language), 'translation_fallback': (translated['language'] if translated is not None else 'ko') != requested(language)})
         return result
     return run_stats_transaction(operation)

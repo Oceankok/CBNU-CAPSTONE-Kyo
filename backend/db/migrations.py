@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-LATEST_VERSION = 33
+LATEST_VERSION = 34
 
 
 def _now() -> str:
@@ -551,6 +551,20 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
             for statement in script.split(';'):
                 if statement.strip(): conn.execute(statement)
             conn.execute('PRAGMA user_version=33')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+    if version < 34:
+        from pathlib import Path
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            script = (Path(__file__).resolve().parents[1] / 'education' / 'translation_schema.sql').read_text(encoding='utf-8')
+            for statement in script.split(';'):
+                if statement.strip(): conn.execute(statement)
+            conn.execute('PRAGMA user_version=34')
             conn.commit()
         except Exception:
             conn.rollback()
