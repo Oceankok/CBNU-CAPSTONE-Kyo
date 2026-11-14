@@ -21,6 +21,17 @@
   padding: 10px 14px;
 }
 
+.memberRetry {
+  margin-left: 10px;
+  padding: 4px 9px;
+  border: 1px solid #cbd5e0;
+  border-radius: 5px;
+  background: #fff;
+  color: #4a5568;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .card {
   background: #fff;
   border: 1px solid #e2e8f0;

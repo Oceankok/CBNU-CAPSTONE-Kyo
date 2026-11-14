@@ -41,3 +41,9 @@
   background: #3182ce;
   color: #fff;
 }
+
+.danger:disabled,
+.ok:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

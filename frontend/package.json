@@ -9,7 +9,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types scripts/quarters.check.ts && node --experimental-strip-types scripts/polygon.check.ts && node --experimental-strip-types scripts/confidence.check.ts && node --experimental-strip-types scripts/cache.check.ts && node --experimental-strip-types scripts/pendingAlerts.check.ts"
+    "test": "node --experimental-strip-types scripts/quarters.check.ts && node --experimental-strip-types scripts/polygon.check.ts && node --experimental-strip-types scripts/confidence.check.ts && node --experimental-strip-types scripts/cache.check.ts && node --experimental-strip-types scripts/pendingAlerts.check.ts && node --experimental-strip-types scripts/schema31.check.ts && node --experimental-strip-types scripts/schema31.interactions.check.ts && node --experimental-strip-types scripts/educationBundles.check.ts"
   },
   "dependencies": {
     "react": "^19.2.5",

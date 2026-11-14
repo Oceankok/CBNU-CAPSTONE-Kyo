@@ -203,6 +203,20 @@
   vertical-align: middle;
 }
 
+.suspectedTag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid #c4b5fd;
+  border-radius: 999px;
+  background: #f5f3ff;
+  color: #6b46c1;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
 .markAllBtn {
   margin-left: 10px;
   padding: 3px 10px;
