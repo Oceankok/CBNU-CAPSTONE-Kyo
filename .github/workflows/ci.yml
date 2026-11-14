@@ -38,6 +38,12 @@ jobs:
         run: |
           grep -v '^onnxruntime-gpu' backend/requirements.txt > /tmp/requirements-ci.txt
           pip install -r /tmp/requirements-ci.txt -r video_sender/requirements.txt
+      - name: Synthetic video test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
+          ffprobe -version
       - name: CPU tracking dependencies
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
@@ -73,6 +79,12 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements-api.txt
       - run: pip install -r backend/requirements-api.txt -r video_sender/requirements.txt
+      - name: Synthetic video test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
+          ffprobe -version
       - name: CPU tracking dependencies
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
