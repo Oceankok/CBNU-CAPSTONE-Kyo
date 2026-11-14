@@ -1,0 +1,126 @@
+
+
+Running 3 tests using 1 worker
+
+
+[1/3] scripts\education-browser\editors.spec.ts:32:1 › F1: delayed save locks all draft controls and only clears the submitted draft
+  1) scripts\education-browser\editors.spec.ts:32:1 › F1: delayed save locks all draft controls and only clears the submitted draft
+
+    Error: expect(locator).toBeDisabled() failed
+
+    Locator:  getByRole('textbox', { name: '본문', exact: true })
+    Expected: disabled
+    Received: enabled
+    Timeout:  5000ms
+
+    Call log:
+      - Expect "toBeDisabled" getByRole('textbox', { name: '본문', exact: true }) with timeout 5000ms
+      - waiting for getByRole('textbox', { name: '본문', exact: true })
+        14 × locator resolved to <textarea rows="5" maxlength="12000" class="_input_1hgcc_221">Submitted body</textarea>
+           - unexpected value "enabled"
+
+
+      46 |   await page.getByRole('textbox', { name: '본문', exact: true }).fill('Submitted body');
+      47 |   await page.getByRole('button', { name: '수정 저장', exact: true }).click();
+    > 48 |   await expect(page.getByRole('textbox', { name: '본문', exact: true })).toBeDisabled();
+         |                                                                        ^
+      49 |   await expect(page.getByRole('textbox', { name: '제목', exact: true })).toBeDisabled();
+      50 |   await expect(page.getByRole('textbox', { name: '확인 목록 (한 줄에 하나)', exact: true })).toBeDisabled();
+      51 |   await expect(page.getByRole('button', { name: '취소', exact: true })).toBeDisabled();
+        at <worktree>\frontend\scripts\education-browser\editors.spec.ts:48:72
+
+    Error Context: test-results\editors-F1-delayed-save-lo-36e6a--clears-the-submitted-draft\error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\editors-F1-delayed-save-lo-36e6a--clears-the-submitted-draft\trace.zip
+    Usage:
+
+        npx playwright show-trace test-results\editors-F1-delayed-save-lo-36e6a--clears-the-submitted-draft\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+[2/3] scripts\education-browser\editors.spec.ts:81:3 › F2: version conflict requires explicit resolution: 내 입력을 유지하고 최신 버전 선택
+  2) scripts\education-browser\editors.spec.ts:81:3 › F2: version conflict requires explicit resolution: 내 입력을 유지하고 최신 버전 선택
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: getByRole('alert')
+    Expected substring: "Other admin body"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toContainText" getByRole('alert') with timeout 5000ms
+      - waiting for getByRole('alert')
+
+
+       95 |     await page.getByRole('textbox', { name: '본문', exact: true }).fill('My draft');
+       96 |     await page.getByRole('button', { name: '수정 저장' }).click();
+    >  97 |     await expect(page.getByRole('alert')).toContainText('Other admin body');
+          |                                           ^
+       98 |     await expect(page.getByRole('alert')).toContainText('Other check');
+       99 |     await expect(page.getByRole('textbox', { name: '본문', exact: true })).toHaveValue('My draft');
+      100 |     await expect(page.getByRole('button', { name: '수정 저장' })).toBeDisabled();
+        at <worktree>\frontend\scripts\education-browser\editors.spec.ts:97:43
+
+    Error Context: test-results\editors-F2-version-conflic-9b45a-olution-내-입력을-유지하고-최신-버전-선택\error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\editors-F2-version-conflic-9b45a-olution-내-입력을-유지하고-최신-버전-선택\trace.zip
+    Usage:
+
+        npx playwright show-trace test-results\editors-F2-version-conflic-9b45a-olution-내-입력을-유지하고-최신-버전-선택\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+[3/3] scripts\education-browser\editors.spec.ts:153:5 › F3: list publish refreshes row and preserves other draft=false
+  3) scripts\education-browser\editors.spec.ts:153:5 › F3: list publish refreshes row and preserves other draft=false
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: locator('article').first().getByRole('alert')
+    Expected substring: "Latest server bundle"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toContainText" locator('article').first().getByRole('alert') with timeout 5000ms
+      - waiting for locator('article').first().getByRole('alert')
+
+
+      179 |       await expect(row.getByRole('button', { name: '검토·편집' })).toBeDisabled();
+      180 |       gate.resolve();
+    > 181 |       await expect(row.getByRole('alert')).toContainText('Latest server bundle');
+          |                                            ^
+      182 |       await expect(row.getByRole('button', { name: label, exact: true })).toBeDisabled();
+      183 |       expect(versions).toEqual([0]);
+      184 |       if (editingOther) await expect(page.getByRole('textbox', { name: '공통 교육 본문', exact: true })).toHaveValue('Other unsaved draft');
+        at <worktree>\frontend\scripts\education-browser\editors.spec.ts:181:44
+
+    Error Context: test-results\editors-F3-list-publish-re-8ca60-preserves-other-draft-false\error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\editors-F3-list-publish-re-8ca60-preserves-other-draft-false\trace.zip
+    Usage:
+
+        npx playwright show-trace test-results\editors-F3-list-publish-re-8ca60-preserves-other-draft-false\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+  3 failed
+    scripts\education-browser\editors.spec.ts:32:1 › F1: delayed save locks all draft controls and only clears the submitted draft
+    scripts\education-browser\editors.spec.ts:81:3 › F2: version conflict requires explicit resolution: 내 입력을 유지하고 최신 버전 선택
+    scripts\education-browser\editors.spec.ts:153:5 › F3: list publish refreshes row and preserves other draft=false
+[WebServer] (node:42380) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+(node:15336) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:143128) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:60600) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
