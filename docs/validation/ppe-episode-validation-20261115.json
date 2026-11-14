@@ -546,6 +546,14 @@
       "skipped": 0,
       "log": ".private_media/revalidation/test-results/flat-retention-results.txt",
       "scope": "Bounded legacy flat-track diagnostics after retirement/invalid clock; lifecycle, verified model and tracking regressions"
+    },
+    {
+      "tests": 28,
+      "passed": 28,
+      "failed": 0,
+      "skipped": 0,
+      "log": ".private_media/revalidation/test-results/dependency-fix-results.txt",
+      "scope": "Tracking/association and runner test cleanup after explicit SciPy dependency declaration"
     }
   ],
   "counts_note": "Separate runs overlap; counts must not be added as unique coverage.",
@@ -555,5 +563,14 @@
     "remaining_test_schemas": [],
     "public_table_count": 0,
     "production_database_modified": false
+  },
+  "ci_initial_failure": {
+    "head": "167c0f4d4877264b5dda58e0344f59ec5f74c009",
+    "run_id": 43652017359,
+    "job": "backend",
+    "classification": "owned dependency declaration omission",
+    "cause": "scipy.optimize used by PPE association was not declared; local SciPy installation hid this omission",
+    "backend_tests_before_inference": 743,
+    "fix": "Declare scipy==1.18.1 explicitly and smoke-test tracker/PPE imports before full CI suites; guard test cleanup from masking primary failure"
   }
 }

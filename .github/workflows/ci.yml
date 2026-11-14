@@ -48,6 +48,7 @@ jobs:
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r inference_worker/requirements-tracking.txt
+          python -c "from inference_worker.person_tracker import PersonTracker; from inference_worker.ppe_rules import assess_ppe; PersonTracker(); assess_ppe([], (64, 64, 3))"
       - name: Unit tests
         run: |
           python -m unittest discover -s backend -t . -v
@@ -89,6 +90,7 @@ jobs:
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r inference_worker/requirements-tracking.txt
+          python -c "from inference_worker.person_tracker import PersonTracker; from inference_worker.ppe_rules import assess_ppe; PersonTracker(); assess_ppe([], (64, 64, 3))"
       - name: PostgreSQL regression tests (isolated schemas)
         run: |
           python -m unittest discover -s backend -t . -v

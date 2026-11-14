@@ -46,7 +46,8 @@ class EpisodeRunnerTests(unittest.TestCase):
         failed=False
         def lease(busy,ttl_seconds=30,*,session_id=None):
             nonlocal failed
-            if not busy and not failed and box.counts().get("pending")==2:
+            if (not busy and not failed and not hasattr(box,"final_counts")
+                    and box.counts().get("pending")==2):
                 failed=True
                 raise httpx.ReadTimeout("lease response loss after both candidates")
             return original(busy,ttl_seconds,session_id=session_id)
