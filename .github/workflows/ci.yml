@@ -38,6 +38,10 @@ jobs:
         run: |
           grep -v '^onnxruntime-gpu' backend/requirements.txt > /tmp/requirements-ci.txt
           pip install -r /tmp/requirements-ci.txt -r video_sender/requirements.txt
+      - name: CPU tracking dependencies
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r inference_worker/requirements-tracking.txt
       - name: Unit tests
         run: |
           python -m unittest discover -s backend -t . -v
@@ -69,6 +73,10 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements-api.txt
       - run: pip install -r backend/requirements-api.txt -r video_sender/requirements.txt
+      - name: CPU tracking dependencies
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r inference_worker/requirements-tracking.txt
       - name: PostgreSQL regression tests (isolated schemas)
         run: |
           python -m unittest discover -s backend -t . -v

@@ -121,15 +121,21 @@ class LifecycleTests(TestCase):
         self.assertEqual([(r['ppe_type'], r['kind']) for r in result],
                          [('helmet', 'close'), ('vest', 'progress')])
 
-    def test_unknown_gap_recovery_and_timeout(self):
+    def test_visible_unknown_preserves_episode_until_person_timeout(self):
         for recover in (True, False):
             tracker = EventLifecycle('CAM', missing_grace_seconds=.5)
             original = self.continuous(tracker, 30)[0]
             self.assertEqual(tracker.update([observation(status='unknown')], 3.1), [])
             result = tracker.update([observation(status=('suspected_no_helmet' if recover else 'unknown'))],
                                     3.2 if recover else 3.6)
-            self.assertEqual(result[0]['event_id'], original['event_id'])
-            self.assertEqual(result[0]['kind'], 'progress' if recover else 'close')
+            if recover:
+                self.assertEqual(result[0]['event_id'], original['event_id'])
+                self.assertEqual(result[0]['kind'], 'progress')
+            else:
+                self.assertEqual(result, [])
+                closed = tracker.update([], 4.2)[0]
+                self.assertEqual(closed['event_id'], original['event_id'])
+                self.assertEqual(closed['kind'], 'close')
 
     def test_sample_gap_requires_requalification_before_start(self):
         tracker = EventLifecycle('CAM', missing_grace_seconds=5)

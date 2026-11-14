@@ -1,0 +1,551 @@
+{
+  "baseline_commit": "ac9d254774ae5c1d0ebdc9019f249b7ddceb68e8",
+  "branch": "codex/ppe-episode-stability-20261115",
+  "scope": "tracking, PPE association, episode lifecycle, durable metadata retry; automatic confirmation excluded",
+  "inference_suite": {
+    "command": "python -X utf8 -B -m unittest discover -s inference_worker -t . -q",
+    "executed": 379,
+    "passed": 371,
+    "failed_existing": 8,
+    "skipped": 0,
+    "environment": "Windows Python 3.12; dedicated PostgreSQL; local bundled FFmpeg; no weights loaded by unit tests",
+    "log": ".private_media/revalidation/test-results/inference-final-results.txt",
+    "note": "Run before final JSON response/cleanup/auth hardening. Later focused runs recorded separately."
+  },
+  "video_replay": {
+    "command": "python -X utf8 -B -m inference_worker.replay_episode_comparison --video <Camera01.mp4> --video <Camera02.mp4> --model <best.pt> --baseline-ref ac9d254774ae5c1d0ebdc9019f249b7ddceb68e8 --output .private_media/revalidation",
+    "inference_frames": 1935,
+    "model_retrained": false,
+    "production_api_writes": false,
+    "server_media_delivery_tested": false,
+    "collection_complete": false
+  },
+  "videos": [
+    {
+      "source": "Kyo-Final-20261113-Helmet-Camera01.mp4",
+      "metadata": {
+        "video_sha256": "bea0ed1078d361045d792451489fb8d34028af03eabd0a4af62f181af383a476",
+        "model_sha256": "31037870bc9d677c679ad41ab24a65f7662f8d67bef54040b0b8cb37901c0d75",
+        "fps": 15.0,
+        "frame_count": 975,
+        "shape": [
+          360,
+          640,
+          3
+        ],
+        "detection_threshold": 0.1,
+        "ppe_threshold": 0.5
+      },
+      "baseline_commit": "ac9d254774ae5c1d0ebdc9019f249b7ddceb68e8",
+      "source_time": "frame_index / native_fps; relative seconds, no shared UTC calibration",
+      "model_version": "ppe-31037870bc9d677c",
+      "device": "cuda:0",
+      "ultralytics": "8.4.171",
+      "settings": {
+        "threshold_seconds": 3,
+        "missing_grace_seconds": 1,
+        "rewear_seconds": 0.5,
+        "qualification_grace_seconds": 0.5,
+        "qualification_window_seconds": 6,
+        "max_sample_gap_seconds": 0.5
+      },
+      "collection_complete": false,
+      "media_delivery_tested": false,
+      "variants": {
+        "baseline": {
+          "events": [
+            {
+              "tracking_id": "track-1",
+              "ppe_type": "helmet",
+              "start_time": 0.0,
+              "end_time": 3.0,
+              "frame_sample_count": 46
+            },
+            {
+              "tracking_id": "track-1",
+              "ppe_type": "vest",
+              "start_time": 0.0,
+              "end_time": 3.0,
+              "frame_sample_count": 46
+            },
+            {
+              "tracking_id": "track-1",
+              "ppe_type": "helmet",
+              "start_time": 3.466666666666667,
+              "end_time": 6.466666666666667,
+              "frame_sample_count": 46
+            },
+            {
+              "tracking_id": "track-1",
+              "ppe_type": "vest",
+              "start_time": 3.466666666666667,
+              "end_time": 6.466666666666667,
+              "frame_sample_count": 46
+            },
+            {
+              "tracking_id": "track-2",
+              "ppe_type": "helmet",
+              "start_time": 31.066666666666666,
+              "end_time": 34.06666666666667,
+              "frame_sample_count": 46
+            },
+            {
+              "tracking_id": "track-18",
+              "ppe_type": "helmet",
+              "start_time": 59.666666666666664,
+              "end_time": 62.666666666666664,
+              "frame_sample_count": 46
+            },
+            {
+              "tracking_id": "track-18",
+              "ppe_type": "vest",
+              "start_time": 59.666666666666664,
+              "end_time": 62.666666666666664,
+              "frame_sample_count": 46
+            }
+          ]
+        },
+        "updated_strong_only": {
+          "events": [
+            {
+              "event_id": "EVT_7853a8058d34409aae258109eb46bbfc",
+              "tracking_id": "track-1",
+              "ppe_type": "helmet",
+              "start_time": 0.0,
+              "end_time": 3.0,
+              "frame_sample_count": 46,
+              "observed_seconds": 3.0,
+              "observation_gap_count": 0,
+              "observation_gap_seconds": 0.0
+            },
+            {
+              "event_id": "EVT_39933dc034b44eee8e12b8e83024f719",
+              "tracking_id": "track-1",
+              "ppe_type": "vest",
+              "start_time": 0.0,
+              "end_time": 3.0,
+              "frame_sample_count": 46,
+              "observed_seconds": 3.0,
+              "observation_gap_count": 0,
+              "observation_gap_seconds": 0.0
+            },
+            {
+              "event_id": "EVT_c2a0d911252647feb9e2ccbad1c35665",
+              "tracking_id": "track-2",
+              "ppe_type": "helmet",
+              "start_time": 31.066666666666666,
+              "end_time": 34.06666666666667,
+              "frame_sample_count": 46,
+              "observed_seconds": 3.0000000000000036,
+              "observation_gap_count": 0,
+              "observation_gap_seconds": 0.0
+            },
+            {
+              "event_id": "EVT_02bfe0db2c104bc791e4990e0f850f21",
+              "tracking_id": "track-19",
+              "ppe_type": "helmet",
+              "start_time": 54.8,
+              "end_time": 58.266666666666666,
+              "frame_sample_count": 48,
+              "observed_seconds": 2.999999999999993,
+              "observation_gap_count": 2,
+              "observation_gap_seconds": 0.46666666666667567
+            },
+            {
+              "event_id": "EVT_4d0689eaf4c14e528beab941525051e8",
+              "tracking_id": "track-19",
+              "ppe_type": "vest",
+              "start_time": 54.8,
+              "end_time": 58.266666666666666,
+              "frame_sample_count": 48,
+              "observed_seconds": 2.999999999999993,
+              "observation_gap_count": 2,
+              "observation_gap_seconds": 0.46666666666667567
+            }
+          ]
+        },
+        "updated_weak_tracking": {
+          "events": [
+            {
+              "event_id": "EVT_4946480e4c714fd2b4778cb26aaf0edd",
+              "tracking_id": "track-1",
+              "ppe_type": "helmet",
+              "start_time": 0.0,
+              "end_time": 3.0,
+              "frame_sample_count": 46,
+              "observed_seconds": 3.0,
+              "observation_gap_count": 0,
+              "observation_gap_seconds": 0.0
+            },
+            {
+              "event_id": "EVT_3b1a9ccacacc4d439afe84b9866109c0",
+              "tracking_id": "track-1",
+              "ppe_type": "vest",
+              "start_time": 0.0,
+              "end_time": 3.0,
+              "frame_sample_count": 46,
+              "observed_seconds": 3.0,
+              "observation_gap_count": 0,
+              "observation_gap_seconds": 0.0
+            },
+            {
+              "event_id": "EVT_1cd7806b44f04f88b5489257dc7ab835",
+              "tracking_id": "track-2",
+              "ppe_type": "helmet",
+              "start_time": 31.066666666666666,
+              "end_time": 34.06666666666667,
+              "frame_sample_count": 46,
+              "observed_seconds": 3.0000000000000036,
+              "observation_gap_count": 0,
+              "observation_gap_seconds": 0.0
+            },
+            {
+              "event_id": "EVT_ba1a95d6889a4cdba7e863fdc3f13e38",
+              "tracking_id": "track-6",
+              "ppe_type": "helmet",
+              "start_time": 54.8,
+              "end_time": 58.266666666666666,
+              "frame_sample_count": 48,
+              "observed_seconds": 2.999999999999993,
+              "observation_gap_count": 2,
+              "observation_gap_seconds": 0.46666666666667567
+            },
+            {
+              "event_id": "EVT_10ca32ef0b0b47ff936b4ca9953f3e5e",
+              "tracking_id": "track-6",
+              "ppe_type": "vest",
+              "start_time": 54.8,
+              "end_time": 58.266666666666666,
+              "frame_sample_count": 48,
+              "observed_seconds": 2.999999999999993,
+              "observation_gap_count": 2,
+              "observation_gap_seconds": 0.46666666666667567
+            }
+          ],
+          "close": [
+            {
+              "event_id": "EVT_4946480e4c714fd2b4778cb26aaf0edd",
+              "tracking_id": "track-1",
+              "ppe_type": "helmet",
+              "start_time": 0.0,
+              "end_time": 14.0,
+              "frame_sample_count": 205,
+              "observed_seconds": 13.266666666666666,
+              "observation_gap_count": 5,
+              "observation_gap_seconds": 0.7333333333333347,
+              "close_reason": "observation_gap",
+              "trailing_unknown": true
+            },
+            {
+              "event_id": "EVT_3b1a9ccacacc4d439afe84b9866109c0",
+              "tracking_id": "track-1",
+              "ppe_type": "vest",
+              "start_time": 0.0,
+              "end_time": 14.466666666666667,
+              "frame_sample_count": 206,
+              "observed_seconds": 13.266666666666666,
+              "observation_gap_count": 6,
+              "observation_gap_seconds": 1.2000000000000015,
+              "close_reason": "observation_gap",
+              "trailing_unknown": true
+            },
+            {
+              "event_id": "EVT_1cd7806b44f04f88b5489257dc7ab835",
+              "tracking_id": "track-2",
+              "ppe_type": "helmet",
+              "start_time": 31.066666666666666,
+              "end_time": 54.733333333333334,
+              "frame_sample_count": 181,
+              "observed_seconds": 10.733333333333352,
+              "observation_gap_count": 19,
+              "observation_gap_seconds": 12.933333333333316,
+              "close_reason": "observation_gap",
+              "trailing_unknown": true
+            },
+            {
+              "event_id": "EVT_ba1a95d6889a4cdba7e863fdc3f13e38",
+              "tracking_id": "track-6",
+              "ppe_type": "helmet",
+              "start_time": 54.8,
+              "end_time": 64.93333333333334,
+              "frame_sample_count": 138,
+              "observed_seconds": 8.799999999999997,
+              "observation_gap_count": 5,
+              "observation_gap_seconds": 1.3333333333333428,
+              "close_reason": "primary_source_ended",
+              "trailing_unknown": false
+            },
+            {
+              "event_id": "EVT_10ca32ef0b0b47ff936b4ca9953f3e5e",
+              "tracking_id": "track-6",
+              "ppe_type": "vest",
+              "start_time": 54.8,
+              "end_time": 64.93333333333334,
+              "frame_sample_count": 138,
+              "observed_seconds": 8.799999999999997,
+              "observation_gap_count": 5,
+              "observation_gap_seconds": 1.3333333333333428,
+              "close_reason": "primary_source_ended",
+              "trailing_unknown": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "source": "Kyo-Final-20261113-Helmet-Camera02.mp4",
+      "metadata": {
+        "video_sha256": "4d5bcb6e5d596980899de82968432aa856e166374560dc9d8ee31bf403866c87",
+        "model_sha256": "31037870bc9d677c679ad41ab24a65f7662f8d67bef54040b0b8cb37901c0d75",
+        "fps": 15.0,
+        "frame_count": 960,
+        "shape": [
+          480,
+          640,
+          3
+        ],
+        "detection_threshold": 0.1,
+        "ppe_threshold": 0.5
+      },
+      "baseline_commit": "ac9d254774ae5c1d0ebdc9019f249b7ddceb68e8",
+      "source_time": "frame_index / native_fps; relative seconds, no shared UTC calibration",
+      "model_version": "ppe-31037870bc9d677c",
+      "device": "cuda:0",
+      "ultralytics": "8.4.171",
+      "settings": {
+        "threshold_seconds": 3,
+        "missing_grace_seconds": 1,
+        "rewear_seconds": 0.5,
+        "qualification_grace_seconds": 0.5,
+        "qualification_window_seconds": 6,
+        "max_sample_gap_seconds": 0.5
+      },
+      "collection_complete": false,
+      "media_delivery_tested": false,
+      "variants": {
+        "baseline": {
+          "events": [
+            {
+              "tracking_id": "track-3",
+              "ppe_type": "helmet",
+              "start_time": 9.466666666666667,
+              "end_time": 12.466666666666667,
+              "frame_sample_count": 46
+            },
+            {
+              "tracking_id": "track-3",
+              "ppe_type": "vest",
+              "start_time": 9.466666666666667,
+              "end_time": 12.466666666666667,
+              "frame_sample_count": 46
+            },
+            {
+              "tracking_id": "track-6",
+              "ppe_type": "helmet",
+              "start_time": 25.8,
+              "end_time": 28.8,
+              "frame_sample_count": 46
+            },
+            {
+              "tracking_id": "track-8",
+              "ppe_type": "helmet",
+              "start_time": 35.13333333333333,
+              "end_time": 38.13333333333333,
+              "frame_sample_count": 46
+            },
+            {
+              "tracking_id": "track-11",
+              "ppe_type": "helmet",
+              "start_time": 47.2,
+              "end_time": 50.2,
+              "frame_sample_count": 46
+            },
+            {
+              "tracking_id": "track-11",
+              "ppe_type": "vest",
+              "start_time": 47.2,
+              "end_time": 50.2,
+              "frame_sample_count": 46
+            }
+          ]
+        },
+        "updated_strong_only": {
+          "events": [
+            {
+              "event_id": "EVT_80b9dd4aee494969bbd77bf590297762",
+              "tracking_id": "track-1",
+              "ppe_type": "helmet",
+              "start_time": 7.733333333333333,
+              "end_time": 11.2,
+              "frame_sample_count": 48,
+              "observed_seconds": 3.0,
+              "observation_gap_count": 2,
+              "observation_gap_seconds": 0.4666666666666659
+            },
+            {
+              "event_id": "EVT_66eb532b1fdb414186df03b132291fbb",
+              "tracking_id": "track-1",
+              "ppe_type": "vest",
+              "start_time": 7.733333333333333,
+              "end_time": 11.2,
+              "frame_sample_count": 48,
+              "observed_seconds": 3.0,
+              "observation_gap_count": 2,
+              "observation_gap_seconds": 0.4666666666666659
+            },
+            {
+              "event_id": "EVT_6501e0d17dcb4b1f8764f7c624d733de",
+              "tracking_id": "track-4",
+              "ppe_type": "helmet",
+              "start_time": 25.8,
+              "end_time": 28.8,
+              "frame_sample_count": 46,
+              "observed_seconds": 3.0,
+              "observation_gap_count": 0,
+              "observation_gap_seconds": 0.0
+            },
+            {
+              "event_id": "EVT_dd3ba9be674946e5aba38088d84afdbd",
+              "tracking_id": "track-4",
+              "ppe_type": "vest",
+              "start_time": 40.4,
+              "end_time": 44.2,
+              "frame_sample_count": 52,
+              "observed_seconds": 3.000000000000007,
+              "observation_gap_count": 6,
+              "observation_gap_seconds": 0.7999999999999972
+            }
+          ]
+        },
+        "updated_weak_tracking": {
+          "events": [
+            {
+              "event_id": "EVT_513c438c59354779a6ad4cd3ab213a75",
+              "tracking_id": "track-1",
+              "ppe_type": "helmet",
+              "start_time": 7.733333333333333,
+              "end_time": 11.2,
+              "frame_sample_count": 48,
+              "observed_seconds": 3.0,
+              "observation_gap_count": 2,
+              "observation_gap_seconds": 0.4666666666666659
+            },
+            {
+              "event_id": "EVT_26d9193562844d06afd2e1dcda472f28",
+              "tracking_id": "track-1",
+              "ppe_type": "vest",
+              "start_time": 7.733333333333333,
+              "end_time": 11.2,
+              "frame_sample_count": 48,
+              "observed_seconds": 3.0,
+              "observation_gap_count": 2,
+              "observation_gap_seconds": 0.4666666666666659
+            },
+            {
+              "event_id": "EVT_d1f05aab1da04f87b32313423e517807",
+              "tracking_id": "track-4",
+              "ppe_type": "helmet",
+              "start_time": 25.8,
+              "end_time": 28.8,
+              "frame_sample_count": 46,
+              "observed_seconds": 3.0,
+              "observation_gap_count": 0,
+              "observation_gap_seconds": 0.0
+            },
+            {
+              "event_id": "EVT_099a30dc466d4b8da58f36d2e62c6dc0",
+              "tracking_id": "track-4",
+              "ppe_type": "vest",
+              "start_time": 40.4,
+              "end_time": 44.2,
+              "frame_sample_count": 52,
+              "observed_seconds": 3.000000000000007,
+              "observation_gap_count": 6,
+              "observation_gap_seconds": 0.7999999999999972
+            }
+          ],
+          "close": [
+            {
+              "event_id": "EVT_513c438c59354779a6ad4cd3ab213a75",
+              "tracking_id": "track-1",
+              "ppe_type": "helmet",
+              "start_time": 7.733333333333333,
+              "end_time": 15.066666666666666,
+              "frame_sample_count": 96,
+              "observed_seconds": 5.933333333333334,
+              "observation_gap_count": 6,
+              "observation_gap_seconds": 1.3999999999999995,
+              "close_reason": "observation_gap",
+              "trailing_unknown": true
+            },
+            {
+              "event_id": "EVT_26d9193562844d06afd2e1dcda472f28",
+              "tracking_id": "track-1",
+              "ppe_type": "vest",
+              "start_time": 7.733333333333333,
+              "end_time": 15.066666666666666,
+              "frame_sample_count": 96,
+              "observed_seconds": 5.933333333333334,
+              "observation_gap_count": 6,
+              "observation_gap_seconds": 1.3999999999999995,
+              "close_reason": "observation_gap",
+              "trailing_unknown": true
+            },
+            {
+              "event_id": "EVT_d1f05aab1da04f87b32313423e517807",
+              "tracking_id": "track-4",
+              "ppe_type": "helmet",
+              "start_time": 25.8,
+              "end_time": 53.733333333333334,
+              "frame_sample_count": 407,
+              "observed_seconds": 26.266666666666676,
+              "observation_gap_count": 12,
+              "observation_gap_seconds": 1.6666666666666572,
+              "close_reason": "observation_gap",
+              "trailing_unknown": true
+            },
+            {
+              "event_id": "EVT_099a30dc466d4b8da58f36d2e62c6dc0",
+              "tracking_id": "track-4",
+              "ppe_type": "vest",
+              "start_time": 40.4,
+              "end_time": 53.733333333333334,
+              "frame_sample_count": 189,
+              "observed_seconds": 11.733333333333341,
+              "observation_gap_count": 12,
+              "observation_gap_seconds": 1.5999999999999943,
+              "close_reason": "observation_gap",
+              "trailing_unknown": true
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "focused_verification": [
+    {
+      "tests": 64,
+      "passed": 64,
+      "failed": 0,
+      "skipped": 0,
+      "log": ".private_media/revalidation/test-results/contract-final-results.txt",
+      "scope": "PostgreSQL processing/review/context + outbox JSON/restart + runner cleanup"
+    },
+    {
+      "tests": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "command": "python -X utf8 -B -m unittest inference_worker.test_episode_runner -q",
+      "scope": "Final runner auth propagation and interruption tests"
+    }
+  ],
+  "counts_note": "Separate runs overlap; counts must not be added as unique coverage.",
+  "video_policy_note": "Helmet events are from the helmet-only policy; vest events are from the separate helmet+vest policy. Duplicate helmet rows from dual policy are omitted. All updated rows are review_only with null verified confidence.",
+  "test_database_cleanup": {
+    "database": "kyo_test_ppe_episode_20261115",
+    "remaining_test_schemas": [],
+    "public_table_count": 0,
+    "production_database_modified": false
+  }
+}

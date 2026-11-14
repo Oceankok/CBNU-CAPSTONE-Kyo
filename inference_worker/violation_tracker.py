@@ -1,98 +1,55 @@
-"""Track consecutive suspected PPE violations over time."""
+"""Candidate-only adapter over the shared event lifecycle.
 
+Defaults are initial engineering settings, not calibrated operating claims.
+Legacy HTTP events retain the immutable qualification window; extending their
+server/media interval remains the separate continuous-event protocol.
+"""
 from math import isfinite
 
+from inference_worker.event_lifecycle import EventLifecycle
 from inference_worker.event_validation import valid_ppe_confidence
 
 
 class ViolationTracker:
-    def __init__(self, threshold_seconds=3.0):
-        self.threshold_seconds = threshold_seconds
-        self.states = {}
+    def __init__(self, threshold_seconds=3.0, *, missing_grace_seconds=1.0,
+                 rewear_seconds=0.5, qualification_grace_seconds=0.5,
+                 max_sample_gap_seconds=0.5, qualification_window_seconds=6.0,
+                 camera_id="local"):
+        self.lifecycle = EventLifecycle(
+            camera_id, threshold_seconds=threshold_seconds,
+            missing_grace_seconds=missing_grace_seconds,
+            rewear_seconds=rewear_seconds,
+            qualification_grace_seconds=qualification_grace_seconds,
+            max_sample_gap_seconds=max_sample_gap_seconds,
+            qualification_window_seconds=qualification_window_seconds)
+        self._flat = set()
+
+    @property
+    def states(self):
+        return {(key[0] if key in self._flat else key): state
+                for key, state in self.lifecycle.states.items()}
 
     def update(self, assessments, timestamp):
-        """Return newly qualified violation candidates."""
-        candidates = []
-        active_ids = set()
-
-        observations = []
+        if not isfinite(timestamp):
+            self.lifecycle.close_all("invalid_timestamp")
+            return []
+        rows = []
         for person in assessments:
-            if "ppe" in person:
-                for ppe_type, assessment in person["ppe"].items():
-                    observations.append({**person, **assessment, "ppe_type": ppe_type,
-                                         "absence_rule": True})
-            else:
-                observations.append(person)
-
-        for person in observations:
-            ppe_type = person.get("ppe_type", "helmet")
-            track_id = ((person["tracking_id"], ppe_type) if person.get("absence_rule")
-                        else person["tracking_id"])
-            active_ids.add(track_id)
-
-            if person["status"] != f"suspected_no_{ppe_type}":
-                self.states.pop(track_id, None)
-                continue
-
-            state = self.states.get(track_id)
-            scope_key = person.get("policy_scope_key")
-
-            # A changed ROI membership/policy version starts a new observation.
-            # Never carry a prior region's timer or report flag into a new region.
-            if state is not None and state.get("policy_scope_key") != scope_key:
-                self.states.pop(track_id, None)
-                state = None
-
-            score = person.get("verified_ppe_confidence")
-            verified = valid_ppe_confidence(score)
-            if not isfinite(timestamp):
-                self.states.pop(track_id, None)
-                continue
-
-            if (state is None or state["verified"] != verified
-                    or timestamp < state["last"]
-                    or ((verified or person.get("absence_rule")) and timestamp - state["last"] > 0.5)):
-                alerted = bool(state and state["verified_reported"])
-                state = {
-                    "start": timestamp,
-                    "last": timestamp,
-                    "reported": alerted,
-                    "verified_reported": alerted,
-                    "verified": verified,
-                    "minimum_confidence": score if verified else None,
-                    "samples": 0,
-                    "policy_scope_key": scope_key,
-                }
-                self.states[track_id] = state
-
-            if state["samples"] and timestamp == state["last"]:
-                continue
-            state["last"] = timestamp
-            state["samples"] += 1
-            if verified:
-                state["minimum_confidence"] = min(state["minimum_confidence"], score)
-
-            elapsed = timestamp - state["start"]
-
-            if elapsed >= self.threshold_seconds and not state["reported"]:
-                state["reported"] = True
-                if verified:
-                    state["verified_reported"] = True
-
-                candidates.append({
-                    "tracking_id": person["tracking_id"],
-                    "ppe_type": ppe_type,
-                    "start_time": state["start"],
-                    "end_time": timestamp,
-                    "duration_seconds": elapsed,
-                    "person_confidence": person["person_confidence"],
-                    "verified_ppe_confidence": state["minimum_confidence"],
-                    "frame_sample_count": state["samples"],
-                })
-
-        # A missing person breaks the observed violation streak.
-        for track_id in list(self.states):
-            if track_id not in active_ids:
-                del self.states[track_id]
-
-        return candidates
+            row = {**person, "tracking_id": str(person["tracking_id"])}
+            ppes = person.get("ppe")
+            if ppes is None:
+                ppe = person.get("ppe_type", "helmet")
+                self._flat.add((row["tracking_id"], ppe))
+                ppes = {ppe: person}
+            row["ppe"] = {}
+            for ppe, assessment in ppes.items():
+                state = dict(assessment)
+                old = self.lifecycle.states.get((row["tracking_id"], ppe))
+                if (old and old["event_id"] and old["verified"]
+                        and state["status"] == "suspected_no_" + ppe
+                        and not valid_ppe_confidence(state.get("verified_ppe_confidence"))):
+                    state["status"] = "unknown"
+                row["ppe"][ppe] = state
+            rows.append(row)
+        return [row for row in self.lifecycle.update(rows, timestamp)
+                if row["kind"] == "start"]

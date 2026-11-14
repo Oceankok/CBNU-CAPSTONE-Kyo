@@ -64,7 +64,7 @@ def collect_scenario(frames, detector, output, *, scenario_id, camera_id,
                     raise ValueError('scenario_must_start_at_zero')
                 if count >= max_frames or timestamp > max_seconds:
                     raise ValueError('scenario_limit_exceeded')
-                rows = tracker.update(assess_ppe(detector.detect(frame), frame.shape, supported))
+                rows = tracker.update(assess_ppe(detector.detect(frame), frame.shape, supported), timestamp)
                 people = []
                 for row in rows:
                     track = str(row['tracking_id']); tracks.add(track)

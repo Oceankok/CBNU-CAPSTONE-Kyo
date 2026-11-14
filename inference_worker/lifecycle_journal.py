@@ -12,7 +12,9 @@ from inference_worker.continuous_payloads import start_payload, update_payload
 
 class LifecycleJournal:
     def __init__(self, outbox, *, camera_id, camera_snapshot, model_version,
-                 missing_grace_seconds, threshold_seconds, max_sample_gap_seconds, progress_emit_interval_seconds):
+                 missing_grace_seconds, threshold_seconds, max_sample_gap_seconds, progress_emit_interval_seconds,
+                 rewear_seconds=0.0, qualification_grace_seconds=0.0,
+                 qualification_window_seconds=6.0):
         if not isinstance(model_version,str) or not model_version:
             raise ValueError('explicit model version required')
         if (isinstance(progress_emit_interval_seconds,bool) or not isinstance(progress_emit_interval_seconds,(int,float))
@@ -28,7 +30,9 @@ class LifecycleJournal:
         self.snapshot=snapshot
         self.model_version=model_version
         self.lifecycle=EventLifecycle(camera_id,missing_grace_seconds=missing_grace_seconds,
-            threshold_seconds=threshold_seconds,max_sample_gap_seconds=max_sample_gap_seconds)
+            threshold_seconds=threshold_seconds,max_sample_gap_seconds=max_sample_gap_seconds,
+            rewear_seconds=rewear_seconds,qualification_grace_seconds=qualification_grace_seconds,
+            qualification_window_seconds=qualification_window_seconds)
         self.api_sequences={}
         self.capture_context_id=None
         self.capture_context_bound=False

@@ -98,8 +98,9 @@ class VerifiedNoHelmetTests(unittest.TestCase):
     def test_wearing_helmet_then_new_episode_requires_new_observation(self):
         tracker = ViolationTracker()
         observe(tracker, assessed(PERSON, NEGATIVE))
-        tracker.update(assessed(PERSON, {**NEGATIVE, 'class_name': 'helmet'}), 3.25)
-        self.assertEqual(len(observe(tracker, assessed(PERSON, NEGATIVE), start=3.5)), 1)
+        for timestamp in (3.25, 3.5, 3.75):
+            tracker.update(assessed(PERSON, {**NEGATIVE, 'class_name': 'helmet'}), timestamp)
+        self.assertEqual(len(observe(tracker, assessed(PERSON, NEGATIVE), start=4.0)), 1)
 
     def test_duplicate_frame_does_not_inflate_sample_count(self):
         tracker = ViolationTracker()
@@ -118,20 +119,22 @@ class VerifiedNoHelmetTests(unittest.TestCase):
         self.assertFalse(validate_candidate(candidate, {**POLICY, 'configured': False})[0])
         self.assertFalse(validate_candidate(candidate, {**POLICY, 'required_ppe': ['vest']})[0])
 
-    def test_runner_uses_real_tracker_and_keeps_startup_preroll(self):
+    def test_runner_uses_real_tracker_without_losing_startup_event(self):
         class NegativeDetector:
             model_version = 'fixture-negative-model'
             supports_no_helmet = True
             def detect(self, frame):
                 return [PERSON, NEGATIVE]
+        client = FakeVideoClient(9)
         output, delivery = fixtures.RunnerResilienceTests().run_runner(
-            FakeVideoClient(9), submit=True, detector=NegativeDetector())
-        delivery.assert_called_once()
-        event = delivery.call_args.args[1]
+            client, submit=True, detector=NegativeDetector())
+        delivery.assert_not_called()
+        self.assertEqual(len(client.submitted_events), 1)
+        event = client.submitted_events[0]
         self.assertEqual(event['confidence'], 0.73)
         self.assertEqual(event['model_version'], 'fixture-negative-model')
         self.assertEqual(event['frame_sample_count'], 13)
-        self.assertNotIn('[CLIP INCOMPLETE]', output)
+        self.assertIn('[CLIP INCOMPLETE]', output)
 
     def test_three_class_model_is_rejected_before_api_client_on_submit(self):
         class ThreeClassDetector:

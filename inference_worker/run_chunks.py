@@ -75,7 +75,7 @@ def main():
             total_frames += 1
 
             detections = detector.detect(frame)
-            assessments = tracker.update(assess_ppe(detections, frame.shape, detector.supported_ppe))
+            assessments = tracker.update(assess_ppe(detections, frame.shape, detector.supported_ppe), timestamp)
             candidates = violations.update(assessments, timestamp)
 
             for candidate in candidates:
