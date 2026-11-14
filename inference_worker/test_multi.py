@@ -240,14 +240,17 @@ class MultiCameraTests(unittest.TestCase):
         # Keep these tests dependency-free: model, HTTP and tracker are explicit doubles.
         client, model, tracker = Mock(), Mock(supports_no_helmet=False), Mock()
         factory = Mock(return_value=model)
+        assessment = Mock(return_value=[])
         modules = {'inference_worker.video_client': SimpleNamespace(VideoClient=lambda: client),
                    'inference_worker.run_server': SimpleNamespace(create_detector=factory),
-                   'inference_worker.person_tracker': SimpleNamespace(PersonTracker=tracker)}
+                   'inference_worker.person_tracker': SimpleNamespace(PersonTracker=tracker),
+                   'inference_worker.ppe_rules': SimpleNamespace(assess_ppe=assessment)}
         with patch.dict('sys.modules', modules):
             preflight(['A', 'B'], Path('model.pt'), '--submit-review-candidates')
             self.assertEqual(client.get_ppe_policy.call_count, 2)
             client.close.assert_called_once()
             tracker.assert_called_once()
+            assessment.assert_called_once_with([], (64, 64, 3))
             with self.assertRaises(ValueError):
                 preflight(['A'], Path('model.pt'), '--submit-events')
             factory.side_effect = RuntimeError('corrupt model')
@@ -270,6 +273,18 @@ class MultiCameraTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'tracker dependency missing'):
                 preflight(['A'], Path('model.pt'), None)
         tracker.assert_called_once()
+
+    def test_preflight_assignment_dependency_failure_stops_initialization(self):
+        from types import SimpleNamespace
+        assessment = Mock(side_effect=ModuleNotFoundError('scipy'))
+        modules = {'inference_worker.video_client': SimpleNamespace(VideoClient=Mock),
+                   'inference_worker.run_server': SimpleNamespace(create_detector=Mock),
+                   'inference_worker.person_tracker': SimpleNamespace(PersonTracker=Mock),
+                   'inference_worker.ppe_rules': SimpleNamespace(assess_ppe=assessment)}
+        with patch.dict('sys.modules', modules):
+            with self.assertRaisesRegex(ModuleNotFoundError, 'scipy'):
+                preflight(['A'], Path('model.pt'), None)
+        assessment.assert_called_once_with([], (64, 64, 3))
 
     def test_preflight_fatal_exit_is_sanitized(self):
         from io import StringIO

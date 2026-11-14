@@ -34,6 +34,7 @@ def preflight(cameras, model, mode):
     from inference_worker.video_client import VideoClient
     from inference_worker.run_server import create_detector
     from inference_worker.person_tracker import PersonTracker
+    from inference_worker.ppe_rules import assess_ppe
     client = VideoClient()
     try:
         for camera in cameras:
@@ -42,6 +43,7 @@ def preflight(cameras, model, mode):
         client.close()
     detector = create_detector(model)
     PersonTracker()  # Fail before peers launch if tracker dependencies/config are invalid.
+    assess_ppe([], (64, 64, 3))  # Exercise lazy assignment dependencies without inference.
     if mode == '--submit-events' and detector.supports_no_helmet is False:
         raise ValueError('Event submission requires no_helmet classes')
     if mode == '--submit-review-candidates' and detector.supports_no_helmet is not False:
