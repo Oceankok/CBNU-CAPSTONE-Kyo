@@ -11,6 +11,10 @@
 공유 모델 로딩·클래스/모드·tracker 초기화 및 카메라 정책 인증은 추론 자식 시작 전 별도 프로세스에서
 검사합니다. 이 프로세스는 종료 후 GPU/모델 메모리를 놓으므로 supervisor가 세 번째 모델을 계속
 보유하지 않습니다. 시작할 때 모델을 한 번 더 읽는 비용은 추가됩니다. 실제 GPU 재할당 실증은 별도입니다.
+이벤트 생성 PR #257과 통합할 때는 그 브랜치의 갱신된 requirements에 맞춰 추론 가상환경을 먼저
+준비해야 합니다. 특히 Ultralytics/lap 버전 요구를 충족해야 하며, tracker 초기화 오류도 preflight에서
+실패합니다. 설치는 향후 사용자 승인 배포 단계에서 해당 Python 환경의
+`python -m pip install -r requirements.txt`로 수행합니다. 현재 호스트 의존성은 변경하지 않았습니다.
 
 검사한 호스트 `C:\Users\robin\KyoServer\Launcher\inference_entry.py`는 `arguments(settings)`에서
 모델·버퍼·카메라·mode만 만든 뒤 저장소 `run_multi.main`을 호출합니다. 따라서 해당 소스가 통합·배포되면
@@ -56,7 +60,7 @@ pending 요청이 있으면 5초마다 새 상태를 조회하며 수동 새로�
 
 | 검사 | 명령/근거 | 결과 |
 |---|---|---|
-| 감독 단위 계약 | `python -m unittest inference_worker.test_multi -q` | 28개 통과 |
+| 감독 단위 계약 | `python -m unittest inference_worker.test_multi -q` | 29개 통과 |
 | 실제 OS 합성 자식 | `python -m unittest inference_worker.test_multi_processes -v` | 9개 통과, 각 종료 시 잔존 자식 0 |
 | PG/API 누락 계약 | `python -m unittest deploy.tests.test_g3_evidence.G3EvidenceTests -v` | 1개 통과, OFF, 검토 쓰기 0 |
 | UI TSX 로직 | frontend에서 `node scripts/mediaRecovery.check.cjs` | 10개 통과 |

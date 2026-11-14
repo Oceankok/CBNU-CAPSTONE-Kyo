@@ -260,6 +260,17 @@ class MultiCameraTests(unittest.TestCase):
             factory.assert_not_called()
             self.assertEqual(client.close.call_count, 4)
 
+    def test_preflight_tracker_dependency_failure_is_not_retried(self):
+        from types import SimpleNamespace
+        tracker = Mock(side_effect=RuntimeError('tracker dependency missing'))
+        modules = {'inference_worker.video_client': SimpleNamespace(VideoClient=Mock),
+                   'inference_worker.run_server': SimpleNamespace(create_detector=Mock),
+                   'inference_worker.person_tracker': SimpleNamespace(PersonTracker=tracker)}
+        with patch.dict('sys.modules', modules):
+            with self.assertRaisesRegex(RuntimeError, 'tracker dependency missing'):
+                preflight(['A'], Path('model.pt'), None)
+        tracker.assert_called_once()
+
     def test_preflight_fatal_exit_is_sanitized(self):
         from io import StringIO
         with TemporaryDirectory() as folder:
