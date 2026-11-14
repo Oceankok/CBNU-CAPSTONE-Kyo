@@ -84,9 +84,11 @@ function EvidenceDetails({ evidence }: { evidence: Record<string, unknown> }) {
 export default function SuspectedDuplicatePanel({
   eventId,
   tag,
+  onRelationsChanged,
 }: {
   eventId: string;
   tag?: SuspectedDuplicateTag;
+  onRelationsChanged?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<SuspectedDuplicatePreview | null>(null);
@@ -185,6 +187,7 @@ export default function SuspectedDuplicatePanel({
         }
         return;
       }
+      onRelationsChanged?.();
       if (!isCurrentWrite()) return;
       if (!(await load())) return;
       if (
@@ -212,6 +215,7 @@ export default function SuspectedDuplicatePanel({
     setNotice(null);
     try {
       await releaseSuspectedRelation(relation.relation_id, relation.fingerprint, eventId);
+      onRelationsChanged?.();
       if (!isCurrentWrite()) return;
       if (!(await load())) return;
       if (isCurrentWrite()) {
@@ -245,6 +249,7 @@ export default function SuspectedDuplicatePanel({
       const result = (await executeConfirmedReconcile(true, () =>
         reconcileSuspectedRelations(eventId),
       )) as { created_count?: number };
+      onRelationsChanged?.();
       if (!isCurrentWrite()) return;
       if (!(await load())) return;
       if (isCurrentWrite()) {
