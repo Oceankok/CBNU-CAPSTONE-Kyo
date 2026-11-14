@@ -32,6 +32,7 @@ class ViolationTracker:
     def update(self, assessments, timestamp):
         if not isfinite(timestamp):
             self.lifecycle.close_all("invalid_timestamp")
+            self._flat.clear()
             return []
         rows = []
         for person in assessments:
@@ -51,5 +52,6 @@ class ViolationTracker:
                     state["status"] = "unknown"
                 row["ppe"][ppe] = state
             rows.append(row)
-        return [row for row in self.lifecycle.update(rows, timestamp)
-                if row["kind"] == "start"]
+        transitions = self.lifecycle.update(rows, timestamp)
+        self._flat.intersection_update(self.lifecycle.states)
+        return [row for row in transitions if row["kind"] == "start"]

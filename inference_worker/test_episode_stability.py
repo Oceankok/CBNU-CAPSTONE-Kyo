@@ -19,6 +19,21 @@ def person(x=30, score=.95, tag="A"):
 
 
 class EpisodeStabilityTests(unittest.TestCase):
+    def test_retired_flat_tracks_do_not_accumulate_diagnostic_identities(self):
+        tracker=ViolationTracker()
+        for index in range(200):
+            row={"tracking_id":f"person-{index}","status":"suspected_no_helmet",
+                 "person_confidence":.9,"verified_ppe_confidence":None}
+            tracker.update([row],index*3)
+            self.assertIn(row["tracking_id"],tracker.states)
+            tracker.update([],index*3+1)
+            self.assertEqual(tracker.states,{})
+            self.assertEqual(len(tracker._flat),0)
+        tracker.update([row],601)
+        tracker.update([],float("nan"))
+        self.assertEqual(tracker.states,{})
+        self.assertEqual(len(tracker._flat),0)
+
     def test_long_nonwear_with_flicker_and_missing_frames_is_one(self):
         tracker = ViolationTracker()
         events = []
