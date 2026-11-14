@@ -142,6 +142,9 @@ class CaptureShadowRefreshTests(TestCase):
         policy=settings.Policy(mode='enforce',model_versions=['test'],ppe_types=['helmet'],
                                camera_ids=['CAM_001'],validation_reference='test-only')
         with (patch.object(settings,'load',return_value=(policy,1,{})),
+              # Public responses now inspect policy activation. Isolate that
+              # read from the callback guard being tested here.
+              patch.object(settings,'enabled_for_event',return_value=False),
               patch.object(settings,'activation_blockers',side_effect=AssertionError('capture cannot enforce')) as gates):
             self.complete('CAM_001')
             self.complete('CAM_002')

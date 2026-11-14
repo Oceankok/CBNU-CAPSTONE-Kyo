@@ -1,4 +1,4 @@
-"""Internal read-only preflight. Dormant writer exists; no runtime is connected."""
+"""Read-only model-score preflight; separate continuous rules use settings.py."""
 import re
 from backend.auto_decision.routes import PreviewRequest, inspect
 from backend.db.connection import run_stats_transaction

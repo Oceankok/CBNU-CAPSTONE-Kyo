@@ -128,6 +128,7 @@ class SettingsTests(TestCase):
         from tempfile import TemporaryDirectory
         from pathlib import Path
         import sqlite3, os
+        from contextlib import closing
         # A true schema32 predecessor keeps its existing rows and starts OFF.
         with get_connection() as conn:
             conn.execute('DROP TABLE auto_decision_settings_history')
@@ -141,12 +142,12 @@ class SettingsTests(TestCase):
         self.assertEqual(self.client.get('/api/auto-decisions/settings',headers=self.admin).json()['mode'],'off')
         with TemporaryDirectory() as directory:
             path=Path(directory)/'divergent.db'
-            with sqlite3.connect(path) as conn:
+            with closing(sqlite3.connect(path)) as conn, conn:
                 conn.execute('CREATE TABLE marker(value TEXT)');conn.execute("INSERT INTO marker VALUES('preserved')")
                 conn.execute('PRAGMA user_version=33')
             with patch.dict(os.environ,{'PPE_DATABASE_URL':'','PPE_DB_PATH':str(path)}):
                 with self.assertRaisesRegex(RuntimeError,'Incompatible schema33'):init_database()
-            with sqlite3.connect(path) as conn:
+            with closing(sqlite3.connect(path)) as conn, conn:
                 self.assertEqual(conn.execute('SELECT value FROM marker').fetchone()[0],'preserved')
                 self.assertEqual(conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall(),[('marker',)])
 

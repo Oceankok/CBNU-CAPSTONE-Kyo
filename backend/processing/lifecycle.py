@@ -125,7 +125,10 @@ def public(conn, event_id):
         FROM processing_event_segment s JOIN event_clip_request r ON r.request_id=s.request_id
         WHERE s.event_id=? ORDER BY s.sequence,s.camera_id''', (event_id,))]
     from backend.processing.capture import cameras
-    return {'event_id': event_id, 'lifecycle': row, 'segments': segments, 'cameras': cameras(conn,event_id), 'auto_decision_enabled': False}
+    from backend.auto_decision.settings import enabled_for_event
+    event=conn.execute('SELECT * FROM candidate_event WHERE event_id=?',(event_id,)).fetchone()
+    return {'event_id': event_id, 'lifecycle': row, 'segments': segments, 'cameras': cameras(conn,event_id),
+            'auto_decision_enabled': enabled_for_event(conn,event)}
 
 
 def read(event_id, node_id, session_id):
@@ -227,7 +230,7 @@ def update(event_id, body, node_id):
         conn.execute('INSERT INTO processing_event_operation(event_id,sequence,payload) VALUES(?,?,?)',(event_id,body.sequence,raw))
         if phase == 'closed':
             from backend.auto_decision.writer import on_event_ready
-            on_event_ready(conn,event_id)  # Dormant until a trusted validator is integrated.
+            on_event_ready(conn,event_id)
         return public(conn,event_id)
 
 

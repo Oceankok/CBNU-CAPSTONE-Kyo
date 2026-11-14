@@ -1,8 +1,4 @@
-"""Dormant automatic-review transaction, not an activation API.
-
-A future trusted in-process runtime must supply a validated whole-event adapter.
-No request body, environment variable or shadow result can install one here.
-"""
+"""Atomic automatic reviews, shared by the model boundary and opt-in rules."""
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -65,21 +61,29 @@ def on_event_ready(conn, event_id, *, runtime=None):
         or not isinstance(proof.validation_reference,str)
         or not proof.validation_reference.strip() or len(proof.validation_reference)>200):
         return {'applied':False,'reason':'validated_whole_event_proof_unavailable'}
+    return confirm(conn,event_id,{'source':'automatic_decision_v1',
+        'policy':policy.model_dump(exclude={'event_ids'}),
+        'validation_reference':proof.validation_reference,
+        'evidence_fingerprint':proof.evidence_fingerprint,
+        'observed_confidence':diagnostic['observed_confidence']})
+
+
+def confirm(conn, event_id, audit):
+    """Internal finalizer; caller owns write lock and has just evaluated evidence.
+
+    Never exposed as an endpoint accepting client eligibility or proof objects.
+    """
     from backend.media.service import validate_review
+    if conn.execute('SELECT 1 FROM event_review WHERE event_id=?',(event_id,)).fetchone():
+        return {'applied':False,'reason':'already_reviewed'}
     review={'review_id':'AUTO_'+uuid4().hex,'event_id':event_id,'reviewer_id':None,
         'review_result':'confirmed','review_reason_code':'automatic_policy_confirmed',
         'review_time':datetime.now(timezone.utc).isoformat(timespec='seconds'),
-        'review_comment':json.dumps({'source':'automatic_decision_v1',
-            'policy':policy.model_dump(exclude={'event_ids'}),
-            'validation_reference':proof.validation_reference,
-            'evidence_fingerprint':proof.evidence_fingerprint,
-            'observed_confidence':diagnostic['observed_confidence']},sort_keys=True),
+        'review_comment':json.dumps(audit,sort_keys=True),
         'confirmed_violation':1,'second_review_needed':1}
     # Same finalization, media, expiration and merge safety as manual review.
     # Consent/retention are not created, extended, approved or bypassed.
     validate_review(conn,review)
-    if conn.execute('SELECT 1 FROM event_review WHERE event_id=?',(event_id,)).fetchone():
-        return {'applied':False,'reason':'already_reviewed'}
     changed=conn.execute("UPDATE candidate_event SET event_status='confirmed' WHERE event_id=? AND event_status='pending'",(event_id,))
     if changed.rowcount != 1:
         return {'applied':False,'reason':'not_pending'}

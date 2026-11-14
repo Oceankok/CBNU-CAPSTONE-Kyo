@@ -1,8 +1,4 @@
-"""Versioned administrator policy. No request can install a trusted model adapter.
-
-A future reviewed adapter must supply policy eligibility and whole-event proof.
-Only a diagnostic adapter is distributed: enforce fails closed; OFF/shadow work.
-"""
+"""Versioned administrator policy with separate model and continuous-rule paths."""
 from datetime import datetime, timezone
 import json
 import hashlib
@@ -14,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from backend.auth.service import require_admin
 from backend.auto_decision.routes import PreviewRequest
 from backend.auto_decision.adapter import DiagnosticOnlyAdapter
+from backend.auto_decision.rules import Criteria, METHOD as RULE_METHOD
 from backend.db.connection import run_stats_transaction
 from backend.zones.policy import ALLOWED_PPE
 
@@ -24,6 +21,8 @@ router = APIRouter(prefix='/api/auto-decisions/settings', tags=['auto-decision s
 class Policy(BaseModel):
     model_config = ConfigDict(extra='forbid')
     mode: Literal['off', 'shadow', 'enforce'] = 'off'
+    decision_method: Literal['validated_model', 'continuous_rules_v1'] = 'validated_model'
+    rule_criteria: Criteria | None = None
     threshold: float = Field(default=0.9, ge=0, le=1, allow_inf_nan=False, strict=True)
     model_versions: list[str] = Field(default_factory=list, max_length=50)
     ppe_types: list[str] = Field(default_factory=list, max_length=12)
@@ -42,6 +41,13 @@ class Policy(BaseModel):
             raise ValueError('Validation reference must be an exact identifier')
         if self.mode != 'off' and not (self.model_versions and self.ppe_types and self.camera_ids):
             raise ValueError('Non-OFF mode requires explicit model, PPE and camera scope')
+        if self.decision_method == RULE_METHOD:
+            if self.mode != 'off' and self.rule_criteria is None:
+                raise ValueError('Rule mode requires explicit observation criteria')
+            if set(self.ppe_types) - {'helmet', 'vest'}:
+                raise ValueError('Continuous rules support helmet and vest only')
+        elif self.rule_criteria is not None:
+            raise ValueError('Rule criteria require continuous_rules_v1')
         return self
 
 
@@ -74,6 +80,10 @@ def activation_blockers(policy):
         reasons.append('explicit_scope_required')
     if not policy.validation_reference:
         reasons.append('approved_validation_reference_required')
+    if policy.decision_method == RULE_METHOD:
+        if policy.rule_criteria is None:
+            reasons.append('explicit_rule_criteria_required')
+        return sorted(set(reasons))
     adapter = trusted_adapter()
     if adapter is None:
         reasons.append('validated_model_adapter_unavailable')
@@ -87,6 +97,21 @@ def load(conn):
     return (Policy.model_validate_json(row['policy_json']), row['version'], dict(row)) if row else (Policy(), 0, None)
 
 
+def enabled_for_event(conn, event):
+    """Configured activation/scope, not a claim that this event is eligible."""
+    policy, _, _ = load(conn)
+    if policy.mode != 'enforce' or activation_blockers(policy):
+        return False
+    if (event['camera_id'] not in policy.camera_ids or event['model_version'] not in policy.model_versions
+            or event['ppe_type'] not in policy.ppe_types):
+        return False
+    if policy.zone_names:
+        zone=conn.execute('SELECT zone_name FROM event_zone_snapshot WHERE event_id=?',(event['event_id'],)).fetchone()
+        if zone is None or zone['zone_name'] not in policy.zone_names:
+            return False
+    return True
+
+
 def representation(policy, version, row=None):
     blockers = activation_blockers(policy)
     return {**policy.model_dump(), 'version':version,
@@ -95,7 +120,8 @@ def representation(policy, version, row=None):
             'updated_by':row['updated_by'] if row else None,
             'updated_at':row['updated_at'] if row else None,
             'scope_semantics':{'camera_ids':'empty_matches_none', 'zone_names':'empty_adds_no_zone_restriction'},
-            'score_semantics':'validated_violation_score_required_not_person_detection_score'}
+            'score_semantics':('rule_conditions_not_a_probability' if policy.decision_method == RULE_METHOD
+                               else 'validated_violation_score_required_not_person_detection_score')}
 
 
 @router.get('')
@@ -107,9 +133,12 @@ def get_settings():
 def update_settings(body: SettingsUpdate, actor: dict = Depends(require_admin)):
     policy = Policy.model_validate(body.model_dump(exclude={'expected_version','reason'}))
     def operation(conn):
-        _, version, _ = load(conn)
+        previous, version, _ = load(conn)
         if version != body.expected_version:
             raise HTTPException(409, 'auto_decision_settings_changed')
+        if (previous.decision_method == RULE_METHOD and policy.mode != 'off'
+                and 'decision_method' not in body.model_fields_set):
+            raise HTTPException(422, 'explicit_decision_method_required')
         for camera in policy.camera_ids:
             if not conn.execute('SELECT 1 FROM camera_info WHERE camera_id=?',(camera,)).fetchone():
                 raise HTTPException(422,'unknown_camera_scope')
@@ -160,7 +189,16 @@ def preview_policy(conn, event_id, policy, version_label):
         zone=conn.execute('SELECT zone_name FROM event_zone_snapshot WHERE event_id=?',(event_id,)).fetchone()
         if zone is None or zone['zone_name'] not in policy.zone_names:
             reasons.append('zone_out_of_scope')
-    # Current diagnostic-only implementation, not a future trusted scorer.
+    if policy.decision_method == RULE_METHOD:
+        from backend.auto_decision.rules import evaluate
+        rule = evaluate(conn,event_id,policy.rule_criteria,{**diagnostic,'blocking_reasons':reasons})
+        digest=hashlib.sha256(json.dumps({'diagnostic':diagnostic['evidence_fingerprint'],
+            'policy':policy.model_dump(),'rule_evaluation':rule},sort_keys=True).encode()).hexdigest()
+        return {**diagnostic,'blocking_reasons':rule['blocking_reasons'],
+                'structural_eligible':rule['eligible'],'threshold_candidate':rule['eligible'],
+                'evidence_fingerprint':digest,'scope_applied':True,'rule_evaluation':rule,
+                'decision_method':RULE_METHOD,'score_semantics':rule['score_semantics']}
+    # Current diagnostic-only model implementation, not a future trusted scorer.
     # A reviewed scorer must replace this diagnostic path together with
     # trusted_adapter(), so preview/shadow and enforce share score semantics.
     adapter_diagnostic=DiagnosticOnlyAdapter().diagnose(diagnostic)
@@ -190,16 +228,16 @@ def settings_preview(body: SettingsPreview):
 
 
 def process_ready(conn, event_id, *, capture_shadow_only=False):
-    """Same caller-owned transaction and shared write lock as the dormant writer.
+    """Same caller-owned transaction and shared write lock as the review writer.
 
     No new polling worker, no automatic backfill. Hooks revisit an event when its
     lifecycle/media complete; future settings changes affect future hook calls.
-    The post-commit capture hook can only append a finalizable shadow snapshot.
+    The post-commit capture hook also evaluates explicitly selected rule policies.
     """
     policy, version, row = load(conn)
     if policy.mode == 'off':
         return {'applied':False,'reason':'automatic_confirmation_disabled'}
-    if capture_shadow_only and policy.mode != 'shadow':
+    if capture_shadow_only and policy.mode != 'shadow' and policy.decision_method != RULE_METHOD:
         return {'applied':False,'reason':'capture_shadow_only'}
     event=conn.execute('SELECT * FROM candidate_event WHERE event_id=?',(event_id,)).fetchone()
     if event is None:
@@ -228,11 +266,25 @@ def process_ready(conn, event_id, *, capture_shadow_only=False):
                 return {'applied':False,'reason':str(exc)}
         from backend.auto_decision.shadow import record_policy_shadow
         diagnostic=preview_policy(conn,event_id,policy,f'settings-v{version}')
-        record_policy_shadow(conn,event_id,version,row['updated_by'],preview,diagnostic)
+        shadow_policy=policy if policy.decision_method == RULE_METHOD else preview
+        record_policy_shadow(conn,event_id,version,row['updated_by'],shadow_policy,diagnostic)
         return {'applied':False,'reason':'shadow_only','threshold_candidate':diagnostic['threshold_candidate']}
     blockers=activation_blockers(policy)
     if blockers:
         return {'applied':False,'reason':'automatic_confirmation_not_ready','blocking_reasons':blockers}
+    if policy.decision_method == RULE_METHOD:
+        diagnostic=preview_policy(conn,event_id,policy,f'settings-v{version}')
+        if not diagnostic['rule_evaluation']['eligible']:
+            return {'applied':False,'reason':'rule_conditions_not_met',
+                    'blocking_reasons':diagnostic['blocking_reasons']}
+        from backend.auto_decision.writer import confirm
+        return confirm(conn,event_id,{
+            'source':'automatic_continuous_rules_v1','settings_version':version,
+            'policy_configured_by':row['updated_by'],'policy':policy.model_dump(),
+            'model_version':event['model_version'],
+            'evidence_fingerprint':diagnostic['evidence_fingerprint'],
+            'rule_evaluation':diagnostic['rule_evaluation'],
+        })
     from backend.event_relations.service import automatic_tag
     if automatic_tag(conn,event_id)['candidate_count']:
         return {'applied':False,'reason':'suspected_duplicate_requires_review'}
