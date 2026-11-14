@@ -221,9 +221,9 @@ class EducationMaterialTests(unittest.TestCase):
             users = [dict(row) for row in conn.execute('SELECT * FROM app_user ORDER BY user_id').fetchall()]
             consents = [dict(row) for row in conn.execute('SELECT * FROM consent_record').fetchall()]
             # Recreate the pre-v12 education boundary, not a modern parent table
-            # with later bundle/material tables still present. These synthetic tables must
+            # with v34 FK children still attached. These synthetic tables must
             # be empty before removing them; never use CASCADE to hide dependencies.
-            for table in ('education_bundle', 'education_material'):
+            for table in ('education_translation', 'education_bundle', 'education_material'):
                 self.assertEqual(conn.execute('SELECT COUNT(*) FROM ' + table).fetchone()[0], 0)
                 conn.execute('DROP TABLE ' + table)
             conn.execute('UPDATE app_schema_version SET version=11 WHERE singleton=1' if is_postgres() else 'PRAGMA user_version=11')
@@ -234,4 +234,5 @@ class EducationMaterialTests(unittest.TestCase):
             self.assertEqual([dict(row) for row in conn.execute('SELECT * FROM app_user ORDER BY user_id').fetchall()], users)
             self.assertEqual([dict(row) for row in conn.execute('SELECT * FROM consent_record').fetchall()], consents)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM education_bundle').fetchone()[0], 0)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM education_translation').fetchone()[0], 0)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM education_material').fetchone()[0], 0)

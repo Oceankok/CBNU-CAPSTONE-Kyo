@@ -61,7 +61,7 @@ class EducationStatsRefreshTests(unittest.TestCase):
             conn.execute('DELETE FROM education_recommendation WHERE quarter=?', (quarter,))
             # Separate read connection during the delete/insert interval sees the
             # old committed publication, not an empty cache.
-            observed.append(get_my_education({'role': 'worker', 'user_id': 'worker01'}))
+            observed.append(get_my_education(language='ko', user={'role': 'worker', 'user_id': 'worker01'}))
             return original(conn, quarter)
 
         with patch.object(repository, '_replace_education_recommendations', side_effect=rebuild):
@@ -119,7 +119,7 @@ class EducationStatsRefreshTests(unittest.TestCase):
 
             self_case = self
             with patch.object(routes, 'get_connection', reader):
-                observed = get_my_education({'role': 'worker', 'user_id': 'worker01'})
+                observed = get_my_education(language='ko', user={'role': 'worker', 'user_id': 'worker01'})
             tasks[0].result(timeout=5)
         self.assertEqual(observed, self.before)
         self.assertTrue(committed.is_set())

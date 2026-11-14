@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Response, Header, APIRouter, Depends, HTTPException, Query
 from backend.auth.service import current_user, require_admin
 from backend.education.models import MaterialUpdate, MaterialVersion, MaterialApproval
 from .models import Selection, SelectedSnapshot, BundleCreate
@@ -51,7 +51,10 @@ def unpublish(bundle_id: str, payload: MaterialVersion, user=Depends(require_adm
 
 
 @worker.get('/education-bundles')
-def worker_bundles(user=Depends(current_user)):
+def worker_bundles(language: str | None = Query(default=None, pattern=r"^[a-z]{2,3}(?:-[A-Z]{2})?$", max_length=6), accept_language: str | None = Header(default=None), user=Depends(current_user), response: Response = None):
+    from backend.education.languages import protect_worker_response
+    protect_worker_response(response)
     if user['role'] != 'worker':
         raise HTTPException(403, 'Worker access required')
-    return {'items': service.for_worker(user['user_id'])}
+    from backend.education.languages import preferences
+    return {'items': service.for_worker(user['user_id'], preferences(language, accept_language))}

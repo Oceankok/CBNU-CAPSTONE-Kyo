@@ -43,8 +43,12 @@ class WorkerEducationTests(unittest.TestCase):
         self.assertEqual([row["recommendation_id"] for row in body["items"]],["ED_FIRST","ED_SECOND"])
         self.assertIsNone(body["empty_reason"])
         for row in body["items"]:
-            self.assertEqual(set(row),{"recommendation_id","ppe_type","zone_name","education_topic","material"})
+            self.assertEqual(set(row),{"recommendation_id","ppe_type","zone_name","education_topic","material",
+                                       "language","requested_language","translation_fallback"})
             self.assertIsNone(row["material"])
+            self.assertIsNone(row["language"])
+            self.assertEqual(row["requested_language"], "ko")
+            self.assertFalse(row["translation_fallback"])
 
     def test_unassigned_and_empty_zones_do_not_fall_back_to_other_zones(self):
         headers = login(self.client,"worker01")

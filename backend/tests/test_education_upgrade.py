@@ -1,4 +1,4 @@
-"""Synthetic v31 to v32 upgrade and v32 reinitialization, SQLite or isolated PG."""
+"""Synthetic v31/v32/v33 upgrades to v34 and repeated initialization."""
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -50,8 +50,37 @@ class EducationUpgradeTests(unittest.TestCase):
                 # A SELECT also proves the v32 table was created on the v31 path.
                 conn.execute('SELECT bundle_id FROM education_bundle').fetchall()
 
+    def _remove_post32_tables(self, conn):
+        for table in ('education_translation', 'auto_decision_settings_history', 'auto_decision_settings'):
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM '+table).fetchone()[0], 0)
+            conn.execute('DROP TABLE '+table)
+
+    def test_version33_preserves_auto_settings_and_history(self):
+        with get_connection() as conn:
+            conn.execute('DROP TABLE education_translation')
+            policy='{"mode":"off","synthetic":"preserve"}'
+            conn.execute("INSERT INTO auto_decision_settings VALUES(1,7,?,'UPGRADE_USER','2026-01-01')", (policy,))
+            conn.execute("INSERT INTO auto_decision_settings_history VALUES(7,?,'UPGRADE_USER','2026-01-01','preserve')", (policy,))
+            self._version(conn,33)
+            before=self._snapshot(conn, ('app_user','consent_record','education_material','education_bundle',
+                                        'auto_decision_settings','auto_decision_settings_history'))
+        self._assert_repeated_upgrade(before)
+        with get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM education_translation').fetchone()[0],0)
+
+    def test_version34_preserves_existing_translation_and_settings(self):
+        with get_connection() as conn:
+            conn.execute("""INSERT INTO education_translation(translation_id,material_id,language,source_version,
+                title,body,checklist_json,status,created_by,created_at,updated_by,updated_at)
+                VALUES('UPGRADE_TRANSLATION','UPGRADE_MATERIAL','en',7,'Preserve title','Preserve body',
+                '["Check"]','published','UPGRADE_USER','2026-01-01','UPGRADE_USER','2026-01-01')""")
+            before=self._snapshot(conn, ('app_user','consent_record','education_material','education_bundle',
+                                        'auto_decision_settings','auto_decision_settings_history','education_translation'))
+        self._assert_repeated_upgrade(before)
+
     def test_version31_runs_bundle_migration_without_data_loss(self):
         with get_connection() as conn:
+            self._remove_post32_tables(conn)
             # Only new, empty tables are removed to model a populated v31 DB.
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM education_bundle').fetchone()[0], 0)
             conn.execute('DROP TABLE education_bundle')
@@ -63,6 +92,7 @@ class EducationUpgradeTests(unittest.TestCase):
 
     def test_version32_reinitialization_preserves_existing_bundle_and_material(self):
         with get_connection() as conn:
+            self._remove_post32_tables(conn)
             conn.execute("""INSERT INTO education_bundle(bundle_id,quarter,ppe_type,scope_key,sources_json,
                 title,body,checklist_json,status,created_by,created_at,updated_by,updated_at,
                 published_by,published_at,version)

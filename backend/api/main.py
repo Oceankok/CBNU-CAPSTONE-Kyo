@@ -542,6 +542,8 @@ from backend.consents.service import ConsentError
 app.include_router(consents_router)
 from backend.education.routes import router as education_router
 app.include_router(education_router)
+from backend.education.translation_routes import router as education_translation_router
+app.include_router(education_translation_router)
 
 
 @app.exception_handler(ConsentError)

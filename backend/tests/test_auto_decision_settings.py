@@ -29,7 +29,9 @@ class SettingsTests(TestCase):
         result=self.client.get('/api/auto-decisions/settings',headers=self.admin).json()
         self.assertEqual(result['mode'],'off');self.assertEqual(result['version'],0)
         self.assertFalse(result['automatic_confirmation_enabled'])
-        self.assertIn('validated_model_adapter_unavailable',result['activation_blockers'])
+        self.assertIn('calibrated_violation_probability_unavailable',result['activation_blockers'])
+        self.assertIn('model_artifact_attestation_unavailable',result['activation_blockers'])
+        self.assertIn('whole_event_classifier_evidence_unavailable',result['activation_blockers'])
         self.assertFalse(self.hook()['applied'])
         self.assertEqual(self.client.get('/api/auto-decisions/settings').status_code,401)
         self.assertEqual(before,self.state())
@@ -69,6 +71,9 @@ class SettingsTests(TestCase):
         self.assertEqual(len(history['items']),1)
         self.assertEqual(history['items'][0]['result']['source'],'completion_hook_shadow')
         self.assertEqual(history['items'][0]['result']['settings_version'],1)
+        diagnosis=history['items'][0]['result']['trusted_score_adapter']
+        self.assertFalse(diagnosis['automatic_confirmation_allowed'])
+        self.assertIsNone(diagnosis['calibrated_violation_probability'])
 
     def test_review_only_even_high_person_score_abstains(self):
         self.assertEqual(self.save({**self.body(),'threshold':0}).status_code,200)
@@ -156,6 +161,8 @@ class SettingsTests(TestCase):
             self.assertEqual(response.status_code,200,response.text)
             item=response.json()['items'][0]
             self.assertFalse(item['threshold_candidate']);self.assertTrue(item['scope_applied'])
+            self.assertEqual(item['trusted_score_adapter']['mode'],'diagnostic_only')
+            self.assertFalse(item['trusted_score_adapter']['automatic_confirmation_allowed'])
             self.assertIn(reason,item['blocking_reasons'])
         self.assertEqual(before,self.state())
         self.assertEqual(self.client.get('/api/auto-decisions/settings',headers=self.admin).json()['version'],0)
