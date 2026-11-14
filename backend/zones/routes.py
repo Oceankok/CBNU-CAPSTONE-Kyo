@@ -2,7 +2,7 @@ from backend.db.connection import begin_write
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import Response, Header, Query, APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from backend.auth.service import current_user, require_admin
@@ -161,10 +161,19 @@ def get_my_zones(user: dict = Depends(current_user)):
 
 
 @worker.get("/education")
-def get_my_education(user: dict = Depends(current_user)):
+def get_my_education(language: str | None = Query(default=None, pattern=r"^[a-z]{2,3}(?:-[A-Z]{2})?$", max_length=6), accept_language: str | None = Header(default=None), user: dict = Depends(current_user), response: Response = None):
     """Expose only education content for the authenticated worker's assigned zone."""
+    from backend.education.languages import protect_worker_response
+    protect_worker_response(response)
     if user["role"] != "worker":
         raise HTTPException(403, "Worker access required")
+    from backend.education.languages import preferences, requested
+    language = preferences(language, accept_language)
+    def content(conn, quarter, zone, row):
+        material, actual = published_for(conn, quarter, zone, row['ppe_type'], row['education_topic'], language, include_language=True)
+        return {**dict(row), 'material': material, 'language': actual,
+                'requested_language': requested(language),
+                'translation_fallback': actual is not None and actual != requested(language)}
     with get_connection() as conn:
         # Membership, latest quarter, rankings and published content must all be
         # read from one snapshot while another transaction rebuilds rankings.
@@ -179,7 +188,7 @@ def get_my_education(user: dict = Depends(current_user)):
                 FROM education_recommendation WHERE zone_name=? AND quarter=?
                 ORDER BY recommendation_rank,recommendation_id""", (zone, quarter)).fetchall()
             groups.append({"quarter": quarter, "zone_name": zone,
-                           "items": [{**dict(row), "material": published_for(conn, quarter, zone, row['ppe_type'], row['education_topic'])} for row in rows],
+                           "items": [content(conn, quarter, zone, row) for row in rows],
                            "empty_reason": None if quarter else "recommendations_unavailable"})
     # Keep the original single-zone fields as the first group's projection.
     first = groups[0] if groups else {"quarter": None, "zone_name": None, "items": [], "empty_reason": "zone_unassigned"}
