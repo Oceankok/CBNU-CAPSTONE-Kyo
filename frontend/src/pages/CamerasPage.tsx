@@ -16,9 +16,16 @@ const ERRORS: Record<string, string> = {
   zone_not_found: '등록되지 않은 구역입니다. 구역 규칙에서 먼저 만드세요.',
   camera_has_equipment_links:
     '장비가 연결된 카메라는 구역을 바꿀 수 없습니다. 장비 관리에서 연결을 먼저 해제하세요.',
+  capture_session_stop_required:
+    '���� �߿� �̹� ������ �����Դϴ�. ������ �����ϰ� ���� ������ ���� �۽� ���� ACK�� Ȯ���� �� �������� ������ �ٲپ� �ֽ��ϴ�.',
+  active_capture_context:
+    '���� �߿� �̹� ������ �����Դϴ�. ������ �����ϰ� ���� ������ ���� ACK�� Ȯ���� �� �������� ������ �ٲپ� �ֽ��ϴ�.',
 };
 const msg = (e: unknown) => {
   const m = e instanceof Error ? e.message : String(e);
+  if (m === 'capture_session_stop_required' || m === 'active_capture_context') {
+    return 'Capture is active. Stop capture, confirm delivery and the server stop ACK, then change the zone.';
+  }
   return ERRORS[m] ?? m;
 };
 

@@ -103,6 +103,7 @@ export default function ReviewListPage() {
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
         minConfidence: minConfidence || undefined,
+          includeSuspectedDuplicates: true,
       })
         .then((data) => {
           if (stale) return;
@@ -214,6 +215,14 @@ export default function ReviewListPage() {
                 >
                   <td className={styles.eventId}>
                     {event.event_id}
+                    {event.suspected_duplicate_tag?.tag && (
+                      <span
+                        className={styles.suspectedTag}
+                        title="계산된 메타데이터 의심 표시이며 자동 병합이나 동일인 확정이 아닙니다."
+                      >
+                        의심 관계 {event.suspected_duplicate_tag.candidate_count}
+                    </span>
+                    )}
                     {isUnseen(event) && (
                       <span className={styles.unseenTag}>미확인</span>
                     )}

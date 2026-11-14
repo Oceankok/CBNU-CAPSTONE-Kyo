@@ -1,4 +1,5 @@
 import { apiFetch } from './client';
+import { materialCreateBody, materialGenerateBody } from './schema31Contracts';
 
 export interface EducationMaterial {
   material_id: string;
@@ -26,6 +27,15 @@ export interface MaterialContent {
   title: string;
   body: string;
   checklist: string[];
+}
+
+// Opaque recommendation identity captured when an editor is opened.
+export interface EducationMaterialScope {
+  recommendation_id: string;
+  quarter: string;
+  zone_name: string;
+  ppe_type: string;
+  education_topic: string;
 }
 
 // Backend error codes (#168) → Korean guidance
@@ -78,10 +88,11 @@ export function fetchGenerationStatus(): Promise<GenerationStatus> {
 // Each call can cost money, so the UI asks first and never retries on its own
 export function generateMaterial(
   recommendationId: string,
+  expectedScope: EducationMaterialScope,
 ): Promise<EducationMaterial> {
   return apiFetch(
     `/api/recommendations/${encodeURIComponent(recommendationId)}/materials/generate`,
-    { method: 'POST' },
+    { method: 'POST', body: JSON.stringify(materialGenerateBody(expectedScope)) },
   );
 }
 
@@ -96,10 +107,14 @@ export function fetchMaterials(
 export function createMaterial(
   recommendationId: string,
   body: MaterialContent,
+  expectedScope: EducationMaterialScope,
 ): Promise<EducationMaterial> {
   return apiFetch(
     `/api/recommendations/${encodeURIComponent(recommendationId)}/materials`,
-    { method: 'POST', body: JSON.stringify(body) },
+    {
+      method: 'POST',
+      body: JSON.stringify(materialCreateBody(body, expectedScope)),
+    },
   );
 }
 

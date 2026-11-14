@@ -14,6 +14,7 @@ interface Draft {
   required_ppe: ZonePpe[];
   rulesText: string;
   riskLevel: number | null; // null = not set yet
+  riskChanged: boolean;
   saved: boolean; // false while there are unsaved edits
   isNew: boolean; // added locally, not on the server yet
 }
@@ -33,6 +34,7 @@ const toDraft = (z: ZoneRule): Draft => ({
   required_ppe: z.required_ppe,
   rulesText: z.rules.join('\n'),
   riskLevel: z.risk_level ?? null,
+  riskChanged: false,
   saved: true,
   isNew: false,
 });
@@ -40,7 +42,10 @@ const toDraft = (z: ZoneRule): Draft => ({
 const toRule = (d: Draft): ZoneRule => ({
   zone_name: d.zone_name,
   required_ppe: d.required_ppe,
-  risk_level: d.riskLevel,
+  // Do not send a value read by an old screen when only rules changed.
+  ...(d.riskChanged && d.riskLevel != null
+    ? { risk_level: d.riskLevel }
+    : {}),
   // Backend rejects duplicate lines (422), so drop repeats here
   rules: [
     ...new Set(
@@ -58,6 +63,7 @@ export default function ZoneRulesPage() {
   const [busy, setBusy] = useState<string | null>(null); // zone currently saving/deleting
   const [newZone, setNewZone] = useState('');
   const [workers, setWorkers] = useState<AppUser[]>([]);
+  const [workersReloadFailed, setWorkersReloadFailed] = useState(false);
   const [cameras, setCameras] = useState<Camera[]>([]);
 
   useEffect(() => {
@@ -74,15 +80,37 @@ export default function ZoneRulesPage() {
   }, []);
 
   const loadWorkers = () =>
-    fetchUsers()
-      .then((users) => setWorkers(users.filter((u) => u.role === 'worker')))
-      .catch(() => {});
+    fetchUsers().then((users) => {
+      setWorkersReloadFailed(false);
+      const workerUsers = users.filter((u) => u.role === 'worker');
+      setWorkers(workerUsers);
+      return workerUsers;
+    });
+
+  const refreshWorkersAfterFailure = (zone: string, responseLost = false) => {
+    setError(null);
+    return loadWorkers()
+      .then(() =>
+        setError(
+          responseLost
+            ? `${zone} 작업자 명단 저장 응답을 받지 못했습니다. 최신 명단을 다시 불러와 반영 여부를 확인할 수 있습니다.`
+            : `${zone} 작업자 명단이 다른 관리자에 의해 변경되었습니다. 최신 명단을 다시 불러온 뒤 확인하고 다시 시도하세요.`,
+        ),
+      )
+      .catch((refreshError: Error) => {
+        setWorkersReloadFailed(true);
+        setError(
+          `${zone} 최신 작업자 명단을 불러오지 못했습니다. 이전 데이터가 최신이라고 표시되지 않습니다. 다시 불러오세요. (${refreshError.message})`,
+        );
+      });
+  };
 
   // Replaces this zone's worker list only; the workers' other zones stay (#127).
   // The list as we last loaded it goes along, so a change made by another admin
   // in the meantime is reported instead of silently overwritten (#240)
   const assign = (zone: string, userIds: string[]) => {
     setError(null);
+    setBusy(zone);
     const expected = workers
       .filter((w) => w.zone_names.includes(zone))
       .map((w) => w.user_id);
@@ -103,13 +131,14 @@ export default function ZoneRulesPage() {
           setError(
             `${zone} 작업자 명단을 다른 관리자가 먼저 변경했습니다. 최신 명단을 다시 불러왔으니 확인한 뒤 다시 시도하세요.`,
           );
-          void loadWorkers();
+          void refreshWorkersAfterFailure(zone);
           return;
         }
         setError(`${zone} 작업자 변경 실패: ${e.message}`);
         // The request may have been applied even though the answer was lost
-        void loadWorkers();
-      });
+        void refreshWorkersAfterFailure(zone, true);
+      })
+      .finally(() => setBusy(null));
   };
 
   const patch = (zone: string, p: Partial<Draft>) =>
@@ -173,6 +202,7 @@ export default function ZoneRulesPage() {
         required_ppe: [],
         rulesText: '',
         riskLevel: null,
+        riskChanged: false,
         saved: false,
         isNew: true,
       },
@@ -189,6 +219,21 @@ export default function ZoneRulesPage() {
 
       {error && <p className={styles.errorMsg}>⚠ {error}</p>}
       {!drafts && !error && <p className={styles.desc}>불러오는 중...</p>}
+
+      {workersReloadFailed && (
+        <button
+          type="button"
+          className={styles.memberRetry}
+          onClick={() => {
+            setError(null);
+            void loadWorkers()
+              .then(() => setError('최신 작업자 명단을 불러왔습니다.'))
+              .catch((e: Error) => setError(`작업자 명단 조회 실패: ${e.message}`));
+          }}
+        >
+          작업자 명단 다시 불러오기
+        </button>
+      )}
 
       {drafts?.map((d) => (
         <section key={d.zone_name} className={styles.card}>
@@ -248,7 +293,21 @@ export default function ZoneRulesPage() {
                   role="radio"
                   aria-checked={d.riskLevel === r.level}
                   className={`${styles.riskBtn} ${d.riskLevel === r.level ? styles.riskOn : ''}`}
-                  onClick={() => patch(d.zone_name, { riskLevel: r.level })}
+                  onClick={() =>
+                    setDrafts(
+                      (prev) =>
+                        prev?.map((x) =>
+                          x.zone_name === d.zone_name
+                            ? {
+                                ...x,
+                                riskLevel: r.level,
+                                riskChanged: true,
+                                saved: false,
+                              }
+                            : x,
+                        ) ?? prev,
+                    )
+                  }
                 >
                   {r.level}
                   <span className={styles.riskLabel}>{r.label}</span>
