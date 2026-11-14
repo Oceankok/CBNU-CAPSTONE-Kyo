@@ -19,6 +19,11 @@ Same semantic scope keeps its ID across rank/score changes, disappearance from t
 top three, and later reappearance. A changed quarter, zone, PPE or topic gets a
 new ID. It identifies the semantic target, not its numeric statistics revision.
 
+Since [the G1 target separation](20261115_Education_Bundle_Targets.md), falling
+outside the top three only removes a target from the highlight response. All
+valid targets remain stored and addressable; actual disappearance still fails
+scope checks. Older top-three eviction descriptions below record the prior cap.
+
 ## Legacy transition / compatibility
 
 - Reads do not convert old `EDU_<quarter>_<rank>` rows.

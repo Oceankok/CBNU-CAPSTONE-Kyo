@@ -27,7 +27,10 @@ Ranking uses unrounded scores, with zone name then PPE as deterministic tie keys
 Priority scores remain rounded to 2 decimals for storage and API display; equal
 displayed numbers can legitimately have different ranks. These are ranking
 scores, not probabilities, accuracy, percentages or calibrated risk estimates.
-The existing top-three recommendation selection policy is unchanged.
+The top-three highlight response is unchanged. As of the
+[multi-zone target contract](20261115_Education_Bundle_Targets.md), regeneration
+stores all eligible groups and a separate admin endpoint lists bundle targets.
+The former top-three storage cap no longer applies.
 
 Migration v30 adds nullable `education_recommendation.score_version`, without
 recomputing any cache. Existing rows return `score_version: legacy_unversioned`;

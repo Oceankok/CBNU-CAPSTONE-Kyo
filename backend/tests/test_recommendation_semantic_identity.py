@@ -76,7 +76,11 @@ class RecommendationSemanticIdentityTests(unittest.TestCase):
         self.add('helmet',3);first=self.generate()[0]['recommendation_id']
         for ppe in ('vest','gloves','safety_shoes'):self.add(ppe,10)
         self.assertNotIn(first,[r['recommendation_id'] for r in self.generate()])
-        self.assertEqual(self.material(first).status_code,404)
+        # Falling outside the highlighted top three no longer removes a valid
+        # semantic target needed by multi-zone education.
+        saved = self.material(first)
+        self.assertEqual(saved.status_code,201,saved.text)
+        self.assertEqual(saved.json()['ppe_type'],'helmet')
         self.add('helmet',20)
         self.assertIn(first,[r['recommendation_id'] for r in self.generate()])
 
