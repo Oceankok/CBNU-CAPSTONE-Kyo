@@ -28,6 +28,15 @@ def list_bundles(quarter: str = Query(min_length=1, max_length=100), limit: int 
     return {'items': service.list_bundles(quarter, limit, offset)}
 
 
+@router.get('/targets')
+def targets(quarter: str = Query(min_length=1, max_length=100)):
+    from backend.db.event_repository import get_education_bundle_targets
+    try:
+        return get_education_bundle_targets(quarter)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.get('/{bundle_id}')
 def get(bundle_id: str):
     return service.get(bundle_id)
