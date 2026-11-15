@@ -12,7 +12,7 @@ def initialize(*, seed=False):
         conn.execute("""CREATE TABLE IF NOT EXISTS app_schema_version (
             singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL)""")
         row = conn.execute("SELECT version FROM app_schema_version WHERE singleton=1").fetchone()
-        if row is not None and row[0] not in (7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, LATEST_VERSION):
+        if row is not None and row[0] not in (7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, LATEST_VERSION):
             raise RuntimeError("Unsupported PostgreSQL schema version; explicit migration required")
         if row is not None and row[0] >= 33 and conn.execute(
             "SELECT to_regclass('auto_decision_settings')").fetchone()[0] is None:
@@ -138,4 +138,9 @@ def initialize(*, seed=False):
 
         if row is None or row[0] < 35:
             conn.execute("ALTER TABLE zone_rule ADD COLUMN IF NOT EXISTS revision_nonce TEXT NOT NULL DEFAULT ''")
+            conn.execute('UPDATE app_schema_version SET version=? WHERE singleton=1', (LATEST_VERSION,))
+
+
+        if row is None or row[0] < 36:
+            conn.execute((root.parent / 'education' / 'auto_translation_schema.sql').read_text(encoding='utf-8'))
             conn.execute('UPDATE app_schema_version SET version=? WHERE singleton=1', (LATEST_VERSION,))

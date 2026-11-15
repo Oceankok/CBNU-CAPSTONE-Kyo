@@ -44,7 +44,7 @@ class WorkerEducationTests(unittest.TestCase):
         self.assertIsNone(body["empty_reason"])
         for row in body["items"]:
             self.assertEqual(set(row),{"recommendation_id","ppe_type","zone_name","education_topic","material",
-                                       "language","requested_language","translation_fallback"})
+                                       "language","requested_language","translation_fallback","translation","original"})
             self.assertIsNone(row["material"])
             self.assertIsNone(row["language"])
             self.assertEqual(row["requested_language"], "ko")

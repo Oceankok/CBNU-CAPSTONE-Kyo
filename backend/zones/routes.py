@@ -195,10 +195,11 @@ def get_my_education(language: str | None = Query(default=None, pattern=r"^[a-z]
     from backend.education.languages import preferences, requested
     language = preferences(language, accept_language)
     def content(conn, quarter, zone, row):
-        material, actual = published_for(conn, quarter, zone, row['ppe_type'], row['education_topic'], language, include_language=True)
+        material, actual, metadata, original = published_for(conn, quarter, zone, row['ppe_type'], row['education_topic'], language, include_translation=True)
         return {**dict(row), 'material': material, 'language': actual,
                 'requested_language': requested(language),
-                'translation_fallback': actual is not None and actual != requested(language)}
+                'translation_fallback': actual is not None and actual != requested(language),
+                'translation': metadata, 'original': original}
     with get_connection() as conn:
         # Membership, latest quarter, rankings and published content must all be
         # read from one snapshot while another transaction rebuilds rankings.
