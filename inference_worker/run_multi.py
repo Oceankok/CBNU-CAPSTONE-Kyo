@@ -17,6 +17,37 @@ import time
 FATAL_EXIT = 78
 
 
+class ContinuousProtocolError(RuntimeError):
+    """Safe startup reason; no response bodies or authentication data."""
+
+
+def probe_continuous_protocol(client):
+    import httpx
+    try:
+        response = client.client.get('/api/processing/continuous-events/active', params={'limit': 1})
+        if response.status_code == 503:
+            try:
+                disabled = response.json().get('detail') == 'continuous_events_disabled'
+            except (ValueError, AttributeError):
+                disabled = False
+            if disabled:
+                raise ContinuousProtocolError('disabled')
+        response.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        code = error.response.status_code
+        raise ContinuousProtocolError('auth' if code in {401, 403} else f'http_{code}') from None
+    except httpx.TransportError:
+        raise ContinuousProtocolError('unreachable') from None
+    try:
+        result = response.json()
+        if (not isinstance(result, dict) or not isinstance(result.get('items'), list) or
+                len(result['items']) > 1 or 'next_after' not in result or
+                (result['next_after'] is not None and not isinstance(result['next_after'], str))):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise ContinuousProtocolError('invalid_response') from None
+
+
 def validate_continuous_selection(path, primary, cameras=None):
     from inference_worker.run_continuous import read_config
     config = read_config(path, primary, now=time.time())
@@ -74,7 +105,7 @@ def child_main(module):
     return 0
 
 
-def preflight(cameras, model, mode):
+def preflight(cameras, model, mode, *, continuous=False):
     """Run once in a short-lived process, before any inference peer starts."""
     from inference_worker.video_client import VideoClient
     from inference_worker.run_server import create_detector
@@ -82,6 +113,8 @@ def preflight(cameras, model, mode):
     from inference_worker.ppe_rules import assess_ppe
     client = VideoClient()
     try:
+        if continuous:
+            probe_continuous_protocol(client)
         for camera in cameras:
             client.get_ppe_policy(camera)
     finally:
@@ -329,8 +362,10 @@ def main(argv=None):
                 continuous_profiles(args.camera_id, entries=args.continuous_profile,
                                     path=args.continuous_config, primary=args.primary_camera_id)
                 stage = 'shared_auth_model_dependencies'
-            preflight(args.camera_id, args.model_path.resolve(), mode)
+            preflight(args.camera_id, args.model_path.resolve(), mode, continuous=args.runner == 'continuous')
         except Exception as error:
+            if isinstance(error, ContinuousProtocolError):
+                stage = 'continuous_protocol_'+str(error)
             print(f'[PREFLIGHT FAILED] stage={stage} type={type(error).__name__}; check configuration/auth/model',
                   file=sys.stderr, flush=True)
             raise SystemExit(FATAL_EXIT) from None

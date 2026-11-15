@@ -79,6 +79,13 @@ continuous 프로세스는 기본 자동 재시작 0회입니다. 새 프로세�
 외부 stop 또는 Ctrl+C는 대기를 취소합니다. 기한 초과는 추론 자식 없이 명확히 실패합니다.
 런타임 생성 임시 영상은 supervisor 전용 임시 폴더에 두고 외부 stop 파일 폴더와 분리합니다.
 
+continuous를 선택하면 인증된 기존 `GET /api/processing/continuous-events/active?limit=1`을
+모델 로딩·추론 자식·raw 상태 생성 전에 조회합니다. 이 경로는 capture.discovery의 enabled 검사를 거치므로
+서버의 `PPE_CONTINUOUS_EVENTS_ENABLED` 비활성화는 `continuous_protocol_disabled`로 실패합니다.
+인증 오류·접속 불가·잘못된/지원되지 않는 응답도 사전 실패하며 legacy에는 이 검사를 요구하지 않습니다.
+프로토콜 활성화와 자동 확정은 별개입니다. 서버가 연속 수집 API를 허용해도 자동 확정 OFF/시험 shadow
+정책을 바꾸지 않으며 이 구현은 실제 서버 환경값을 변경하지 않습니다.
+
 실제 CLI는 프로세스 트리를 소유합니다. Windows에서는 pipe gate가 열린 뒤에만 실제 명령을 시작하여
 Job Object 할당 전에 encoder 자식이 생성되지 않게 합니다. Job은 kill-on-close이며 부모가 먼저 죽어도
 남은 encoder를 제거합니다. POSIX에서는 독립 session/process group을 사용합니다.
