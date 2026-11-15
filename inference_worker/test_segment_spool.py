@@ -228,6 +228,33 @@ class SegmentSpoolTests(unittest.TestCase):
                 writer.finish(origin + 1)
             writer.abort()
 
+    def test_epoch_finish_cannot_finalize_frames_already_sampled_past_grid(self):
+        origin = 1794737406.712333
+        with self.spool() as spool:
+            writer = self.writer(spool, segment_seconds=60, output_fps=15)
+            for timestamp in [origin, origin + 1 / 15, origin + 2 / 15,
+                              origin + 3 / 15 + 0.0000002]:
+                self.assertEqual(writer.push(timestamp, self.frame), [])
+            self.assertEqual(writer.sample_index, 4)
+            with self.assertRaisesRegex(ValueError, 'sampled or input frames'):
+                writer.finish(origin + 3 / 15 + 0.0000008)
+            self.assertTrue(writer.closed)
+            self.assertEqual(spool.pending(), [])
+            self.assertFalse(list(self.root.glob('*.part')))
+            self.assertFalse(list(self.root.glob('*.mp4')))
+
+    def test_epoch_canonical_end_must_follow_last_input_even_without_oversampling(self):
+        origin = 1794737406.712333
+        with self.spool() as spool:
+            writer = self.writer(spool, segment_seconds=60, output_fps=15)
+            for i in range(4):
+                writer.push(origin + i / 15, self.frame)
+            self.assertEqual(writer.sample_index, 3)
+            with self.assertRaisesRegex(ValueError, 'sampled or input frames'):
+                writer.finish(origin + 3 / 15 + 0.0000007)
+            self.assertTrue(writer.closed)
+            self.assertEqual(spool.pending(), [])
+
     def test_last_attempt_not_removed_by_new_segment_while_inflight(self):
         with self.spool(max_attempts=1) as spool:
             first=self.create(spool)[0]

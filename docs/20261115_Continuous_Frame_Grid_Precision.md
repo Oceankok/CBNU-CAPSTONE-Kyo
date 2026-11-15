@@ -15,3 +15,9 @@ With the existing FFmpeg tools directory on PATH, `python -B -m unittest inferen
 Adjacent capture/context regression: python -B -m unittest inference_worker.test_multicamera_capture inference_worker.test_processor_capture_context -v passes all 30 tests, no skips, in 1.304 seconds; log frame-grid-capture-regression.log. git diff --check passes.
 
 The exact native regression additionally runs real `ffprobe -count_frames` and asserts `nb_read_frames=173`; this assertion also passes in the final targeted run recorded in `frame-grid-ffprobe.log`.
+
+## Review correction: frames already emitted by push
+
+Review of `3cf63ff` found that `push()` can already emit a fourth frame when the last input is just after the three-frame canonical boundary, while the raw exclusive end is slightly later still. Canonicalizing only `finish()` cannot remove that extra frame. That revision is superseded by the follow-up guard: reject and abort if the emitted sample index exceeds the rounded target, or if the canonical exclusive end does not follow the last input. Already returned segments cannot be retracted; this correction prevents a successful finish and lets the caller report capture failure rather than advertising a complete clip.
+
+Two actual-FFmpeg regressions cover the exact reported epoch counterexample and the separate last-input consistency case without oversampling. Both abort, close the writer, and return no successful final segment. The original 173-frame regression still verifies full OpenCV decoding and actual ffprobe frame count. Final combined run: `python -B -m unittest inference_worker.test_segment_spool inference_worker.test_multicamera_capture inference_worker.test_processor_capture_context -v`, **59 passed, no skips, 3.067 seconds**, log `frame-grid-p2-regression.log`. No running demo or preserved failed journal was changed.
