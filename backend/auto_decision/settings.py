@@ -256,14 +256,18 @@ def process_ready(conn, event_id, *, capture_shadow_only=False):
         if capture_shadow_only:
             if event['event_status'] != 'pending':
                 return {'applied':False,'reason':'event_not_pending'}
-            from backend.processing.lifecycle import require_finalizable
-            try:
-                require_finalizable(conn,event_id)
-            except ValueError as exc:
-                if str(exc) not in {'continuous_event_not_closed', 'continuous_evidence_incomplete',
-                                    'event_media_deleted_or_expired'}:
-                    raise
-                return {'applied':False,'reason':str(exc)}
+            # Rule shadow records exclusions too. A terminal incomplete report
+            # changes evidence even though it can never authorize a review.
+            # Keep the historical model-diagnostic finalizable-only behavior.
+            if policy.decision_method != RULE_METHOD:
+                from backend.processing.lifecycle import require_finalizable
+                try:
+                    require_finalizable(conn,event_id)
+                except ValueError as exc:
+                    if str(exc) not in {'continuous_event_not_closed', 'continuous_evidence_incomplete',
+                                        'event_media_deleted_or_expired'}:
+                        raise
+                    return {'applied':False,'reason':str(exc)}
         from backend.auto_decision.shadow import record_policy_shadow
         diagnostic=preview_policy(conn,event_id,policy,f'settings-v{version}')
         shadow_policy=policy if policy.decision_method == RULE_METHOD else preview
