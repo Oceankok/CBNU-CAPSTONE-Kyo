@@ -69,4 +69,5 @@ and overlapping delete/save completion. Eight fixed-code browser cases passed
 (including a targeted rerun after correcting a test fixture's empty DELETE
 response to JSON). The production build, focused ESLint, and `git diff --check`
 also passed. These are isolated frontend checks, not live backend/DB or field
-validation. Cross-administrator rule versioning is outside this change.
+validation. Cross-administrator revision recovery is covered separately by
+`playwright.zone-cas.config.ts`; see `backend/zones/README.md` for the contract.

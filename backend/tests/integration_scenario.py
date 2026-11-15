@@ -40,7 +40,7 @@ def run_scenario(client_factory, password, admin_id='admin02', worker_id='worker
         request(anonymous, 'GET', '/api/events', 401)
         request(worker, 'GET', '/api/events', 403)
         zone = 'INTEGRATION_ZONE'
-        request(admin, 'PUT', '/api/zones/'+zone, json={'required_ppe': ['helmet'], 'rules': ['통합 검증 전용']})
+        request(admin, 'PUT', '/api/zones/'+zone, json={'required_ppe': ['helmet'], 'rules': ['통합 검증 전용'], 'expected_revision': None})
         request(admin, 'PUT', '/api/zones/'+zone+'/members', json={'user_ids': [worker_id]})
         for client, ident in ((source, 'integration-source'), (processor, 'integration-processor')):
             node = request(admin, 'POST', '/api/nodes', 201, json={'node_id': ident, 'name': ident}).json()

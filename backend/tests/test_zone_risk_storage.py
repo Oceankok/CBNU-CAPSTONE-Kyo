@@ -1,7 +1,8 @@
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
-from backend.tests.support import isolated_api, login
+from fastapi import HTTPException
+from backend.tests.support import isolated_api, login, zone_precondition
 from backend.db.event_repository import get_connection
 from backend.db.init_db import init_database
 from backend.zones.routes import ZoneRuleRequest, save_zone_rule
@@ -14,7 +15,7 @@ class ZoneRiskStorageTests(unittest.TestCase):
 
     def put(self, zone='RISK', **extra):
         return self.client.put('/api/zones/'+zone, headers=self.admin,
-            json={'required_ppe':['helmet'], 'rules':[], **extra})
+            json={'required_ppe':['helmet'], 'rules':[], **zone_precondition(self.client,self.admin,zone), **extra})
 
     def risk(self):
         with get_connection() as conn:
@@ -56,20 +57,26 @@ class ZoneRiskStorageTests(unittest.TestCase):
 
     def test_delete_recreate_does_not_infer_old_risk(self):
         self.put(risk_level=5)
-        self.assertEqual(self.client.delete('/api/zones/RISK',headers=self.admin).status_code,200)
+        self.assertEqual(self.client.delete('/api/zones/RISK',headers=self.admin,params=zone_precondition(self.client,self.admin,'RISK')).status_code,200)
         self.assertIsNone(self.put().json()['risk_level'])
 
-    def test_concurrent_omitted_update_preserves_explicit_value(self):
+    def test_concurrent_omitted_update_requires_current_revision(self):
         self.put(risk_level=1)
         for _ in range(4):
             barrier=Barrier(2)
+            expected=zone_precondition(self.client,self.admin,'RISK')
             def update(explicit):
-                body=ZoneRuleRequest(required_ppe=['helmet'],rules=[],**({'risk_level':5} if explicit else {}))
+                body=ZoneRuleRequest(required_ppe=['helmet'],rules=[],**expected,**({'risk_level':5} if explicit else {}))
                 barrier.wait()
-                return save_zone_rule('RISK',body,{'user_id':'admin02'})
+                try:
+                    save_zone_rule('RISK',body,{'user_id':'admin02'})
+                    return 200, explicit
+                except HTTPException as exc:
+                    return exc.status_code, explicit
             with ThreadPoolExecutor(max_workers=2) as pool:
-                list(pool.map(update,[True,False]))
-            self.assertEqual(self.risk(),5)
+                results=list(pool.map(update,[True,False]))
+            self.assertEqual(sorted(status for status,_ in results),[200,409])
+            self.assertEqual(self.risk(),5 if next(explicit for status,explicit in results if status==200) else 1)
             self.put(risk_level=1)
 
     def test_storage_does_not_change_recommendation_cache_or_events(self):

@@ -325,6 +325,8 @@ export type ZonePpe =
 
 export interface ZoneRule {
   zone_name: string;
+  // Opaque admin read revision, required as the precondition for changes.
+  revision?: string;
   required_ppe: ZonePpe[];
   rules: string[];
   // 1-5, null = not set (multiplier 1). Used only by newly generated recommendations

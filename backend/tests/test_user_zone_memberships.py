@@ -2,7 +2,7 @@ import unittest
 
 from backend.db.event_repository import get_connection
 from backend.db.migrations import apply_migrations, LATEST_VERSION
-from backend.tests.support import isolated_api, login
+from backend.tests.support import isolated_api, login, zone_precondition
 
 
 class UserZoneMembershipTests(unittest.TestCase):
@@ -13,7 +13,7 @@ class UserZoneMembershipTests(unittest.TestCase):
         self.admin = login(self.client)
         for zone in ('A', 'B'):
             response = self.client.put('/api/zones/' + zone, headers=self.admin,
-                                       json={'required_ppe': ['helmet'], 'rules': []})
+                                       json={'required_ppe': ['helmet'], 'rules': [], 'expected_revision': None})
             self.assertEqual(response.status_code, 200)
 
     def members(self, zone, users):
@@ -34,10 +34,10 @@ class UserZoneMembershipTests(unittest.TestCase):
         self.assertEqual(self.members('A', []).status_code, 200)
         self.assertEqual(self.worker()['zone_names'], ['B'])
         self.assertEqual(self.worker()['zone_name'], 'B')
-        self.assertEqual(self.client.delete('/api/zones/B', headers=self.admin).status_code, 409)
+        self.assertEqual(self.client.delete('/api/zones/B', headers=self.admin, params=zone_precondition(self.client,self.admin,'B')).status_code, 409)
         self.assertEqual(self.members('B', []).status_code, 200)
         self.assertIsNone(self.worker()['zone_name'])
-        self.assertEqual(self.client.delete('/api/zones/B', headers=self.admin).status_code, 200)
+        self.assertEqual(self.client.delete('/api/zones/B', headers=self.admin, params=zone_precondition(self.client,self.admin,'B')).status_code, 200)
 
     def test_invalid_replacement_is_atomic_and_admin_only(self):
         self.members('A', ['worker01'])

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchZones, saveZone, deleteZone } from '../api/zones';
+import { ApiError } from '../api/client';
 import { fetchUsers, setZoneMembers } from '../api/users';
 import { fetchCameras } from '../api/cameras';
 import type { Camera } from '../api/cameras';
@@ -11,6 +12,11 @@ import styles from './ZoneRulesPage.module.css';
 // Editable copy of a rule; rules are edited as one-per-line text
 interface Draft {
   zone_name: string;
+  revision: string | null;
+  conflict?:
+    | { status: 'loading' }
+    | { status: 'failed'; message: string }
+    | { status: 'ready'; latest: ZoneRule | null };
   required_ppe: ZonePpe[];
   rulesText: string;
   riskLevel: number | null; // null = not set yet
@@ -31,6 +37,7 @@ const RISK_LEVELS = [
 
 const toDraft = (z: ZoneRule): Draft => ({
   zone_name: z.zone_name,
+  revision: z.revision ?? null,
   required_ppe: z.required_ppe,
   rulesText: z.rules.join('\n'),
   riskLevel: z.risk_level ?? null,
@@ -196,24 +203,104 @@ export default function ZoneRulesPage() {
         : [...d.required_ppe, ppe],
     });
 
-  const handleSave = (d: Draft) => {
-    if (!beginZoneOperation(d.zone_name)) return;
-    setError(null);
-    saveZone(toRule(d))
-      .then((saved) =>
-        setDrafts(
-          (prev) =>
-            prev?.map((x) =>
-              x.zone_name === d.zone_name ? toDraft(saved) : x,
-            ) ?? prev,
-        ),
-      )
-      .catch((e: Error) => setError(`${d.zone_name} 저장 실패: ${e.message}`))
-      .finally(() => endZoneOperation(d.zone_name));
+  const loadConflict = async (zone: string) => {
+    setDrafts(
+      (prev) =>
+        prev?.map((d) =>
+          d.zone_name === zone ? { ...d, conflict: { status: 'loading' } } : d,
+        ) ?? prev,
+    );
+    try {
+      const latest =
+        (await fetchZones()).find((z) => z.zone_name === zone) ?? null;
+      setDrafts(
+        (prev) =>
+          prev?.map((d) =>
+            d.zone_name === zone
+              ? { ...d, conflict: { status: 'ready', latest } }
+              : d,
+          ) ?? prev,
+      );
+    } catch (e) {
+      setDrafts(
+        (prev) =>
+          prev?.map((d) =>
+            d.zone_name === zone
+              ? {
+                  ...d,
+                  conflict: { status: 'failed', message: (e as Error).message },
+                }
+              : d,
+          ) ?? prev,
+      );
+    }
   };
 
-  const handleDelete = (d: Draft) => {
-    if (busyRef.current.has(d.zone_name)) return;
+  const retryConflict = async (zone: string) => {
+    if (!beginZoneOperation(zone)) return;
+    try {
+      await loadConflict(zone);
+    } finally {
+      endZoneOperation(zone);
+    }
+  };
+
+  const resolveConflict = (zone: string, keepLocal: boolean) => {
+    if (busyRef.current.has(zone)) return;
+    setDrafts(
+      (prev) =>
+        prev?.flatMap((d) => {
+          if (d.zone_name !== zone || d.conflict?.status !== 'ready')
+            return [d];
+          const latest = d.conflict.latest;
+          if (!keepLocal) return latest ? [toDraft(latest)] : [];
+          // Explicitly prepare a retry; do not save automatically. Unedited risk
+          // adopts the refreshed value and remains omitted from the next request.
+          return [
+            {
+              ...d,
+              revision: latest?.revision ?? null,
+              isNew: latest == null,
+              saved: false,
+              conflict: undefined,
+              riskLevel: d.riskChanged
+                ? d.riskLevel
+                : latest
+                  ? (latest.risk_level ?? null)
+                  : d.riskLevel,
+              riskChanged: latest ? d.riskChanged : d.riskLevel != null,
+            },
+          ];
+        }) ?? prev,
+    );
+  };
+
+  const isRuleConflict = (e: unknown) =>
+    e instanceof ApiError &&
+    ((e.status === 409 && e.message === 'zone_rule_changed') ||
+      e.status === 428);
+
+  const handleSave = async (d: Draft) => {
+    if (d.conflict || !beginZoneOperation(d.zone_name)) return;
+    setError(null);
+    try {
+      const saved = await saveZone(toRule(d), d.revision);
+      setDrafts(
+        (prev) =>
+          prev?.map((x) =>
+            x.zone_name === d.zone_name ? toDraft(saved) : x,
+          ) ?? prev,
+      );
+    } catch (e) {
+      if (isRuleConflict(e)) await loadConflict(d.zone_name);
+      else setError(`${d.zone_name} 저장 실패: ${(e as Error).message}`);
+    } finally {
+      endZoneOperation(d.zone_name);
+    }
+  };
+
+  const handleDelete = async (d: Draft) => {
+    if (d.conflict || busyRef.current.has(d.zone_name)) return;
     const removeLocal = () =>
       setDrafts(
         (prev) => prev?.filter((x) => x.zone_name !== d.zone_name) ?? prev,
@@ -222,10 +309,15 @@ export default function ZoneRulesPage() {
     if (d.isNew) return removeLocal();
     if (!beginZoneOperation(d.zone_name)) return;
     setError(null);
-    deleteZone(d.zone_name)
-      .then(removeLocal)
-      .catch((e: Error) => setError(`${d.zone_name} 삭제 실패: ${e.message}`))
-      .finally(() => endZoneOperation(d.zone_name));
+    try {
+      await deleteZone(d.zone_name, d.revision);
+      removeLocal();
+    } catch (e) {
+      if (isRuleConflict(e)) await loadConflict(d.zone_name);
+      else setError(`${d.zone_name} 삭제 실패: ${(e as Error).message}`);
+    } finally {
+      endZoneOperation(d.zone_name);
+    }
   };
 
   const handleAdd = (e: React.FormEvent) => {
@@ -240,6 +332,7 @@ export default function ZoneRulesPage() {
       ...drafts,
       {
         zone_name: name,
+        revision: null,
         required_ppe: [],
         rulesText: '',
         riskLevel: null,
@@ -290,6 +383,87 @@ export default function ZoneRulesPage() {
             <h3 className={styles.zoneName}>{d.zone_name}</h3>
             {!d.saved && <span className={styles.unsaved}>저장 안 됨</span>}
           </div>
+
+          {d.conflict && (
+            <div role="alert" className={styles.errorMsg}>
+              <p>
+                다른 관리자에 의해 구역이 변경되었거나 삭제되었습니다. 내 입력은
+                보존되어 있습니다. 최신 상태를 확인하고 처리 방법을 선택하세요.
+              </p>
+              {d.conflict.status === 'loading' && (
+                <p>최신 구역 설정을 불러오는 중…</p>
+              )}
+              {d.conflict.status === 'failed' && (
+                <>
+                  <p>
+                    최신 구역 설정을 불러오지 못했습니다. 저장과 삭제는 잠겨
+                    있습니다. ({d.conflict.message})
+                  </p>
+                  <button
+                    type="button"
+                    disabled={busy.has(d.zone_name)}
+                    onClick={() => retryConflict(d.zone_name)}
+                  >
+                    최신 구역 설정 다시 불러오기
+                  </button>
+                </>
+              )}
+              {d.conflict.status === 'ready' && (
+                <>
+                  {d.conflict.latest ? (
+                    <div aria-label="서버 최신 설정">
+                      <p>
+                        서버 최신 필수 PPE:{' '}
+                        {d.conflict.latest.required_ppe
+                          .map(
+                            (p) =>
+                              ZONE_PPE.find((o) => o.value === p)?.label ?? p,
+                          )
+                          .join(', ') || '없음'}
+                      </p>
+                      <p>
+                        서버 최신 안전 수칙:{' '}
+                        {d.conflict.latest.rules.join(' / ') || '없음'}
+                      </p>
+                      <p>
+                        서버 최신 위험도:{' '}
+                        {d.conflict.latest.risk_level == null
+                          ? '미설정'
+                          : `${d.conflict.latest.risk_level}단계`}
+                      </p>
+                    </div>
+                  ) : (
+                    <p>
+                      서버에서 이 구역이 삭제되었습니다. 새 구역으로 만들려면
+                      명시적으로 선택한 뒤 저장하세요.
+                    </p>
+                  )}
+                  <p>
+                    내 입력을 유지하면 표시된 서버 설정을 내 입력으로 바꿀
+                    준비가 됩니다. 이후 저장을 눌러야 반영됩니다.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={busy.has(d.zone_name)}
+                    onClick={() => resolveConflict(d.zone_name, false)}
+                  >
+                    {d.conflict.latest
+                      ? '최신 내용으로 바꾸기'
+                      : '서버 삭제 상태 반영'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy.has(d.zone_name)}
+                    onClick={() => resolveConflict(d.zone_name, true)}
+                  >
+                    {d.conflict.latest
+                      ? '내 입력 유지하고 다시 저장 준비'
+                      : '내 입력으로 새 구역 만들기 준비'}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
 
           <div className={styles.ppeRow} role="group" aria-label="필수 PPE">
             {ZONE_PPE.map((o) => (
@@ -372,7 +546,10 @@ export default function ZoneRulesPage() {
             zone={d.zone_name}
             saved={!d.isNew}
             disabled={
-              busy.has(d.zone_name) || membersBusy || workersReloadFailed
+              busy.has(d.zone_name) ||
+              membersBusy ||
+              workersReloadFailed ||
+              !!d.conflict
             }
             workers={workers}
             cameras={cameras.filter((c) => c.zone_name === d.zone_name)}
@@ -386,12 +563,12 @@ export default function ZoneRulesPage() {
               question={`'${d.zone_name}' 규칙을 삭제할까요?`}
               confirmLabel="삭제"
               onConfirm={() => handleDelete(d)}
-              disabled={busy.has(d.zone_name)}
+              disabled={busy.has(d.zone_name) || !!d.conflict}
             />
             <button
               className={styles.saveBtn}
               onClick={() => handleSave(d)}
-              disabled={d.saved || busy.has(d.zone_name)}
+              disabled={d.saved || busy.has(d.zone_name) || !!d.conflict}
             >
               {busy.has(d.zone_name) ? '저장 중…' : '저장'}
             </button>
