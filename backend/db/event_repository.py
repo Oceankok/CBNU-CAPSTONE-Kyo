@@ -137,7 +137,8 @@ def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, An
         lifecycle = conn.execute('SELECT phase,revision,evidence_revision,observed_seconds,gap_seconds,gap_count,final_segment_count,close_reason FROM processing_event_lifecycle WHERE event_id=?', (event['event_id'],)).fetchone()
         if lifecycle:
             event['collection'] = dict(lifecycle)
-            event['auto_decision_enabled'] = False
+            from backend.auto_decision.settings import enabled_for_event
+            event['auto_decision_enabled'] = enabled_for_event(conn,event)
             segment_rows = [dict(item) for item in conn.execute("""SELECT s.camera_id,s.sequence,s.request_id,s.capture_start_at,s.capture_end_at,r.status,r.error_code
                 FROM processing_event_segment s JOIN event_clip_request r ON r.request_id=s.request_id
                 WHERE s.event_id=? ORDER BY s.sequence,s.camera_id""", (event['event_id'],))]
