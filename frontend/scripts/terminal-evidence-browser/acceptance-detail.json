@@ -1,0 +1,30 @@
+{
+  "event": {
+    "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+    "camera_id": "FV_B",
+    "zone_name": "자재 이동 구역",
+    "ppe_type": "helmet",
+    "timestamp_start": "2026-11-15T17:39:46.200000+09:00",
+    "timestamp_end": "2026-11-15T17:39:49.800000+09:00",
+    "duration_sec": 3,
+    "frame_sample_count": 19,
+    "ai_confidence": null,
+    "person_detected": 1,
+    "ppe_detected": 0,
+    "model_version": "synthetic-scored-xyxy-final-v1",
+    "event_status": "pending",
+    "review_only": true,
+    "process_type": null,
+    "timestamp_timezone": "Asia/Seoul",
+    "thumbnail_path": "",
+    "video_clip_path": "/storage/candidate_events/processed/5a44427d-81ca-403d-a713-0c659c2faac1.mp4",
+    "review_availability": {
+      "state": "continuous_event_not_closed",
+      "can_review": false,
+      "can_mark_unreviewable": false,
+      "missing_media_count": 0
+    }
+  },
+  "review": null,
+  "review_history": []
+}
