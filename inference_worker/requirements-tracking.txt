@@ -1,0 +1,4 @@
+# BYTETracker API is version-dependent. No weights are downloaded by tests.
+ultralytics==8.4.171
+lap==0.5.13
+scipy==1.18.1

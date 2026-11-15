@@ -77,3 +77,6 @@ storage/candidate_events/processed/*
 inference_worker/__pycache__/
 
 inference_worker/test_chunks/
+
+# Local dependency sandbox for offline tracking tests
+.test-deps/

@@ -78,6 +78,7 @@ class RunnerEOSBoundaryTests(unittest.TestCase):
             'valid_until':'2099-01-01T00:00:00Z'} for c in ('main','ref')},
             'metadata_steps_per_pump':1,'max_lag_seconds':5}
         for key in ('outbox','transport','delivery','capture','lifecycle','mux','decoder','source'): cfg[key]={}
+        cfg['lifecycle']['missing_grace_seconds']=1
         args=SimpleNamespace(submit_events=False,submit_review_candidates=True,replay_buffer=False,
             continuous_config='unused',camera_id='main',model_path=None,max_chunks=100,stop_file=None,poll=0)
         runtime=Mock(); capture=Mock(); capture.events={}

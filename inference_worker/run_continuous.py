@@ -110,15 +110,19 @@ def run(args):
             private_root=state/'raw',**config['transport'])
         dispatcher=ContinuousDispatcher(box,transport,enabled=True,**config['delivery'])
         capture=MultiCameraCapture(state/'raw',cameras={c:CameraClock(r['offset'],r['error_bound'],True) for c,r in clocks.items()},**config['capture'])
+        lifecycle_config={
+            'rewear_seconds':getattr(args,'rewear_seconds',0.5),
+            'qualification_grace_seconds':getattr(args,'qualification_grace_seconds',0.5),
+            **config['lifecycle']}
         journal=LifecycleJournal(box,camera_id=args.camera_id,camera_snapshot=ids,
-            model_version=detector.model_version,**config['lifecycle'])
+            model_version=detector.model_version,**lifecycle_config)
         runtime=ContinuousFrameRuntime(journal=journal,capture=capture,dispatcher=dispatcher,
             metadata_steps_per_pump=config['metadata_steps_per_pump'])
         mux=SourceMux(camera_ids=ids,primary_camera=args.camera_id,
             clock_error_by_camera={c:r['error_bound'] for c,r in clocks.items()},**config['mux'])
         decoder=PrivateChunkDecoder(box,**config['decoder'])
         reader=ContinuousSourceReader(client,mux,decoder=decoder,offsets={c:r['offset'] for c,r in clocks.items()},**config['source'])
-        tracker=PersonTracker();policy_signature=None;processed=0;primary_sequence=None
+        tracker=PersonTracker(max_missing_seconds=max(lifecycle_config['missing_grace_seconds'],0.1));policy_signature=None;processed=0;primary_sequence=None
         source_started=time.monotonic()
         while processed<args.max_chunks and not(args.stop_file and args.stop_file.exists()):
             now=time.time()
@@ -154,7 +158,7 @@ def run(args):
                 if camera==args.camera_id:
                     priority.refresh();detections=detector.detect(frame)
                     rows=tracker.update(assess_ppe(detections,frame.shape,getattr(detector,'supported_ppe',('helmet','vest')))
-                        if review else assess_helmets(detections))
+                        if review else assess_helmets(detections), timestamp)
                     assessments=policy_assessments(rows,policy,frame.shape,review_only=review)
                 runtime.frame(camera,timestamp,frame,assessments=assessments)
                 remaining[camera]-=1

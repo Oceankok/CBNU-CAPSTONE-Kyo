@@ -22,10 +22,18 @@ class FakeVideoClient:
         self.closed = False
         self.loads = []
         self.submitted_events = []
+        self.clip_failures = []
 
     def submit_event(self, event):
         self.submitted_events.append(event)
         return {"event_id": event["event_id"], "created": True}
+
+    def get_clip_requests(self, event_id):
+        return {'items': [{'request_id': 'test-request', 'camera_id': 'CAM_001',
+                           'status': 'pending', 'role': 'clip'}]}
+
+    def report_clip_failure(self, event_id, request_id, reason, *, status):
+        self.clip_failures.append((event_id, request_id, reason, status))
 
     def list_streams(self):
         return [{"stream_id": "TEST_STREAM", "camera_id": "CAM_001", "last_sequence": self.last_sequence}]
@@ -94,6 +102,8 @@ class ServerInferenceTest(unittest.TestCase):
             args.append("--replay-buffer")
         with (
             patch.object(runner, "VideoClient", return_value=client),
+            patch.object(runner, "open_event_outbox", side_effect=lambda *a:
+                         runner.EventSaveOutbox(":memory:", camera_id="CAM_001")),
             patch.object(runner, "create_detector", return_value=FakeDetector()),
             patch.object(runner, "decode_mp4", side_effect=lambda *args, **kwargs: iter((index, 4.0, frame) for index in range(4))),
             patch.object(runner.time, "sleep"),

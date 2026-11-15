@@ -55,7 +55,7 @@ def main():
                 break
             now = time.monotonic()
             detections = detector.detect(frame)
-            people = tracker.update(assess_ppe(detections, frame.shape, detector.supported_ppe))
+            people = tracker.update(assess_ppe(detections, frame.shape, detector.supported_ppe), now)
             candidates = violations.update(people, now)
             # Bound raw memory to 5 seconds, 10 FPS, 640x480 frames.
             if not buffer or now - buffer[-1][0] >= .1:
@@ -105,7 +105,7 @@ def save_candidate(args, detector, candidate, frame, samples):
     from inference_worker.clip_manager import create_clip
 
     end = datetime.now(timezone.utc)
-    event_id = 'EVT_' + uuid4().hex
+    event_id = candidate.get('event_id') or 'EVT_' + uuid4().hex
     event = EventSubmission(
         event_id=event_id, camera_id=args.camera_id,
         tracking_id=candidate['tracking_id'], ppe_type=candidate['ppe_type'],

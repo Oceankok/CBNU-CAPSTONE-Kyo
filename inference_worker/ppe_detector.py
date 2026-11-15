@@ -31,7 +31,8 @@ class PPEDetector:
     def detect(self, frame):
         results = self.model.predict(
             source=frame,
-            conf=self.confidence,
+            # Keep weak people for tracking; PPE evidence retains its threshold.
+            conf=min(self.confidence, 0.1),
             verbose=False,
         )
 
@@ -40,11 +41,14 @@ class PPEDetector:
         for result in results:
             for box in result.boxes:
                 class_id = int(box.cls.item())
+                score = float(box.conf.item())
+                if self.model.names[class_id] != "person" and score < self.confidence:
+                    continue
 
                 detections.append({
                     "class_id": class_id,
                     "class_name": self.model.names[class_id],
-                    "confidence": float(box.conf.item()),
+                    "confidence": score,
                     "bbox": box.xyxy[0].tolist(),
                 })
 
