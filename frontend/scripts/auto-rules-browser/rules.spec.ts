@@ -181,3 +181,13 @@ test('non-version save rejection preserves fields without creating a version-con
   await expect(reason(page)).toHaveValue('Keep input'); await expect(save(page)).toBeEnabled();
   await expect(page.getByRole('button', { name: '최신 설정 조회', exact: true })).toHaveCount(0);
 });
+
+test('incomplete persisted rule row tolerates missing observations and retains exclusions', async ({ page }) => {
+  await setup(page, async (route, url) => url.pathname.endsWith('/shadow') ? json(route, { event_id: 'E1', limit: 20, offset: 0, items: [{ run_id: 'incomplete', actor_id: 'admin', created_at: '2026-11-15', policy: policy(), result: { event_id: 'E1', settings_version: 2, decision_method: 'continuous_rules_v1', blocking_reasons: ['evidence_incomplete'], rule_evaluation: { method: 'continuous_rules_v1', eligible: false, score: null } } }] }) : json(route, policy()));
+  await open(page); await page.getByRole('textbox', { name: 'shadow 조회 이벤트 ID' }).fill('E1');
+  await page.getByRole('button', { name: '저장된 shadow 조회' }).click();
+  const section = page.getByRole('region', { name: '저장된 shadow 이력' });
+  await expect(section).toContainText('evidence_incomplete');
+  await expect(section).toContainText('미확인');
+  await expect(section).toContainText('규칙 조건 미충족');
+});

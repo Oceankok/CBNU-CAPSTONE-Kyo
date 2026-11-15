@@ -2,10 +2,10 @@ import { apiFetch } from './client';
 
 export interface RuleCriteria { minimum_observed_seconds: number; minimum_frame_samples: number }
 export interface RuleEvaluation {
-  method: 'continuous_rules_v1'; eligible: boolean; criteria: RuleCriteria | null;
-  observed_seconds: number | null; frame_sample_count: number; gap_count: number | null;
-  gap_seconds: number | null; close_reason: string | null; score: null;
-  blocking_reasons: string[]; limitations: string[];
+  method: 'continuous_rules_v1'; eligible?: boolean; criteria?: RuleCriteria | null;
+  observed_seconds?: number | null; frame_sample_count?: number | null; gap_count?: number | null;
+  gap_seconds?: number | null; close_reason?: string | null; score?: null;
+  blocking_reasons?: string[]; limitations?: string[];
 }
 export interface DecisionDiagnostic {
   event_id: string; observed_confidence: number | null; threshold_candidate: boolean;

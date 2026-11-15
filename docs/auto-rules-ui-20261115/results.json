@@ -104,12 +104,25 @@
   "build": "pass",
   "helper_check": "scripts/autoDecisionSettings.check.ts passed",
   "source_sha256": {
-    "frontend/src/api/autoDecisions.ts": "579fd3c1ab8838fe7424e7f8fe0e0405b84da3d4000b2567b916bceb20304192",
+    "frontend/src/api/autoDecisions.ts": "c3401c69129c47de1ea0987417ab263f117439b0518c6e63a8bca6565d4e5fa2",
     "frontend/src/autoDecisionSettings.ts": "1aac8827bce8d03aa43e1c4c07eafa563c713f12d4e61626cb92b7622cc2224f",
     "frontend/src/autoRuleAudit.ts": "8639d126c2a2627b642971af61663c8f2eb200e9a8875fb8d656645cc9fd95ea",
-    "frontend/src/components/RuleDecisionExplanation.tsx": "ce6066dcfff0b0fc25b5ee0ccc3c8bb7fcb2362c998f5351c1c471baaf84f8ec",
+    "frontend/src/components/RuleDecisionExplanation.tsx": "f5241d77431ca094040cc9c5d6d525e8ce751c66dd837765dcb139463371795e",
     "frontend/src/pages/AutoDecisionSettingsPage.tsx": "b358fe87cc9c3f03c679266a3717af6f1eccddf037d60e199138cb4d7fcdcf3f",
     "frontend/src/pages/ReviewDetailPage.tsx": "294102aec10bfeb820cde6b7005da0b8def67e84ccd90088e7653846a80d5456",
     "frontend/src/types/index.ts": "e3d4765f7cf9df33eb5ebb008a909a418389316e7f2c476070f9f8fb03be0068"
-  }
+  },
+  "supplemental_run": {
+    "command": "npm run test:auto-rules:browser -- --grep incomplete",
+    "stats": {
+      "startTime": "2026-11-15T07:45:07.225Z",
+      "duration": 1837.8540000000003,
+      "expected": 1,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "purpose": "Terminal incomplete shadow row with absent optional observations"
+  },
+  "scenario_count": 12
 }

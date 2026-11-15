@@ -3,20 +3,20 @@ import type { DecisionDiagnostic, RuleEvaluation } from '../api/autoDecisions';
 
 export function RuleObservations({ rule }: { rule: RuleEvaluation }) {
   return <div>
-    <p>연속 관측 규칙 · {rule.eligible ? '규칙 조건 충족' : '규칙 조건 미충족'} · 확률 점수 없음</p>
+    <p>연속 관측 규칙 · {rule.eligible === true ? '규칙 조건 충족' : rule.eligible === false ? '규칙 조건 미충족' : '조건 판단 미확인'} · 확률 점수 없음</p>
     <dl>
       <dt>최소 관측 시간 / 실제</dt><dd>{rule.criteria?.minimum_observed_seconds ?? '미설정'}초 / {rule.observed_seconds ?? '미확인'}초</dd>
       <dt>최소 샘플 / 실제</dt><dd>{rule.criteria?.minimum_frame_samples ?? '미설정'} / {rule.frame_sample_count ?? '미확인'}</dd>
       <dt>관측 공백</dt><dd>{rule.gap_count ?? '미확인'}회 · {rule.gap_seconds ?? '미확인'}초</dd>
       <dt>종료 사유</dt><dd>{rule.close_reason ?? '미확인'}</dd>
     </dl>
-    <p>제외 사유: {rule.blocking_reasons.length ? rule.blocking_reasons.join(', ') : '기록된 제외 사유 없음'}</p>
-    <p>한계: {rule.limitations.join(', ')}</p>
+    <p>제외 사유: {rule.blocking_reasons?.length ? rule.blocking_reasons.join(', ') : '기록 없음'}</p>
+    <p>한계: {rule.limitations?.join(', ') || '기록 없음'}</p>
   </div>;
 }
 export function DecisionExplanation({ item }: { item: DecisionDiagnostic }) {
   return <article><strong>{item.event_id}</strong>
-    {item.rule_evaluation ? <RuleObservations rule={item.rule_evaluation} /> : <>
+    {item.rule_evaluation ? <RuleObservations rule={{ ...item.rule_evaluation, blocking_reasons: item.rule_evaluation.blocking_reasons ?? item.blocking_reasons }} /> : <>
       <p>점수 경로 진단 · {item.threshold_candidate ? '임계값 후보 (확정 아님)' : '임계값 후보 아님'} · 관측 점수 {item.observed_confidence ?? '없음'}</p>
       <p>제외 사유: {item.blocking_reasons.join(', ') || '기록 없음'}</p>
     </>}
