@@ -82,4 +82,3 @@ class CaptureGridApiTests(unittest.TestCase):
             self.capture_report(state='complete', captured_ranges=full).raise_for_status()
         event = self.client.get('/api/events/'+self.ident,headers=self.admin).json()['event']
         self.assertEqual(datetime.fromisoformat(event['timestamp_end']), self.t+timedelta(seconds=3.008))
-

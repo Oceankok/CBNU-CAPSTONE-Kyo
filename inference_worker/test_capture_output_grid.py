@@ -105,4 +105,3 @@ class GridRuntimeTests(unittest.TestCase):
         self.assertTrue(status['complete'])
         self.assertEqual(status['end'],8)
         self.assertTrue(all(row['state']=='accepted' for row in self.dispatcher.status()))
-
