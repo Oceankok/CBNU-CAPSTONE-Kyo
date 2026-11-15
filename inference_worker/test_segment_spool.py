@@ -186,6 +186,75 @@ class SegmentSpoolTests(unittest.TestCase):
                 writer.finish(.15)
             writer.abort()
 
+    def test_native_epoch_wire_end_encodes_exactly_173_frames(self):
+        origin = 1794737406.712333
+        with self.spool() as spool:
+            writer = self.writer(spool, segment_seconds=60, output_fps=15)
+            for i in range(173):
+                self.assertEqual(writer.push(origin + i / 15, self.frame), [])
+            rows = writer.finish(1794737418.245667)
+            self.assertEqual([row.frame_count for row in rows], [173])
+            self.assertEqual(rows[0].capture_end, origin + 173 / 15)
+            self.assert_mp4(spool, rows[0])
+            self.assertIsNotNone(shutil.which('ffprobe'))
+            probe = subprocess.run([
+                'ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                '-count_frames', '-show_entries', 'stream=nb_read_frames',
+                '-of', 'json', str(spool.path_for_upload(rows[0].segment_id)),
+            ], check=True, capture_output=True, text=True, timeout=10)
+            self.assertEqual(json.loads(probe.stdout)['streams'][0]['nb_read_frames'], '173')
+
+    def test_epoch_end_rounding_both_directions_never_adds_a_frame(self):
+        origin = 1794737406.712333
+        for offset in [-0.0000007, 0.0000007]:
+            with self.subTest(offset=offset), self.spool() as spool:
+                writer = self.writer(spool, segment_seconds=60, output_fps=15)
+                for i in range(3):
+                    writer.push(origin + i / 15, self.frame)
+                rows = writer.finish(origin + 3 / 15 + offset)
+                self.assertEqual([row.frame_count for row in rows], [3])
+                self.assert_mp4(spool, rows[0])
+                spool.acknowledge(rows[0].segment_id)
+
+    def test_epoch_real_off_grid_and_max_gap_are_still_rejected(self):
+        origin = 1794737406.712333
+        with self.spool() as spool:
+            writer = self.writer(spool, output_fps=15)
+            writer.push(origin, self.frame)
+            for delta in [2e-6, -2e-6, 1 / 30]:
+                with self.subTest(delta=delta), self.assertRaisesRegex(ValueError, 'frame grid'):
+                    writer.finish(origin + 1 / 15 + delta)
+            with self.assertRaisesRegex(ValueError, 'exclusive end'):
+                writer.finish(origin + 1)
+            writer.abort()
+
+    def test_epoch_finish_cannot_finalize_frames_already_sampled_past_grid(self):
+        origin = 1794737406.712333
+        with self.spool() as spool:
+            writer = self.writer(spool, segment_seconds=60, output_fps=15)
+            for timestamp in [origin, origin + 1 / 15, origin + 2 / 15,
+                              origin + 3 / 15 + 0.0000002]:
+                self.assertEqual(writer.push(timestamp, self.frame), [])
+            self.assertEqual(writer.sample_index, 4)
+            with self.assertRaisesRegex(ValueError, 'sampled or input frames'):
+                writer.finish(origin + 3 / 15 + 0.0000008)
+            self.assertTrue(writer.closed)
+            self.assertEqual(spool.pending(), [])
+            self.assertFalse(list(self.root.glob('*.part')))
+            self.assertFalse(list(self.root.glob('*.mp4')))
+
+    def test_epoch_canonical_end_must_follow_last_input_even_without_oversampling(self):
+        origin = 1794737406.712333
+        with self.spool() as spool:
+            writer = self.writer(spool, segment_seconds=60, output_fps=15)
+            for i in range(4):
+                writer.push(origin + i / 15, self.frame)
+            self.assertEqual(writer.sample_index, 3)
+            with self.assertRaisesRegex(ValueError, 'sampled or input frames'):
+                writer.finish(origin + 3 / 15 + 0.0000007)
+            self.assertTrue(writer.closed)
+            self.assertEqual(spool.pending(), [])
+
     def test_last_attempt_not_removed_by_new_segment_while_inflight(self):
         with self.spool(max_attempts=1) as spool:
             first=self.create(spool)[0]

@@ -69,6 +69,45 @@ class PayloadTests(TestCase):
 
 
 class CapturePayloadTests(TestCase):
+    def native(self, *, start_offset_us=0, end_offset_us=-1, gap_us=0):
+        from datetime import datetime, timedelta
+        from types import SimpleNamespace
+        from inference_worker.continuous_payloads import capture_payload
+        start=datetime.fromisoformat('2026-11-15T10:36:30.216333+00:00')
+        end=datetime.fromisoformat('2026-11-15T10:36:41.549667+00:00')
+        left=start+timedelta(microseconds=start_offset_us)
+        right=end+timedelta(microseconds=end_offset_us)
+        pairs=[(left,right)] if not gap_us else [
+            (left,start+timedelta(seconds=2)),
+            (start+timedelta(seconds=2,microseconds=gap_us),right)]
+        status={'start':start.timestamp(),'end':end.timestamp(),
+                'cameras':{'cam':{'done':True,'reasons':[], 'segments':[
+                    SimpleNamespace(capture_start=a.timestamp(),capture_end=b.timestamp()) for a,b in pairs]}}}
+        return capture_payload(status,camera_id='cam',clock=SimpleNamespace(
+            offset=0,error_bound=0,verified=True),session_id='a'*32,sequence=1,
+            time_basis='source_utc_corrected',required_end=end.timestamp())
+
+    def test_native_outer_wire_precision_retains_actual_range_without_filling_it(self):
+        from datetime import datetime,timedelta
+        start=datetime.fromisoformat('2026-11-15T10:36:30.216333+00:00')
+        end=datetime.fromisoformat('2026-11-15T10:36:41.549667+00:00')
+        for left in [-1,0,1]:
+            for right in [-1,0,1]:
+                with self.subTest(left=left,right=right):
+                    body=self.native(start_offset_us=left,end_offset_us=right)
+                    self.assertEqual(body['state'],'complete')
+                    self.assertEqual(body['missing_ranges'],[])
+                    self.assertEqual(body['captured_ranges'],[{
+                        'start_at':(start+timedelta(microseconds=left)).isoformat(timespec='microseconds'),
+                        'end_at':(end+timedelta(microseconds=right)).isoformat(timespec='microseconds')}])
+
+    def test_native_two_microseconds_frame_deficit_and_internal_gap_fail_closed(self):
+        for changes in [dict(start_offset_us=2),dict(start_offset_us=-2),
+                        dict(end_offset_us=2),dict(end_offset_us=-2),
+                        dict(end_offset_us=-66667),dict(gap_us=1),dict(gap_us=-1)]:
+            with self.subTest(changes=changes),self.assertRaises(ValueError):
+                self.native(**changes)
+
     def make(self, *, done=True, reasons=(), end=7, segments=((0,7),), verified=True):
         from types import SimpleNamespace
         from inference_worker.continuous_payloads import capture_payload

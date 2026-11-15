@@ -8,6 +8,65 @@ from inference_worker.continuous_transport import PrivateClipTransport, UploadPl
 
 
 class TransportTests(TestCase):
+    def test_partial_manifest_prefix_allows_only_outer_wire_edge_not_internal_gap(self):
+        from datetime import datetime,timedelta
+        from types import SimpleNamespace
+        import sqlite3
+        from inference_worker.continuous_runtime import ContinuousFrameRuntime
+        start=datetime.fromisoformat('2026-11-15T10:36:30.216333+00:00')
+        end=start+timedelta(seconds=4)
+        db=sqlite3.connect(':memory:');self.addCleanup(db.close)
+        db.execute('CREATE TABLE requests(event TEXT,kind TEXT,seq INTEGER,body TEXT)')
+        for left,gap,expected in [(-1,0,2),(1,0,2),(-1,1,1),(1,1,1)]:
+            segments=[SimpleNamespace(segment_id='S1',capture_start=(start+timedelta(microseconds=left)).timestamp(),
+                                      capture_end=(start+timedelta(seconds=2)).timestamp()),
+                      SimpleNamespace(segment_id='S2',capture_start=(start+timedelta(seconds=2,microseconds=gap)).timestamp(),
+                                      capture_end=end.timestamp())]
+            runtime=object.__new__(ContinuousFrameRuntime)
+            runtime.capture=SimpleNamespace(events={'EVT_1':{'captures':{'CAM_1':SimpleNamespace(
+                segments=segments,spool=SimpleNamespace(path_for_upload=lambda _:self.root/'clip.mp4'))}}})
+            runtime.outbox=SimpleNamespace(db=db,session='a'*32,segment_status=lambda _:{'state':'present'})
+            queued=[];runtime._enqueue=lambda event,kind,key,body:queued.append(body)
+            self.assertEqual(runtime._partial_manifests('EVT_1',{'start':start.timestamp(),'end':end.timestamp()}),expected)
+            self.assertEqual(len(queued),expected)
+
+    def test_native_wire_outer_edges_traverse_payload_selection_and_verified_upload(self):
+        from datetime import datetime,timedelta
+        from types import SimpleNamespace
+        from inference_worker.continuous_payloads import capture_payload
+        from inference_worker.continuous_runtime import ContinuousFrameRuntime
+        start=datetime.fromisoformat('2026-11-15T10:36:30.216333+00:00')
+        end=datetime.fromisoformat('2026-11-15T10:36:41.549667+00:00')
+        client=self.client()
+        for left in [-1,0,1]:
+            for right in [-1,0,1]:
+                with self.subTest(left=left,right=right):
+                    segment=SimpleNamespace(segment_id='S1',
+                        capture_start=(start+timedelta(microseconds=left)).timestamp(),
+                        capture_end=(end+timedelta(microseconds=right)).timestamp())
+                    cap=SimpleNamespace(segments=[segment],spool=SimpleNamespace(path_for_upload=lambda _:self.root/'clip.mp4'))
+                    runtime=object.__new__(ContinuousFrameRuntime)
+                    runtime.capture=SimpleNamespace(events={'EVT_1':{'captures':{'CAM_1':cap}}})
+                    runtime.outbox=SimpleNamespace(segment_status=lambda _:{'state':'present'})
+                    status={'start':start.timestamp(),'end':end.timestamp(),'cameras':{
+                        'CAM_1':{'done':True,'reasons':[],'segments':[segment]}}}
+                    body=capture_payload(status,camera_id='CAM_1',clock=SimpleNamespace(
+                        offset=0,error_bound=0,verified=True),session_id='a'*32,sequence=1,
+                        time_basis='source_utc_corrected',required_end=end.timestamp())
+                    self.assertEqual(body['state'],'complete')
+                    self.assertEqual(body['captured_ranges'][0]['end_at'],
+                                     (end+timedelta(microseconds=right)).isoformat(timespec='microseconds'))
+                    self.assertEqual(runtime._safe_segments('EVT_1',status)['CAM_1'],[segment])
+                    plan=replace(self.plan,capture_start=segment.capture_start,capture_end=segment.capture_end,
+                                 required_start=start.timestamp(),required_end=end.timestamp())
+                    self.assertEqual(client.upload(plan)['status'],'processing')
+        for left,right in [(-2,0),(0,2),(-66667,0),(0,66667)]:
+            segment.capture_start=(start+timedelta(microseconds=left)).timestamp()
+            segment.capture_end=(end+timedelta(microseconds=right)).timestamp()
+            self.assertEqual(runtime._safe_segments('EVT_1',status)['CAM_1'],[])
+            with self.assertRaises(ValueError):
+                client.upload(replace(plan,capture_start=segment.capture_start,capture_end=segment.capture_end))
+
     def setUp(self):
         self.temp=TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name); self.raw=b'private synthetic bytes'

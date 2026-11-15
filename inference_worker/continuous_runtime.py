@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 from copy import deepcopy
-from inference_worker.continuous_payloads import segment_payload,capture_payload
+from inference_worker.continuous_payloads import segment_payload,capture_payload,WIRE_TIME_EPSILON
 from inference_worker.continuous_transport import UploadPlan
 from inference_worker.segment_spool import SpoolError
 
@@ -88,8 +88,8 @@ class ContinuousFrameRuntime:
             result[camera]=[]
             for segment in cap.segments:
                 if self.outbox.segment_status(segment.segment_id)['state']!='present':continue
-                if not (self._stamp(status['start']) <= self._stamp(segment.capture_start)
-                        < self._stamp(segment.capture_end) <= self._stamp(status['end'])):
+                if not (self._stamp(status['start'])-WIRE_TIME_EPSILON <= self._stamp(segment.capture_start)
+                        < self._stamp(segment.capture_end) <= self._stamp(status['end'])+WIRE_TIME_EPSILON):
                     continue
                 try:
                     path=cap.spool.path_for_upload(segment.segment_id)
@@ -109,7 +109,8 @@ class ContinuousFrameRuntime:
         candidates=[s for segments in safe.values() for s in segments]
         count=len(bodies)
         while True:
-            options=[s for s in candidates if self._stamp(s.capture_start)==cursor]
+            options=[s for s in candidates if self._stamp(s.capture_start)==cursor
+                     or (count==0 and abs(self._stamp(s.capture_start)-cursor)<=WIRE_TIME_EPSILON)]
             if not options:break
             segment=max(options,key=lambda s:s.capture_end)
             self._enqueue(event,'manifest',event+':manifest:'+str(count),
