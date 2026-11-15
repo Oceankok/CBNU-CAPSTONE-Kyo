@@ -7,6 +7,7 @@ import {
   uploadEventMedia,
 } from '../api/events';
 import { mediaUrl } from '../api/client';
+import type { EventClipRequest } from '../api/events';
 import type {
   EventMedia,
   EventRetention,
@@ -126,6 +127,35 @@ function cameraMedia(items: EventMedia[], camera: string, pickedId?: string) {
   return { image, video, pending, choices, picked };
 }
 
+type RequestMedia = Awaited<ReturnType<typeof fetchEventMedia>>['items'];
+
+function clipRequestStatus(
+  request: EventClipRequest,
+  items: RequestMedia,
+): string {
+  const media = items.filter(
+    (item) => item.clip_request_id === request.request_id,
+  );
+  if (request.status === 'unavailable') {
+    return request.error_code === 'clip_delivery_timeout'
+      ? '영상 확보 불가 · 수신 시간 초과'
+      : '영상 확보 불가';
+  }
+  if (request.status === 'failed') return '영상 수집 실패 · 복구 확인 필요';
+  if (
+    media.some(
+      (item) => item.status === 'processing' || item.status === 'registered',
+    )
+  ) {
+    return '영상 수신 · 얼굴 가림 처리 중';
+  }
+  if (request.status === 'pending') return '영상 수신 대기';
+  if (media.some((item) => item.url)) return '영상 확인 가능';
+  if (media.some((item) => item.status === 'failed'))
+    return '영상 처리 실패 · 복구 확인 필요';
+  return '수신 기록은 있으나 확인 가능한 영상 없음';
+}
+
 /**
  * Event media for reviewers: redacted image/clip first, retention decision below,
  * processing details and dev tools collapsed. Parent should key this by event id.
@@ -146,7 +176,8 @@ export default function EventMediaPanel({
   onAvailability?: (a: ReviewAvailability | null) => void;
   onChange: () => Promise<void>;
 }) {
-  const [items, setItems] = useState<EventMedia[]>([]);
+  const [items, setItems] = useState<RequestMedia>([]);
+  const [clipRequests, setClipRequests] = useState<EventClipRequest[]>([]);
   const [retention, setRetention] = useState<EventRetention | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -169,6 +200,7 @@ export default function EventMediaPanel({
   const apply = useCallback(
     (data: Awaited<ReturnType<typeof fetchEventMedia>>) => {
       setItems(data.items);
+      setClipRequests(data.clip_requests ?? []);
       setRetention(data.retention);
       setLoaded(true);
       onAvailability?.(data.review_availability ?? null);
@@ -194,10 +226,11 @@ export default function EventMediaPanel({
       .catch(() => {});
   }, [finalReview, unreviewable]);
 
-  // Poll while the server is still redacting or deleting
-  const processing = items.some(
-    (m) => m.status === 'processing' || m.status === 'delete_pending',
-  );
+  // Pending requests can time out even when no media row was ever created.
+  const processing =
+    items.some(
+      (m) => m.status === 'processing' || m.status === 'delete_pending',
+    ) || clipRequests.some((request) => request.status === 'pending');
   useEffect(() => {
     if (!processing) return;
     const timer = window.setInterval(
@@ -246,7 +279,13 @@ export default function EventMediaPanel({
     );
   }
 
-  const cameras = [...new Set([cameraId, ...items.map((m) => m.camera_id)])];
+  const cameras = [
+    ...new Set([
+      cameraId,
+      ...items.map((m) => m.camera_id),
+      ...clipRequests.map((request) => request.camera_id),
+    ]),
+  ];
   const { image, video, pending, choices, picked } = cameraMedia(
     items,
     camera,
@@ -337,6 +376,29 @@ export default function EventMediaPanel({
         <p className={styles.notice}>
           얼굴 가림이 일부 누락될 수 있습니다. 화면 전체를 확인해 주세요.
         </p>
+      )}
+      {clipRequests.length > 0 && (
+        <section className={styles.card} aria-label="카메라별 영상 확보 상태">
+          <h4 className={styles.cardTitle}>카메라별 영상 확보 상태</h4>
+          <p className={styles.text}>
+            재생 가능한 영상이 있어도 다른 카메라의 영상은 누락될 수 있습니다.
+          </p>
+          <ul aria-live="polite">
+            {clipRequests.map((request) => (
+              <li key={request.request_id}>
+                <strong>{request.camera_id}</strong>:{' '}
+                {clipRequestStatus(request, items)}
+              </li>
+            ))}
+          </ul>
+          <button
+            className={styles.btn}
+            type="button"
+            onClick={() => reload().catch((e: Error) => setError(e.message))}
+          >
+            영상 상태 새로고침
+          </button>
+        </section>
       )}
       {error && (
         <p role="alert" className={styles.error}>

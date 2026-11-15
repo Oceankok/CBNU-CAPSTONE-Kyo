@@ -348,14 +348,22 @@ export function updateReview(
   );
 }
 
+export interface EventClipRequest {
+  request_id: string;
+  camera_id: string;
+  status: 'pending' | 'received' | 'failed' | 'unavailable';
+  error_code?: string;
+}
+
 // `fresh` skips the stored copy; use it when polling for a processing state to change
 export function fetchEventMedia(
   eventId: string,
   options: { fresh?: boolean } = {},
 ): Promise<{
-  items: EventMedia[];
+  items: Array<EventMedia & { clip_request_id?: string | null }>;
   retention: EventRetention;
   review_availability?: ReviewAvailability;
+  clip_requests?: EventClipRequest[];
 }> {
   return cached(`media:${eventId}`, options.fresh ? 0 : MEDIA_TTL_MS, () =>
     apiFetch(`/api/events/${encodeURIComponent(eventId)}/media`),
