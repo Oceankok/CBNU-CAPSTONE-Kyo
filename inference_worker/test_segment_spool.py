@@ -196,6 +196,13 @@ class SegmentSpoolTests(unittest.TestCase):
             self.assertEqual([row.frame_count for row in rows], [173])
             self.assertEqual(rows[0].capture_end, origin + 173 / 15)
             self.assert_mp4(spool, rows[0])
+            self.assertIsNotNone(shutil.which('ffprobe'))
+            probe = subprocess.run([
+                'ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                '-count_frames', '-show_entries', 'stream=nb_read_frames',
+                '-of', 'json', str(spool.path_for_upload(rows[0].segment_id)),
+            ], check=True, capture_output=True, text=True, timeout=10)
+            self.assertEqual(json.loads(probe.stdout)['streams'][0]['nb_read_frames'], '173')
 
     def test_epoch_end_rounding_both_directions_never_adds_a_frame(self):
         origin = 1794737406.712333
