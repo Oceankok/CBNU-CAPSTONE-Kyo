@@ -142,9 +142,9 @@ export interface EventMergeRecord {
 export interface EventReview {
   review_id: string;
   event_id: string;
-  reviewer_id: string;
+  reviewer_id: string | null;
   review_result: ReviewResult;
-  review_reason_code: ReviewReasonCode;
+  review_reason_code: ReviewReasonCode | 'automatic_policy_confirmed';
   review_time: string;
   review_comment: string;
   confirmed_violation: boolean;

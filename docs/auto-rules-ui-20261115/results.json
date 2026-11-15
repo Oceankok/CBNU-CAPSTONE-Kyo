@@ -1,0 +1,115 @@
+{
+  "base_sha": "33c39ae6bd22c3d6669dcf4cb4a5b7fa9fdc968a",
+  "method": "Actual React components/DOM/API clients with isolated HTTP mocks; no real backend or settings writes",
+  "browser": "Microsoft Edge headless",
+  "stats": {
+    "startTime": "2026-11-15T07:43:33.536Z",
+    "duration": 5401.3640000000005,
+    "expected": 11,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "cases": [
+    {
+      "title": "rule settings round-trip both explicit criteria; saving locks fields and sends no activation fields",
+      "file": "rules.spec.ts",
+      "line": 21,
+      "statuses": [
+        "passed"
+      ]
+    },
+    {
+      "title": "version409 preserves draft and retries only after explicit latest-version adoption",
+      "file": "rules.spec.ts",
+      "line": 38,
+      "statuses": [
+        "passed"
+      ]
+    },
+    {
+      "title": "failed latest fetch stays recoverable and latest-server selection explicitly replaces the draft",
+      "file": "rules.spec.ts",
+      "line": 58,
+      "statuses": [
+        "passed"
+      ]
+    },
+    {
+      "title": "current preview uses edited method and criteria and is separate from saved blockers and history",
+      "file": "rules.spec.ts",
+      "line": 71,
+      "statuses": [
+        "passed"
+      ]
+    },
+    {
+      "title": "saved enforce is display-only and must be changed to OFF before any PUT or preview",
+      "file": "rules.spec.ts",
+      "line": 88,
+      "statuses": [
+        "passed"
+      ]
+    },
+    {
+      "title": "rule method requires explicit criteria for shadow and rejects fractional samples",
+      "file": "rules.spec.ts",
+      "line": 99,
+      "statuses": [
+        "passed"
+      ]
+    },
+    {
+      "title": "persisted shadow shows historical version/method/evidence/exclusions and tolerates old diagnostics",
+      "file": "rules.spec.ts",
+      "line": 109,
+      "statuses": [
+        "passed"
+      ]
+    },
+    {
+      "title": "recognized system audit is structured; malformed/manual/older comments remain safe text",
+      "file": "rules.spec.ts",
+      "line": 125,
+      "statuses": [
+        "passed"
+      ]
+    },
+    {
+      "title": "actual review detail preserves manual correction after a system rule review",
+      "file": "rules.spec.ts",
+      "line": 136,
+      "statuses": [
+        "passed"
+      ]
+    },
+    {
+      "title": "late preview from an unmounted settings page cannot overwrite the next draft",
+      "file": "rules.spec.ts",
+      "line": 160,
+      "statuses": [
+        "passed"
+      ]
+    },
+    {
+      "title": "non-version save rejection preserves fields without creating a version-conflict retry loop",
+      "file": "rules.spec.ts",
+      "line": 177,
+      "statuses": [
+        "passed"
+      ]
+    }
+  ],
+  "lint": "pass (0 errors,0 warnings)",
+  "build": "pass",
+  "helper_check": "scripts/autoDecisionSettings.check.ts passed",
+  "source_sha256": {
+    "frontend/src/api/autoDecisions.ts": "579fd3c1ab8838fe7424e7f8fe0e0405b84da3d4000b2567b916bceb20304192",
+    "frontend/src/autoDecisionSettings.ts": "1aac8827bce8d03aa43e1c4c07eafa563c713f12d4e61626cb92b7622cc2224f",
+    "frontend/src/autoRuleAudit.ts": "8639d126c2a2627b642971af61663c8f2eb200e9a8875fb8d656645cc9fd95ea",
+    "frontend/src/components/RuleDecisionExplanation.tsx": "ce6066dcfff0b0fc25b5ee0ccc3c8bb7fcb2362c998f5351c1c471baaf84f8ec",
+    "frontend/src/pages/AutoDecisionSettingsPage.tsx": "b358fe87cc9c3f03c679266a3717af6f1eccddf037d60e199138cb4d7fcdcf3f",
+    "frontend/src/pages/ReviewDetailPage.tsx": "294102aec10bfeb820cde6b7005da0b8def67e84ccd90088e7653846a80d5456",
+    "frontend/src/types/index.ts": "e3d4765f7cf9df33eb5ebb008a909a418389316e7f2c476070f9f8fb03be0068"
+  }
+}

@@ -1,3 +1,4 @@
+import RuleReviewComment from '../components/RuleDecisionExplanation';
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
@@ -102,7 +103,7 @@ for (const opts of Object.values(REASON_OPTIONS)) {
 
 // Return human-readable Korean label for a stored reason code
 function getReasonLabel(code: string): string {
-  return REASON_LABEL[code] ?? code;
+  return code === 'automatic_policy_confirmed' ? '시스템 정책 판단' : REASON_LABEL[code] ?? code;
 }
 
 function relationLoadError(error: unknown): string {
@@ -349,7 +350,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
   const handleStartReReview = () => {
     if (!existingReview) return;
     setReviewResult(existingReview.review_result);
-    setReasonCode(existingReview.review_reason_code);
+    setReasonCode(existingReview.review_reason_code === 'automatic_policy_confirmed' ? '' : existingReview.review_reason_code);
     setComment(existingReview.review_comment);
     setSecondReview(existingReview.second_review_needed);
     setIsReReview(true);
@@ -505,10 +506,11 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
             <details className={styles.card}>
               <summary>이전 검토 기록 ({reviewHistory.length}건)</summary>
               {reviewHistory.map((review) => (
-                <p key={review.history_id}>
-                  {review.review_time} · {review.reviewer_id} ·{' '}
+                <div key={review.history_id}>
+                  {review.review_time} · {review.reviewer_id ?? '시스템'} ·{' '}
                   {getReasonLabel(review.review_reason_code)}
-                </p>
+                  {review.review_comment && <RuleReviewComment text={review.review_comment} systemReview={review.reviewer_id === null && review.review_reason_code === 'automatic_policy_confirmed'} />}
+                </div>
               ))}
             </details>
           )}
@@ -540,9 +542,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
                     <>
                       <dt>코멘트</dt>
                       <dd>
-                        {existingReview
-                          ? existingReview.review_comment
-                          : comment}
+                        <RuleReviewComment text={existingReview ? existingReview.review_comment : comment} systemReview={!!existingReview && existingReview.reviewer_id === null && String(existingReview.review_reason_code) === 'automatic_policy_confirmed'} />
                       </dd>
                     </>
                   )}
