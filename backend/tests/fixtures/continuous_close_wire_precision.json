@@ -1,0 +1,102 @@
+[
+  {
+    "event_id": "EVT_7c389e87754c44e3972d389aae92598b",
+    "body_sha256": "564401e91d44021f925b576218f72ab72e46b226617f0cae39de7500271e79e5",
+    "body": {
+      "close_reason": "observation_gap",
+      "complete": true,
+      "confidence": null,
+      "final_segment_count": 6,
+      "frame_sample_count": 96,
+      "gap_count": 6,
+      "gap_seconds": 1.4000017642974854,
+      "kind": "close",
+      "observed_seconds": 5.933332204818726,
+      "sequence": 5,
+      "session_id": "b5255145338044d0b4729c3889a7b670",
+      "timestamp_end": "2026-11-15T10:36:39.549667+00:00"
+    },
+    "segments": [
+      {
+        "sequence": 0,
+        "capture_start_at": "2026-11-15T10:36:30.216333+00:00",
+        "capture_end_at": "2026-11-15T10:36:32.216333+00:00"
+      },
+      {
+        "sequence": 1,
+        "capture_start_at": "2026-11-15T10:36:32.216333+00:00",
+        "capture_end_at": "2026-11-15T10:36:34.216333+00:00"
+      },
+      {
+        "sequence": 2,
+        "capture_start_at": "2026-11-15T10:36:34.216333+00:00",
+        "capture_end_at": "2026-11-15T10:36:36.216333+00:00"
+      },
+      {
+        "sequence": 3,
+        "capture_start_at": "2026-11-15T10:36:36.216333+00:00",
+        "capture_end_at": "2026-11-15T10:36:38.216333+00:00"
+      },
+      {
+        "sequence": 4,
+        "capture_start_at": "2026-11-15T10:36:38.216333+00:00",
+        "capture_end_at": "2026-11-15T10:36:40.216333+00:00"
+      },
+      {
+        "sequence": 5,
+        "capture_start_at": "2026-11-15T10:36:40.216333+00:00",
+        "capture_end_at": "2026-11-15T10:36:41.549666+00:00"
+      }
+    ]
+  },
+  {
+    "event_id": "EVT_bf70f09c1d1a41b8b244caf1c9e33696",
+    "body_sha256": "564401e91d44021f925b576218f72ab72e46b226617f0cae39de7500271e79e5",
+    "body": {
+      "close_reason": "observation_gap",
+      "complete": true,
+      "confidence": null,
+      "final_segment_count": 6,
+      "frame_sample_count": 96,
+      "gap_count": 6,
+      "gap_seconds": 1.4000017642974854,
+      "kind": "close",
+      "observed_seconds": 5.933332204818726,
+      "sequence": 5,
+      "session_id": "b5255145338044d0b4729c3889a7b670",
+      "timestamp_end": "2026-11-15T10:36:39.549667+00:00"
+    },
+    "segments": [
+      {
+        "sequence": 0,
+        "capture_start_at": "2026-11-15T10:36:30.216333+00:00",
+        "capture_end_at": "2026-11-15T10:36:32.216333+00:00"
+      },
+      {
+        "sequence": 1,
+        "capture_start_at": "2026-11-15T10:36:32.216333+00:00",
+        "capture_end_at": "2026-11-15T10:36:34.216333+00:00"
+      },
+      {
+        "sequence": 2,
+        "capture_start_at": "2026-11-15T10:36:34.216333+00:00",
+        "capture_end_at": "2026-11-15T10:36:36.216333+00:00"
+      },
+      {
+        "sequence": 3,
+        "capture_start_at": "2026-11-15T10:36:36.216333+00:00",
+        "capture_end_at": "2026-11-15T10:36:38.216333+00:00"
+      },
+      {
+        "sequence": 4,
+        "capture_start_at": "2026-11-15T10:36:38.216333+00:00",
+        "capture_end_at": "2026-11-15T10:36:40.216333+00:00"
+      },
+      {
+        "sequence": 5,
+        "capture_start_at": "2026-11-15T10:36:40.216333+00:00",
+        "capture_end_at": "2026-11-15T10:36:41.549666+00:00"
+      }
+    ]
+  }
+]

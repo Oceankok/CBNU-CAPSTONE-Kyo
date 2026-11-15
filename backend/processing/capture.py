@@ -65,13 +65,17 @@ def cameras(conn,event_id):
     return rows
 
 
-def _covers(ranges,start,end):
+def _covers(ranges,start,end,*,endpoint_epsilon=timedelta(0)):
     cursor=start
     for r in ranges:
-        if r.start_at>cursor: return False
+        if r.start_at>cursor:
+            # Only the first outer edge may differ by wire precision. Never
+            # bridge a gap between captured ranges, even a microsecond gap.
+            if cursor!=start or r.start_at>start+endpoint_epsilon:
+                return False
         cursor=max(cursor,r.end_at)
         if cursor>=end:return True
-    return False
+    return bool(ranges) and cursor>=end-endpoint_epsilon
 
 
 def report(event_id,camera_id,body,node_id):
@@ -126,7 +130,7 @@ def _record_report(event_id,camera_id,body,node_id):
         event=conn.execute('SELECT timestamp_start,timestamp_end FROM candidate_event WHERE event_id=?',(event_id,)).fetchone()
         start=lc.dt(event['timestamp_start'])-timedelta(seconds=2)
         end=lc.dt(event['timestamp_end'])+timedelta(seconds=2)
-        if any(r.start_at<start or r.end_at>end for r in [*body.captured_ranges,*body.missing_ranges]):
+        if any(r.start_at<start-lc.WIRE_TIME_EPSILON or r.end_at>end+lc.WIRE_TIME_EPSILON for r in [*body.captured_ranges,*body.missing_ranges]):
             raise HTTPException(422,'capture_range_outside_event')
         if body.state=='complete':
             try:
@@ -136,8 +140,9 @@ def _record_report(event_id,camera_id,body,node_id):
                 raise HTTPException(503,'continuous_clock_policy_required')
             if body.clock_uncertainty_seconds>maximum:
                 raise HTTPException(422,'capture_clock_uncertain')
-            if (owner['phase']!='closed' or body.missing_ranges or not _covers(body.captured_ranges,start,end)
-                    or (body.earliest_available_at is not None and body.earliest_available_at>start)):
+            if (owner['phase']!='closed' or body.missing_ranges
+                    or not _covers(body.captured_ranges,start,end,endpoint_epsilon=lc.WIRE_TIME_EPSILON)
+                    or (body.earliest_available_at is not None and body.earliest_available_at>start+lc.WIRE_TIME_EPSILON)):
                 raise HTTPException(409,'continuous_capture_incomplete')
         conn.execute('INSERT INTO processing_camera_capture(event_id,camera_id,sequence,payload,created_at) VALUES(?,?,?,?,?)',(event_id,camera_id,body.sequence,raw,time.time()))
         conn.execute('UPDATE processing_event_lifecycle SET evidence_revision=evidence_revision+1 WHERE event_id=?',(event_id,))

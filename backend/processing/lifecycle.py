@@ -23,6 +23,9 @@ from backend.field.service import enqueue_event_broadcast
 # Match the producer's qualification tolerance and microsecond wire precision.
 # This does not round stored observations or relax automatic-review criteria.
 OBSERVATION_EPSILON_SECONDS = 1e-6
+# Only outer pre/post-roll endpoints cross the epoch-float/microsecond wire.
+# Segment adjacency and all observation/automatic criteria remain independent.
+WIRE_TIME_EPSILON = timedelta(microseconds=1)
 
 def enabled():
     if os.environ.get('PPE_CONTINUOUS_EVENTS_ENABLED', '').lower() != 'true':
@@ -274,7 +277,9 @@ def update(event_id, body, node_id):
                 raise HTTPException(409,'segment_manifest_incomplete')
             if body.complete:
                 bounds=conn.execute('SELECT MIN(capture_start_at) AS first,MAX(capture_end_at) AS last FROM processing_event_segment WHERE event_id=?',(event_id,)).fetchone()
-                if count==0 or dt(bounds['first'])>dt(event['timestamp_start'])-timedelta(seconds=2) or dt(bounds['last'])<body.timestamp_end+timedelta(seconds=2):
+                if (count==0
+                        or dt(bounds['first'])>dt(event['timestamp_start'])-timedelta(seconds=2)+WIRE_TIME_EPSILON
+                        or dt(bounds['last'])<body.timestamp_end+timedelta(seconds=2)-WIRE_TIME_EPSILON):
                     raise HTTPException(409,'segment_coverage_incomplete')
             phase='closed' if body.complete else 'interrupted'
         conn.execute('''UPDATE candidate_event SET timestamp_end=?,duration_sec=?,frame_sample_count=?,ai_confidence=? WHERE event_id=?''',
@@ -305,7 +310,8 @@ def segment(event_id, body, node_id):
             raise HTTPException(409,'continuous_event_closed')
         event=conn.execute('SELECT timestamp_start,timestamp_end FROM candidate_event WHERE event_id=?',(event_id,)).fetchone()
         from datetime import timedelta
-        if body.capture_start_at<dt(event['timestamp_start'])-timedelta(seconds=2) or body.capture_end_at>dt(event['timestamp_end'])+timedelta(seconds=2):
+        if (body.capture_start_at<dt(event['timestamp_start'])-timedelta(seconds=2)-WIRE_TIME_EPSILON
+                or body.capture_end_at>dt(event['timestamp_end'])+timedelta(seconds=2)+WIRE_TIME_EPSILON):
             raise HTTPException(422,'segment_outside_observation')
         previous=conn.execute('SELECT sequence,capture_end_at FROM processing_event_segment WHERE event_id=? ORDER BY sequence DESC LIMIT 1',(event_id,)).fetchone()
         if (previous is None and body.sequence!=0) or (previous is not None and (body.sequence!=previous['sequence']+1 or body.capture_start_at!=dt(previous['capture_end_at']))):
