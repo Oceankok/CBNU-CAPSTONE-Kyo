@@ -106,7 +106,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - name: Install Chromium for education browser checks
+      - name: Install Chromium for browser checks
         run: npx playwright install --with-deps chromium
       - name: Lint
         run: npm run lint
@@ -114,6 +114,22 @@ jobs:
         run: npm test
       - name: Education browser regression checks (isolated HTTP mocks)
         run: npm run test:education:browser
+      - name: Zone rule locks and revision recovery (isolated HTTP mocks)
+        timeout-minutes: 5
+        run: |
+          npx playwright test --config playwright.zone-rules.config.ts
+          npx playwright test --config playwright.zone-cas.config.ts
+      - name: Upload zone browser results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zone-browser-results
+          include-hidden-files: true
+          path: |
+            frontend/.private_media/zone-rules-browser/
+            frontend/.private_media/zone-cas-browser/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload education browser results
         if: always()
         uses: actions/upload-artifact@v4
