@@ -8,6 +8,7 @@ param(
     [switch]$Https,
     [switch]$Lan,
     [switch]$TunnelHttps,
+    [switch]$Translation,
     [switch]$InitializeDatabase
 )
 $ErrorActionPreference = 'Stop'
@@ -48,8 +49,15 @@ $previous = $null
 if (Test-Path -LiteralPath $manifestPath) { $previous = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json }
 $previousLan = $false
 $previousTunnel = $false
+$previousTranslation = $false
+$previousPolicy = ''
 if ($previous -and $previous.PSObject.Properties['lan']) { $previousLan = [bool]$previous.lan }
 if ($previous -and $previous.PSObject.Properties['tunnel_https']) { $previousTunnel = [bool]$previous.tunnel_https }
+if ($previous -and $previous.PSObject.Properties['translation']) { $previousTranslation = [bool]$previous.translation }
+if ($previousTranslation) {
+    if (-not $previous.PSObject.Properties['translation_policy_file']) { throw 'Previous translation policy snapshot is missing' }
+    $previousPolicy = [string]$previous.translation_policy_file
+}
 if ($previous -and $InitializeDatabase) { throw 'InitializeDatabase is only for the first release; migrations require a separate backup/compatibility plan' }
 if (-not $previous -and -not $InitializeDatabase) { throw 'First release requires an explicit manual InitializeDatabase run' }
 if ($previous -and $previous.project -ne $Project) { throw 'Changing the persistent Compose project is not allowed' }
@@ -64,6 +72,28 @@ if (Test-Path -LiteralPath $releaseRecord) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Caddyfile') -Destination (Join-Path $releasePath 'deploy')
     @{commit=$Commit;api_image=$ApiImage;web_image=$WebImage} | ConvertTo-Json | Set-Content -LiteralPath $releaseRecord -Encoding utf8
 }
+$translationPolicy = ''
+if ($Translation) {
+    if (-not $settings.ContainsKey('PPE_AUTO_TRANSLATION_POLICY_FILE') -or -not [IO.Path]::IsPathRooted($settings['PPE_AUTO_TRANSLATION_POLICY_FILE'])) { throw 'Translation requires an absolute verified policy file path in server.env' }
+    $policySource = $settings['PPE_AUTO_TRANSLATION_POLICY_FILE']
+    if (-not (Test-Path -LiteralPath $policySource -PathType Leaf) -or (Get-Item -LiteralPath $policySource).Length -gt 65536) { throw 'Translation policy file missing or oversized' }
+    $policyData = Get-Content -LiteralPath $policySource -Raw | ConvertFrom-Json
+    if ($policyData.enabled -isnot [bool] -or $policyData.allow_external_processing -isnot [bool] -or -not $policyData.PSObject.Properties['verified_catalog']) { throw 'Invalid translation policy structure' }
+    # OFF is a valid staged deployment. Actual eligibility remains a server decision.
+    if ($policyData.enabled -and $policyData.allow_external_processing) {
+        foreach ($name in @('PPE_EDUCATION_TRANSLATION_PROVIDER','PPE_EDUCATION_TRANSLATION_MODEL','PPE_EDUCATION_TRANSLATION_OPENAI_API_KEY')) {
+            if (-not $settings.ContainsKey($name) -or -not $settings[$name]) { throw "Missing $name for enabled translation" }
+        }
+    }
+    $policyHash = (Get-FileHash -LiteralPath $policySource -Algorithm SHA256).Hash.ToLowerInvariant()
+    $translationPolicy = Join-Path $releasePath ('translation-policy-' + $policyHash + '.json')
+    if (-not (Test-Path -LiteralPath $translationPolicy)) { Copy-Item -LiteralPath $policySource -Destination $translationPolicy }
+    if ((Get-FileHash -LiteralPath $translationPolicy -Algorithm SHA256).Hash.ToLowerInvariant() -ne $policyHash) { throw 'Translation policy snapshot hash mismatch' }
+    $overlay = Join-Path $releasePath 'compose.translation.yaml'
+    $overlaySource = Join-Path $sourceRoot 'compose.translation.yaml'
+    if (-not (Test-Path -LiteralPath $overlay)) { Copy-Item -LiteralPath $overlaySource -Destination $overlay }
+    if ((Get-FileHash -LiteralPath $overlay).Hash -ne (Get-FileHash -LiteralPath $overlaySource).Hash) { throw 'Versioned translation overlay differs from this release source' }
+}
 if ($Lan -and -not (Get-Content -LiteralPath (Join-Path $releasePath 'compose.release.yaml') -Raw).Contains('${PPE_WEB_BIND')) {
     throw 'This release predates LAN binding support; choose a newer release'
 }
@@ -71,6 +101,9 @@ $oldApi = $env:PPE_API_IMAGE
 $oldWeb = $env:PPE_WEB_IMAGE
 $oldBind = $env:PPE_WEB_BIND
 $oldCookie = $env:PPE_COOKIE_SECURE
+$oldTranslationPolicy = $env:PPE_AUTO_TRANSLATION_POLICY_FILE
+$oldTranslationEnvironment = @{}
+foreach ($name in @('PPE_EDUCATION_TRANSLATION_PROVIDER','PPE_EDUCATION_TRANSLATION_MODEL','PPE_EDUCATION_TRANSLATION_OPENAI_API_KEY')) { $oldTranslationEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 $lockPath = Join-Path $deploymentPath 'release.lock'
 $deploymentLock = [IO.File]::Open($lockPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
 $lockBytes = [Text.Encoding]::UTF8.GetBytes([string]$PID)
@@ -81,19 +114,38 @@ $env:PPE_WEB_IMAGE = $WebImage
 $env:PPE_WEB_BIND = if ($Lan) { '0.0.0.0' } else { '127.0.0.1' }
 # Compose prioritizes process variables over server.env. Pin the validated mode.
 $env:PPE_COOKIE_SECURE = if ($Https -or $TunnelHttps) { 'true' } else { 'false' }
-function Compose-Arguments([string]$Release) {
+function Compose-Arguments([string]$Release, [bool]$UseTranslation = $false, [string]$PolicySnapshot = '') {
     $arguments = @('compose','--project-name',$Project,'--env-file',$secretFile,'-f',(Join-Path $Release 'compose.release.yaml'))
+    if ($UseTranslation) {
+        $snapshotFull = [IO.Path]::GetFullPath($PolicySnapshot)
+        $releaseFull = [IO.Path]::GetFullPath($Release) + [IO.Path]::DirectorySeparatorChar
+        if (-not $snapshotFull.StartsWith($releaseFull, [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $snapshotFull -PathType Leaf)) { throw 'Translation snapshot must be an existing file inside its release' }
+        if ([IO.Path]::GetFileName($snapshotFull) -notmatch '^translation-policy-([0-9a-f]{64})\.json$') { throw 'Translation snapshot must be content-addressed' }
+        if ((Get-FileHash -LiteralPath $snapshotFull -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Matches[1]) { throw 'Translation policy snapshot integrity failed' }
+        $env:PPE_AUTO_TRANSLATION_POLICY_FILE = $snapshotFull
+        foreach ($name in @('PPE_EDUCATION_TRANSLATION_PROVIDER','PPE_EDUCATION_TRANSLATION_MODEL','PPE_EDUCATION_TRANSLATION_OPENAI_API_KEY')) {
+            [Environment]::SetEnvironmentVariable($name, $(if ($settings.ContainsKey($name)) { $settings[$name] } else { $null }), 'Process')
+        }
+        $arguments += @('-f',(Join-Path $Release 'compose.translation.yaml'),'--profile','translation')
+    }
     if ($Https) { $arguments += @('--profile','https') }
     return $arguments
 }
-function Confirm-Ready([string]$Release) {
-    $arguments = Compose-Arguments $Release
+function Confirm-Ready([string]$Release, [bool]$UseTranslation = $false, [string]$PolicySnapshot = '') {
+    $arguments = Compose-Arguments $Release $UseTranslation $PolicySnapshot
     Invoke-Docker ($arguments + @('exec','-T','api','python','-c',"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5).close()"))
     Invoke-Docker ($arguments + @('exec','-T','web','wget','-q','-O','/dev/null','http://127.0.0.1:8080/health/ready'))
+    if ($UseTranslation) { Invoke-Docker ($arguments + @('exec','-T','translation-worker','python','-c','from backend.education.auto_translation import policy; from backend.education.translation_provider import availability; p=policy(); assert p is not None; assert not (p["enabled"] and p["allow_external_processing"]) or availability()["configured"]; assert b"backend.education.auto_translation" in open("/proc/1/cmdline","rb").read()')) }
 }
-$arguments = Compose-Arguments $releasePath
+function Stop-Translation([string]$Release, [string]$PolicySnapshot) {
+    $stopArguments = Compose-Arguments $Release $true $PolicySnapshot
+    # No volume deletion or retry/reclaim of interrupted provider work.
+    Invoke-Docker ($stopArguments + @('stop','--timeout','130','translation-worker'))
+    Invoke-Docker ($stopArguments + @('rm','-f','translation-worker'))
+}
 $changed = $false
 try {
+    $arguments = Compose-Arguments $releasePath ([bool]$Translation) $translationPolicy
     Invoke-Docker ($arguments + @('config','--quiet'))
     Invoke-Docker ($arguments + @('pull'))
     if ($previous) {
@@ -111,17 +163,22 @@ try {
         Invoke-Docker ($arguments + @('run','--rm','db-init'))
     }
     $changed = $true
+    if ($previousTranslation) {
+        Stop-Translation (Join-Path (Join-Path $deploymentPath 'releases') $previous.commit) $previousPolicy
+        $arguments = Compose-Arguments $releasePath ([bool]$Translation) $translationPolicy
+    }
     $services = @('postgres','api','web','maintenance')
+    if ($Translation) { $services += 'translation-worker' }
     if ($Https) { $services += 'gateway' }
     Invoke-Docker ($arguments + @('up','-d','--no-build','--wait','--wait-timeout','180') + $services)
-    Confirm-Ready $releasePath
+    Confirm-Ready $releasePath ([bool]$Translation) $translationPolicy
     if ($Https -or $TunnelHttps) {
         # No certificate bypass. The server must reach the selected public HTTPS origin.
         $response = Invoke-WebRequest -Uri ('https://' + $settings['PPE_PUBLIC_HOST'] + '/health/ready') -TimeoutSec 15
         if ($response.StatusCode -ne 200) { throw 'HTTPS readiness failed' }
     }
-    $record = @{commit=$Commit;api_image=$ApiImage;web_image=$WebImage;project=$Project;https=[bool]$Https;lan=[bool]$Lan;tunnel_https=[bool]$TunnelHttps}
-    if ($previous -and ($previous.commit -ne $Commit -or $previousLan -ne [bool]$Lan -or $previousTunnel -ne [bool]$TunnelHttps)) {
+    $record = @{commit=$Commit;api_image=$ApiImage;web_image=$WebImage;project=$Project;https=[bool]$Https;lan=[bool]$Lan;tunnel_https=[bool]$TunnelHttps;translation=[bool]$Translation;translation_policy_file=$translationPolicy}
+    if ($previous -and ($previous.commit -ne $Commit -or $previousLan -ne [bool]$Lan -or $previousTunnel -ne [bool]$TunnelHttps -or $previousTranslation -ne [bool]$Translation -or $previousPolicy -ne $translationPolicy)) {
         $previous | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $deploymentPath 'previous-release.json') -Encoding utf8
     }
     $temporary = $manifestPath + '.tmp'
@@ -130,6 +187,7 @@ try {
     Write-Output "Release ready: $Commit"
 } catch {
     $failure = $_
+    if ($changed -and $Translation) { Stop-Translation $releasePath $translationPolicy }
     if ($changed -and $previous) {
         Write-Warning 'Deployment failed; restoring previous application images. Database is not restored automatically.'
         $env:PPE_API_IMAGE = $previous.api_image
@@ -138,9 +196,10 @@ try {
         $env:PPE_COOKIE_SECURE = if ([bool]$previous.https -or $previousTunnel) { 'true' } else { 'false' }
         $previousPath = Join-Path (Join-Path $deploymentPath 'releases') $previous.commit
         $restoreServices = @('api','web','maintenance')
+        if ($previousTranslation) { $restoreServices += 'translation-worker' }
         if ($Https) { $restoreServices += 'gateway' }
-        Invoke-Docker ((Compose-Arguments $previousPath) + @('up','-d','--no-build','--wait','--wait-timeout','180') + $restoreServices)
-        Confirm-Ready $previousPath
+        Invoke-Docker ((Compose-Arguments $previousPath $previousTranslation $previousPolicy) + @('up','-d','--no-build','--wait','--wait-timeout','180') + $restoreServices)
+        Confirm-Ready $previousPath $previousTranslation $previousPolicy
     }
     throw $failure
 } finally {
@@ -148,6 +207,8 @@ try {
     $env:PPE_WEB_IMAGE = $oldWeb
     $env:PPE_WEB_BIND = $oldBind
     $env:PPE_COOKIE_SECURE = $oldCookie
+    $env:PPE_AUTO_TRANSLATION_POLICY_FILE = $oldTranslationPolicy
+    foreach ($name in $oldTranslationEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $oldTranslationEnvironment[$name], 'Process') }
     $deploymentLock.Dispose()
     Remove-Item -LiteralPath $lockPath -Force
 }
