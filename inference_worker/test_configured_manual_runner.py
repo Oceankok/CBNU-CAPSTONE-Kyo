@@ -38,6 +38,12 @@ class ConfiguredManualRunnerTests(TestCase):
         self.assertEqual(mux.last_emitted,20)
 
     def test_default_review_real_chunks_seam_and_whole_incident(self):
+        self.run_case(.072)
+
+    def test_default_review_without_gap_encodes_one_long_clip_per_camera(self):
+        self.run_case(0)
+
+    def run_case(self,seam):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); source=root/'source.mp4'
             writer=cv2.VideoWriter(str(source),cv2.VideoWriter_fourcc(*'mp4v'),15,(64,64))
@@ -48,9 +54,13 @@ class ConfiguredManualRunnerTests(TestCase):
             class Client:
                 server_url='https://synthetic.test'
                 tick=-2
+                delayed=False
                 def get_ppe_policy(self,camera):return POLICY
                 def set_inference_load(self,*a,**kw):pass
                 def list_streams(self):
+                    if self.tick==7 and not self.delayed:
+                        self.delayed=True
+                        raise httpx.ReadTimeout('synthetic delayed arrival')
                     self.tick=min(self.tick+1,25)
                     return [dict(camera_id=c,stream_id=c,capture_context_id='a'*36,
                         capture_session_id='b'*36,assignment_version=1,last_sequence=max(-1,self.tick),
@@ -59,7 +69,7 @@ class ConfiguredManualRunnerTests(TestCase):
                     if after_sequence>=self.tick:return []
                     n=after_sequence+1
                     return [dict(chunk_id=stream+str(n),sequence=n,duration_ms=1000,
-                        capture_start_at=datetime.fromtimestamp(epoch+n+(.072 if n>=10 else 0),timezone.utc).isoformat(),
+                        capture_start_at=datetime.fromtimestamp(epoch+n+(seam if n>=10 else 0),timezone.utc).isoformat(),
                         capture_context_id='a'*36,capture_session_id='b'*36,assignment_version=1)]
                 def close(self):self.client.close()
             def metadata(request):
@@ -118,6 +128,7 @@ class ConfiguredManualRunnerTests(TestCase):
                  patch.object(runner.time,'sleep'),redirect_stdout(output):
                 result=runner.run(args)
             self.assertEqual(result['state'],'drained')
+            self.assertTrue(client.delayed)
             starts=[body for _,body in commands if 'event_id' in body]
             self.assertEqual(len(starts),1)
             self.assertEqual(starts[0]['evidence_mode'],'manual_review')
@@ -127,9 +138,13 @@ class ConfiguredManualRunnerTests(TestCase):
             for c in ('main','ref'):self.assertGreater(sum(t for camera,t in probes if camera==c),21)
             reports=[b for p,b in commands if p.endswith('/capture-reports')]
             self.assertTrue(all(b['state']=='incomplete' and b['clock_uncertainty_seconds'] is None for b in reports))
-            self.assertTrue(any(any(m['reason']=='source_input_gap' for m in b['missing_ranges']) for b in reports))
+            if seam:
+                self.assertTrue(any(any(m['reason']=='source_input_gap' for m in b['missing_ranges']) for b in reports))
+            else:
+                self.assertEqual(len(probes),2)
+                self.assertTrue(all(duration>21 for _,duration in probes))
             if artifact:
                 (artifact/'configured-runner-result.json').write_text(
                     json.dumps(dict(state=result['state'],starts=starts,closes=closes,reports=reports,
-                                    encoded_media=probes,source_chunks=26,seam_seconds=.072,
+                                    encoded_media=probes,source_chunks=26,seam_seconds=seam,
                                     detector='synthetic fixture',network='fake HTTP',model_loaded=False),indent=2),encoding='utf-8')

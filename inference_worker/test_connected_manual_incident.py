@@ -53,7 +53,7 @@ class ConnectedManualTests(TestCase):
 
     def tearDown(self):fixtures.RuntimeTests.tearDown(self)
 
-    def feed(self, *, seam=False, gap=False, rewear=False, missing_pre=False, interrupt_upload=False):
+    def feed(self, *, seam=False, gap=False, rewear=False, missing_pre=False, interrupt_upload=False,early_end=False,interrupt_active=False):
         if missing_pre:
             for q in self.capture.buffers.values():q.clear()
         starts=[];closes=[]
@@ -70,6 +70,10 @@ class ConnectedManualTests(TestCase):
             closes += [r for r in transitions if r['kind']=='close']
             self.runtime.pump(now=self.now)
             if interrupt_upload and self.transport.uploads:return starts,closes
+            if early_end and step==40:
+                self.runtime.end_source('main');self.runtime.end_source('ref')
+                break
+            if interrupt_active and step==34:return starts,closes
         for _ in range(80):self.runtime.pump(now=self.now)
         return starts,closes
 
@@ -105,6 +109,13 @@ class ConnectedManualTests(TestCase):
         starts,_=self.feed(rewear=True)
         self.assertEqual(len(starts),2)
         self.assertEqual(len({r['event_id'] for r in starts}),2)
+
+    def test_missing_post_roll_retains_available_private_media(self):
+        starts,_=self.feed(early_end=True)
+        self.assertEqual(len(starts),1)
+        self.assertEqual({r[0] for r in self.probes},{'main','ref'})
+        reports=[b for path,b in self.commands if path.endswith('/capture-reports')]
+        self.assertTrue(all(any(m['reason']=='missing_post_roll' for m in r['missing_ranges']) for r in reports))
 
     def test_default_review_dispatches_connected_runner_before_detector(self):
         from inference_worker.run_server import main

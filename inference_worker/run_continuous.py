@@ -4,6 +4,7 @@ Requires a fully specified local JSON configuration; no operating grace, clock,
 retention or memory defaults are invented here. Never enables automatic judgment.
 """
 import json,math,os,time,inspect,sys
+import httpx
 from pathlib import Path
 from inference_worker.video_client import VideoClient
 from inference_worker.person_tracker import PersonTracker
@@ -34,6 +35,11 @@ def check_source_progress(mux,*,now,elapsed,max_lag_seconds,waiting_for_first=()
         return
     if mux.latest:mux.check_stall(now=now,max_lag_seconds=max_lag_seconds,waiting_for_first=waiting_for_first)
     elif elapsed>=max_lag_seconds:raise SourceMuxError('source_initial_frame_timeout')
+
+
+def temporary_http(error):
+    return isinstance(error,httpx.TransportError) or (isinstance(error,httpx.HTTPStatusError)
+        and error.response.status_code in (429,500,502,503,504))
 
 
 def poll_source(reader,mux,*,now,elapsed,max_lag_seconds):
@@ -170,7 +176,13 @@ def run(args):
             now=time.time()
             if not manual and any(parse_capture_time(r['valid_until']).timestamp()<=now for r in clocks.values()):
                 raise ValueError('camera calibration expired')
-            policy=client.get_ppe_policy(args.camera_id)
+            if manual and last_arrival_sequence is not None and time.monotonic()-primary_arrival>config['max_lag_seconds']:
+                raise SourceMuxError('primary_arrival_timeout')
+            try:
+                policy=client.get_ppe_policy(args.camera_id)
+            except httpx.HTTPError as error:
+                if not manual or not temporary_http(error):raise
+                priority.release();time.sleep(max(args.poll,.1));continue
             signature=json.dumps(policy,sort_keys=True,allow_nan=False)
             if policy_signature is not None and signature!=policy_signature:
                 raise ValueError('policy changed; fresh capture session required')
@@ -191,6 +203,9 @@ def run(args):
                     batch=poll_source(reader,mux,now=now,elapsed=time.monotonic()-source_started,
                                       max_lag_seconds=config['max_lag_seconds'])
                 for metadata in reader.reference_failures.values():box.record_reference_failure(metadata)
+            except httpx.HTTPError as error:
+                if not manual or not temporary_http(error):raise
+                priority.release();time.sleep(max(args.poll,.1));continue
             except SourceMuxError as error:
                 if (str(error) not in ('session_stopped','primary_source_ended')
                         or set(mux.ended)!=set(mux.cameras) or mux.queue):

@@ -293,7 +293,7 @@ class CaptureOutbox:
             sql+=' AND camera=?';params.append(camera)
         return self.db.execute(sql,params).fetchone() is not None
 
-    def enqueue(self,event,*,seq,kind,idempotency_key,body,_lifecycle_final_progress=False):
+    def enqueue(self,event,*,seq,kind,idempotency_key,body,_lifecycle_final_progress=False,_recovered_manual_manifest=False):
         """Canonical bytes are persisted once; retries never reconstruct payloads."""
         _key(idempotency_key)
         if type(seq) is not int or seq<0 or kind not in ('start','progress','close','incomplete','manifest','capture_report'):
@@ -308,7 +308,13 @@ class CaptureOutbox:
                 if (old['kind'],old['idem'],old['body'])!=(kind,idempotency_key,payload):
                     raise OutboxError('immutable request conflict')
                 return bytes(old['body'])
-            if (row['state']!='active' and kind!='incomplete'
+            recovered=False
+            if _recovered_manual_manifest and kind=='manifest' and isinstance(body,dict):
+                original=self.db.execute("SELECT body FROM requests WHERE event=? AND kind='start'",(event,)).fetchone()
+                recovered=(original is not None and json.loads(original['body']).get('evidence_mode')=='manual_review'
+                    and body.get('session_id')==row['session'] and row['state'] in ('interrupted','incomplete')
+                    and body.get('camera_id') in self._camera_ids(json.loads(row['snapshot'])))
+            if (not recovered and row['state']!='active' and kind!='incomplete'
                     and not (row['state']=='closed' and kind=='capture_report')
                     and not (row['state']=='incomplete' and kind=='progress' and _lifecycle_final_progress is True)
                     and not (kind=='manifest' and isinstance(body,dict) and body.get('session_id')==self.session
