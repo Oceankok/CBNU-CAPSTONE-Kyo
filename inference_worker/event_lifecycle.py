@@ -6,6 +6,8 @@ Call update/close_all from one decoder-owner thread; transport workers consume
 immutable transition bodies rather than sharing this mutable state machine.
 """
 from collections.abc import Mapping
+import hashlib
+import json
 from math import isfinite
 from uuid import uuid4
 
@@ -23,6 +25,21 @@ def _scope_value(value):
     if isinstance(value, Mapping) and all(isinstance(key, str) for key in value):
         return tuple(sorted((key, _scope_value(item)) for key, item in value.items()))
     raise ValueError('policy_scope_key')
+
+
+def _scope_change(previous, current, timestamp):
+    """Fixed-size local diagnostic; no raw scope values enter the new fields."""
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    result = dict(observed_at=timestamp, previous_scope_sha256=digest(previous),
+                  next_scope_sha256=digest(current), previous_scope_resolved=previous is not None,
+                  next_scope_resolved=current is not None)
+    if all(isinstance(value, tuple) and len(value) == 4 and value[1] in ('person', 'camera')
+           for value in (previous, current)):
+        for name, index in (('policy_version_changed', 0), ('scope_basis_changed', 1),
+                            ('area_membership_changed', 2), ('required_ppe_changed', 3)):
+            result[name] = previous[index] != current[index]
+    return result
 
 
 class EventLifecycle:
@@ -145,8 +162,14 @@ class EventLifecycle:
             status = observation['status']
             scope = observation.get('policy_scope_key')
             state = self.states.get(key)
-            if state is not None and state['scope'] != scope:
+            if state is not None and state['scope'] is not None and scope is None:
+                # Unresolved position/policy is an unknown observation, not a
+                # known membership change or evidence of absence/rewear.
+                status = observation['status'] = 'unknown'
+            elif state is not None and state['scope'] != scope:
                 self._close(key, 'policy_scope_changed', output)
+                if state['event_id'] is not None:
+                    output[-1]['policy_scope_change'] = _scope_change(state['scope'], scope, timestamp)
                 state = None
             if state is not None and state['event_id'] is not None:
                 person_delta = timestamp - state['last_seen']

@@ -89,6 +89,34 @@ class LifecycleJournalTests(unittest.TestCase):
         new=self.feed()[0]['event_id']
         self.assertNotEqual(new,event)
 
+    def test_scope_change_diagnostic_is_bounded_durable_and_local_only(self):
+        from inference_worker.continuous_payloads import update_payload
+        old_scope = ('v1', 'person', (), ('helmet', 'vest'))
+        new_scope = ('v2', 'person', ('roi-B',), ('helmet',))
+        for index in range(7):
+            self.bridge.update([observation('a', scope=old_scope)], index * .5)
+        closed = self.bridge.update([observation('a', scope=new_scope)], 3.5)[0]
+        stored = json.loads(self.box.pending_close_intents()[0]['transition'])
+        diagnostic = stored['policy_scope_change']
+        self.assertEqual(diagnostic, closed['policy_scope_change'])
+        self.assertEqual(diagnostic['observed_at'], 3.5)
+        self.assertEqual(stored['end_time'], 3)
+        self.assertTrue(diagnostic['policy_version_changed'])
+        self.assertTrue(diagnostic['area_membership_changed'])
+        self.assertTrue(diagnostic['required_ppe_changed'])
+        self.assertFalse(diagnostic['scope_basis_changed'])
+        self.assertNotEqual(diagnostic['previous_scope_sha256'], diagnostic['next_scope_sha256'])
+        encoded = json.dumps(diagnostic)
+        self.assertLess(len(encoded), 512)
+        for raw in ('roi-B', 'v2', 'helmet'):
+            self.assertNotIn(raw, encoded)
+        wire = update_payload(stored, session_id=self.box.session, sequence=1,
+                              complete=False, final_segment_count=0)
+        stored.pop('policy_scope_change')
+        self.assertEqual(wire, update_payload(stored, session_id=self.box.session, sequence=1,
+                                             complete=False, final_segment_count=0))
+        self.assertNotIn('policy_scope_change', wire)
+
     def test_close_and_progress_frame_all_rollback_on_error(self):
         rows=self.feed(tracks=('a','b'));events={r['tracking_id']:r['event_id'] for r in rows}
         old=self.bridge.lifecycle
