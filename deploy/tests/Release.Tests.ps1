@@ -11,12 +11,13 @@ $originalBind = $env:PPE_WEB_BIND
 $originalCookie = $env:PPE_COOKIE_SECURE
 $originalHttpsLog = $env:KYO_FAKE_HTTPS_LOG
 $originalHttpsFail = $env:KYO_FAKE_HTTPS_FAIL
+$originalTranslationUnconfigured = $env:KYO_FAKE_TRANSLATION_UNCONFIGURED
 $expectedPath = [IO.Path]::GetFullPath($sandbox)
 New-Item -ItemType Directory -Path $sandbox | Out-Null
 try {
     $fake = Join-Path $sandbox 'docker.ps1'
     @'
-$entry = @{args=@($args);api=$env:PPE_API_IMAGE;web=$env:PPE_WEB_IMAGE;bind=$env:PPE_WEB_BIND;secure=$env:PPE_COOKIE_SECURE} | ConvertTo-Json -Compress
+$entry = @{args=@($args);api=$env:PPE_API_IMAGE;web=$env:PPE_WEB_IMAGE;bind=$env:PPE_WEB_BIND;secure=$env:PPE_COOKIE_SECURE;translation_policy=$env:PPE_AUTO_TRANSLATION_POLICY_FILE} | ConvertTo-Json -Compress
 Add-Content -LiteralPath $env:KYO_FAKE_LOG -Value $entry
 $global:LASTEXITCODE = 0
 if ($args -contains 'cp') { [IO.File]::WriteAllText($args[-1], 'fake-binary-dump') }
@@ -24,11 +25,16 @@ if ($env:KYO_FAKE_FAIL -and ($args -contains 'up')) {
     $env:KYO_FAKE_FAIL = ''
     $global:LASTEXITCODE = 19
 }
+if ($env:KYO_FAKE_TRANSLATION_UNCONFIGURED -eq 'true' -and ($args -contains 'exec') -and ($args -contains 'translation-worker') -and $args[-1].Contains('availability')) {
+    $policy = Get-Content -LiteralPath $env:PPE_AUTO_TRANSLATION_POLICY_FILE -Raw | ConvertFrom-Json
+    if ($policy.enabled -and $policy.allow_external_processing) { $global:LASTEXITCODE = 23 }
+}
 '@ | Set-Content -LiteralPath $fake
     $env:PATH = $sandbox + [IO.Path]::PathSeparator + $originalPath
     $env:KYO_FAKE_LOG = Join-Path $sandbox 'docker.log'
     $env:KYO_FAKE_HTTPS_LOG = Join-Path $sandbox 'https.log'
     $env:KYO_FAKE_HTTPS_FAIL = ''
+    $env:KYO_FAKE_TRANSLATION_UNCONFIGURED = 'true'
     if ((Get-Command docker).Source -ne $fake) { throw 'Fake Docker did not take precedence; refusing test' }
     $target = Join-Path $sandbox 'server'
     New-Item -ItemType Directory -Path $target | Out-Null
@@ -187,6 +193,66 @@ PPE_PUBLIC_HOST=demo.example.test
     Set-TestCookie 'false'
     $env:PPE_COOKIE_SECURE=$originalCookie
 
+    # Translation opt-in is independent of provider activation; staged OFF policy is valid.
+    Set-TestCookie 'false'
+    $beforePolicyEnv=$env:PPE_AUTO_TRANSLATION_POLICY_FILE
+    $beforeTranslationProvider=$env:PPE_EDUCATION_TRANSLATION_PROVIDER
+    $beforeCount=@(Get-Content -LiteralPath $env:KYO_FAKE_LOG).Count
+    Expect-Rejection { & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web -Translation }
+    if (@(Get-Content -LiteralPath $env:KYO_FAKE_LOG).Count -ne $beforeCount) { throw 'Missing translation policy reached Docker' }
+    $policyFile=Join-Path $sandbox 'operator-policy.json'
+    @{enabled=$false;allow_external_processing=$false;daily_requests=2;total_requests=2;total_source_chars=2000;max_source_chars=1000;max_queued=2;verified_catalog=@()} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $policyFile
+    Add-Content -LiteralPath (Join-Path $target 'server.env') -Value ("`nPPE_AUTO_TRANSLATION_POLICY_FILE="+$policyFile)
+    $beforeCount=@(Get-Content -LiteralPath $env:KYO_FAKE_LOG).Count
+    & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web -Translation
+    $translationRecord=Get-Content -LiteralPath $manifest -Raw|ConvertFrom-Json
+    if (-not $translationRecord.translation) { throw 'Translation opt-in not recorded' }
+    $snapshot=$translationRecord.translation_policy_file
+    if ($snapshot -eq $policyFile -or -not $snapshot.StartsWith((Join-Path $target "releases/$second"))) { throw 'Policy was not snapshotted inside the release' }
+    if (-not (Test-Path -LiteralPath (Join-Path $target "releases/$second/compose.translation.yaml"))) { throw 'Versioned overlay missing' }
+    $newCommands=@(Get-Content -LiteralPath $env:KYO_FAKE_LOG|Select-Object -Skip $beforeCount|ForEach-Object { $_|ConvertFrom-Json })
+    $workerUp=@($newCommands|Where-Object { $_.args -contains 'up' -and $_.args -contains 'translation-worker' })
+    if ($workerUp.Count -ne 1 -or $workerUp[0].translation_policy -ne $snapshot -or -not ($workerUp[0].args -contains 'translation')) { throw 'Worker did not share opt-in profile/pinned policy' }
+    # Changing the mutable input cannot change the previous release's policy snapshot.
+    $policyText=Get-Content -LiteralPath $policyFile -Raw
+    $policyText.Replace('"total_requests": 2','"total_requests": 3') | Set-Content -LiteralPath $policyFile
+    if ((Get-Content -LiteralPath $snapshot -Raw|ConvertFrom-Json).total_requests -ne 2) { throw 'Release policy is mutable' }
+    $env:KYO_FAKE_FAIL='true'
+    Expect-Rejection { & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web }
+    $commands=@(Get-Content -LiteralPath $env:KYO_FAKE_LOG|ForEach-Object { $_|ConvertFrom-Json })
+    $lastUp=@($commands|Where-Object { $_.args -contains 'up' })[-1]
+    if (-not ($lastUp.args -contains 'translation-worker') -or $lastUp.translation_policy -ne $snapshot) { throw 'Failed opt-out did not restore previous worker/policy' }
+    & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web
+    if ((Get-Content -LiteralPath $manifest -Raw|ConvertFrom-Json).translation) { throw 'Successful opt-out kept translation enabled' }
+    $commands=@(Get-Content -LiteralPath $env:KYO_FAKE_LOG|ForEach-Object { $_|ConvertFrom-Json })
+    if (-not ($commands|Where-Object { $_.args -contains 'stop' -and $_.args -contains 'translation-worker' }) -or -not ($commands|Where-Object { $_.args -contains 'rm' -and $_.args -contains 'translation-worker' })) { throw 'Opt-out left an orphaned restartable worker' }
+    # Failed opt-in restores OFF and removes attempted worker; on->on upgrade restores prior image/snapshot.
+    $env:KYO_FAKE_FAIL='true'
+    Expect-Rejection { & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web -Translation }
+    $commands=@(Get-Content -LiteralPath $env:KYO_FAKE_LOG|ForEach-Object { $_|ConvertFrom-Json })
+    if (@($commands|Where-Object { $_.args -contains 'up' })[-1].args -contains 'translation-worker') { throw 'Failed opt-in activated previous OFF release' }
+    & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web -Translation
+    $prior=Get-Content -LiteralPath $manifest -Raw|ConvertFrom-Json
+    $env:KYO_FAKE_FAIL='true'
+    Expect-Rejection { & $script -DeploymentRoot $target -Commit ('c'*40) -ApiImage ('ghcr.io/oceankok/cbnu-capstone-kyo-api@sha256:'+('4'*64)) -WebImage $web -Translation }
+    $commands=@(Get-Content -LiteralPath $env:KYO_FAKE_LOG|ForEach-Object { $_|ConvertFrom-Json })
+    $lastUp=@($commands|Where-Object { $_.args -contains 'up' })[-1]
+    if ($lastUp.api -ne $newApi -or $lastUp.translation_policy -ne $prior.translation_policy_file -or -not ($lastUp.args -contains 'translation-worker')) { throw 'Translation upgrade rollback lost image/policy/worker parity' }
+    if (($commands|Where-Object { $_.args -contains 'down' -or $_.args -contains '-v' })) { throw 'Translation lifecycle deleted volumes' }
+    & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web
+    if ($env:PPE_AUTO_TRANSLATION_POLICY_FILE -ne $beforePolicyEnv -or $env:PPE_EDUCATION_TRANSLATION_PROVIDER -ne $beforeTranslationProvider) { throw 'Translation environment leaked' }
+    # OFF staging above succeeds without a configured provider. Active policy must not.
+    $activePolicy=Get-Content -LiteralPath $policyFile -Raw|ConvertFrom-Json
+    $activePolicy.enabled=$true; $activePolicy.allow_external_processing=$true
+    $activePolicy|ConvertTo-Json -Depth 5|Set-Content -LiteralPath $policyFile
+    Add-Content -LiteralPath (Join-Path $target 'server.env') -Value "`nPPE_EDUCATION_TRANSLATION_PROVIDER=typo`nPPE_EDUCATION_TRANSLATION_MODEL=invalid model`nPPE_EDUCATION_TRANSLATION_OPENAI_API_KEY=test-only-key"
+    Expect-Rejection { & $script -DeploymentRoot $target -Commit $second -ApiImage $newApi -WebImage $web -Translation }
+    if ((Get-Content -LiteralPath $manifest -Raw|ConvertFrom-Json).translation) { throw 'Unconfigured active provider was published as ready' }
+    $commands=@(Get-Content -LiteralPath $env:KYO_FAKE_LOG|ForEach-Object { $_|ConvertFrom-Json })
+    if (@($commands|Where-Object { $_.args -contains 'up' })[-1].args -contains 'translation-worker') { throw 'Provider-readiness failure did not restore prior OFF release' }
+    Write-Output 'PASS: enabled unconfigured provider fails readiness and restores OFF; provider-free OFF staging remains valid'
+    Write-Output 'PASS: translation default OFF, opt-in snapshot/profile, OFF transition worker removal, failed enable/disable/upgrade rollback, image-policy parity, environment restoration, no volume deletion'
+
     $lock = Join-Path $target 'release.lock'
     if (Test-Path -LiteralPath $lock) { throw 'Deployment lock leaked' }
     Set-Content -LiteralPath $lock -Value 'another-deployment'
@@ -203,6 +269,7 @@ PPE_PUBLIC_HOST=demo.example.test
     $env:PPE_COOKIE_SECURE = $originalCookie
     $env:KYO_FAKE_HTTPS_LOG = $originalHttpsLog
     $env:KYO_FAKE_HTTPS_FAIL = $originalHttpsFail
+    $env:KYO_FAKE_TRANSLATION_UNCONFIGURED = $originalTranslationUnconfigured
     if ([IO.Path]::GetFullPath($sandbox) -ne $expectedPath -or -not (Split-Path $expectedPath -Leaf).StartsWith('kyo-release-test-')) { throw 'Unsafe cleanup path' }
     Remove-Item -LiteralPath $expectedPath -Recurse -Force
 }
