@@ -43,6 +43,8 @@ class InitializationConnection:
             return Cursor((None,))
         if sql == "SELECT to_regclass('auto_decision_settings')":
             return Cursor(('auto_decision_settings',))
+        if sql.startswith('SELECT 1 FROM information_schema.columns'):
+            return Cursor((1,))
         return Cursor()
 
 

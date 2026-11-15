@@ -19,7 +19,7 @@ class ZoneMembersScopeTests(unittest.TestCase):
         self.admin = login(self.client)
         for zone in ('A', 'B'):
             self.assertEqual(self.client.put('/api/zones/' + zone, headers=self.admin,
-                json={'required_ppe': ['helmet'], 'rules': []}).status_code, 200)
+                json={'required_ppe': ['helmet'], 'rules': [], 'expected_revision': None}).status_code, 200)
         self.assertEqual(self.client.post('/api/users', headers=self.admin, json={
             'user_id': 'worker02', 'password': 'test-password', 'display_name': 'Worker 2',
             'role': 'worker'}).status_code, 201)

@@ -2,7 +2,7 @@ import unittest
 
 from backend.db.connection import is_postgres, schema_version
 from backend.db.event_repository import get_connection
-from backend.tests.support import isolated_api, login
+from backend.tests.support import isolated_api, login, zone_precondition
 from backend.work_areas.geometry import validate_points
 from inference_worker.work_area_policy import resolve_person_policy
 
@@ -17,7 +17,7 @@ class WorkAreaTests(unittest.TestCase):
         self.admin = login(self.client)
         self.worker = login(self.client, 'worker01')
         self.root = '/api/cameras/CAM_001'
-        self.client.put('/api/zones/프레스 구역', headers=self.admin, json={'required_ppe': ['helmet'], 'rules': []}).raise_for_status()
+        self.client.put('/api/zones/프레스 구역', headers=self.admin, json={'required_ppe': ['helmet'], 'rules': [], **zone_precondition(self.client,self.admin,'프레스 구역')}).raise_for_status()
         response = self.client.post('/api/equipment', headers=self.admin,
             json={'name': '프레스', 'zone_name': '프레스 구역', 'required_ppe': ['vest']})
         response.raise_for_status()

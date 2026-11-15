@@ -4,7 +4,7 @@ from uuid import uuid4
 from backend.db import event_repository as repository
 from backend.db.recommendation_score import monday, period_week_count, risk_multiplier, score
 from backend.db.init_db import init_database
-from backend.tests.support import isolated_api, login
+from backend.tests.support import isolated_api, login, zone_precondition
 
 
 class ScoreCalendarTests(unittest.TestCase):
@@ -38,7 +38,7 @@ class RecommendationScoreV2Tests(unittest.TestCase):
                 conn.execute("INSERT INTO camera_info(camera_id,camera_location,zone_name,status) VALUES(?,?,?,'active')",('SCORE_'+zone,zone,zone))
 
     def set_risk(self,zone,level):
-        result=self.client.put('/api/zones/'+zone,headers=self.admin,json={'required_ppe':[],'rules':[],'risk_level':level})
+        result=self.client.put('/api/zones/'+zone,headers=self.admin,json={'required_ppe':[],'rules':[],'risk_level':level,**zone_precondition(self.client,self.admin,zone)})
         self.assertEqual(result.status_code,200,result.text)
 
     def add(self,stamp,zone='A',ppe='helmet',status='confirmed'):

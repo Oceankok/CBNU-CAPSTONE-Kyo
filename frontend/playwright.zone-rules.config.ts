@@ -2,6 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './scripts/zone-rules-browser',
+  testMatch: 'zone-rules.spec.ts',
   workers: 1,
   outputDir: '.private_media/zone-rules-browser/artifacts',
   reporter: [

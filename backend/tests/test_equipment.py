@@ -1,7 +1,7 @@
 import unittest
 
 from backend.db.event_repository import get_connection
-from backend.tests.support import isolated_api, login
+from backend.tests.support import isolated_api, login, zone_precondition
 
 
 class EquipmentApiTests(unittest.TestCase):
@@ -11,7 +11,7 @@ class EquipmentApiTests(unittest.TestCase):
         self.addCleanup(self.context.__exit__, None, None, None)
         self.admin = login(self.client)
         self.client.put("/api/zones/프레스 구역",headers=self.admin,
-                        json={"required_ppe":["helmet"],"rules":[]}).raise_for_status()
+                        json={"required_ppe":["helmet"],"rules":[],**zone_precondition(self.client,self.admin,'프레스 구역')}).raise_for_status()
 
     def create(self, **changes):
         body={"name":"프레스 1호기","equipment_type":"press","zone_name":"프레스 구역","required_ppe":["vest"]}
@@ -97,9 +97,9 @@ class EquipmentApiTests(unittest.TestCase):
         self.assertEqual(self.links([equipment_id]).json()["detail"],"equipment_inactive")
         self.links([]).raise_for_status()
         self.assertEqual(self.client.patch(item_path,headers=self.admin,json={"zone_name":"자재 이동 구역"}).status_code,200)
-        self.client.put("/api/zones/장비 전용 구역",headers=self.admin,json={"required_ppe":[],"rules":[]}).raise_for_status()
+        self.client.put("/api/zones/장비 전용 구역",headers=self.admin,json={"required_ppe":[],"rules":[],"expected_revision":None}).raise_for_status()
         self.create(zone_name="장비 전용 구역",status="inactive")
-        response=self.client.delete("/api/zones/장비 전용 구역",headers=self.admin)
+        response=self.client.delete("/api/zones/장비 전용 구역",headers=self.admin,params=zone_precondition(self.client,self.admin,'장비 전용 구역'))
         self.assertEqual(response.status_code,409,response.text)
         self.assertEqual(response.json()["detail"],"zone_has_equipment")
 
@@ -125,7 +125,7 @@ class EquipmentApiTests(unittest.TestCase):
         self.assertFalse(policy["configured"])
         self.assertIsNone(policy["required_ppe"])
         self.assertIn("equipment_scope_unconfigured",policy["configuration_issues"])
-        self.client.put("/api/zones/프레스 구역",headers=self.admin,json={"required_ppe":[],"rules":[]}).raise_for_status()
+        self.client.put("/api/zones/프레스 구역",headers=self.admin,json={"required_ppe":[],"rules":[],**zone_precondition(self.client,self.admin,'프레스 구역')}).raise_for_status()
         self.links([]).raise_for_status()
         self.assertTrue(self.policy()["configured"])
         self.assertEqual(self.policy()["required_ppe"],[])

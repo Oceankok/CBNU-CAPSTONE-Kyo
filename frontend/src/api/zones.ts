@@ -24,17 +24,34 @@ export const mockZones: ZoneRule[] = [
 ];
 
 export async function fetchZones(): Promise<ZoneRule[]> {
-  if (MOCK_AUTH) return structuredClone(mockZones);
+  if (MOCK_AUTH)
+    return structuredClone(
+      mockZones.map((z) => ({ ...z, revision: mockRevision(z) })),
+    );
   return (await apiFetch<{ items: ZoneRule[] }>('/api/zones')).items;
 }
 
-export async function saveZone(rule: ZoneRule): Promise<ZoneRule> {
-  const body = zoneSaveBody(rule);
+const mockRevision = (zone: ZoneRule) =>
+  zone.revision ?? `mock-initial-${zone.zone_name}`;
+
+export async function saveZone(
+  rule: ZoneRule,
+  expectedRevision: string | null,
+): Promise<ZoneRule> {
+  const body = { ...zoneSaveBody(rule), expected_revision: expectedRevision };
   if (MOCK_AUTH) {
     const i = mockZones.findIndex((z) => z.zone_name === rule.zone_name);
+    if (
+      i < 0
+        ? expectedRevision !== null
+        : expectedRevision !== mockRevision(mockZones[i])
+    ) {
+      throw new ApiError(409, 'zone_rule_changed');
+    }
     const saved = {
       ...rule,
-      ...body,
+      ...zoneSaveBody(rule),
+      revision: crypto.randomUUID(),
       // Omitting the level keeps what was saved, like the server
       risk_level: body.risk_level ?? mockZones[i]?.risk_level ?? null,
       updated_at: new Date().toISOString(),
@@ -52,19 +69,28 @@ export async function saveZone(rule: ZoneRule): Promise<ZoneRule> {
   );
 }
 
-export async function deleteZone(zoneName: string): Promise<void> {
+export async function deleteZone(
+  zoneName: string,
+  expectedRevision: string | null,
+): Promise<void> {
   if (MOCK_AUTH) {
     const i = mockZones.findIndex((z) => z.zone_name === zoneName);
+    if (i < 0 || expectedRevision !== mockRevision(mockZones[i]))
+      throw new ApiError(409, 'zone_rule_changed');
     if (i >= 0) mockZones.splice(i, 1);
     return;
   }
   try {
-    await apiFetch(`/api/zones/${encodeURIComponent(zoneName)}`, {
+    const params = new URLSearchParams();
+    if (expectedRevision != null)
+      params.set('expected_revision', expectedRevision);
+    await apiFetch(`/api/zones/${encodeURIComponent(zoneName)}?${params}`, {
       method: 'DELETE',
     });
   } catch (e) {
     // Backend detail is English; this case is common enough to explain in Korean
     if (e instanceof ApiError && e.status === 409) {
+      if (e.message === 'zone_rule_changed') throw e;
       throw new ApiError(
         409,
         // zone_has_equipment (#122) also blocks on inactive equipment
