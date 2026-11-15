@@ -2,6 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './scripts/education-browser',
+  outputDir: 'test-results/education',
   testIgnore: 'translations.spec.ts',
   fullyParallel: false,
   workers: 1,
