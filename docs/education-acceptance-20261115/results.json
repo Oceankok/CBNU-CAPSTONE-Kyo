@@ -1,0 +1,187 @@
+{
+  "date_kst": "2026-11-15",
+  "base_commit": "ac9d254774ae5c1d0ebdc9019f249b7ddceb68e8",
+  "browser": "Microsoft Edge 157.0.4341.46 headless",
+  "playwright": "1.65.1",
+  "method": "Real React components and API client in browser; HTTP routes mocked; no backend/DB",
+  "runs": [
+    {
+      "command": "PLAYWRIGHT_CHANNEL=msedge npm run test:education:browser",
+      "passed": 24,
+      "failed": 1,
+      "failure": "Test locator selected the b label instead of the surrounding p; production code was unchanged to resolve this."
+    },
+    {
+      "command": "PLAYWRIGHT_CHANNEL=msedge npm run test:education:browser -- --last-failed",
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "baseline": {
+    "components_from": "ac9d254774ae5c1d0ebdc9019f249b7ddceb68e8",
+    "expected_failures": 3,
+    "cases": [
+      "F1 delayed save inputs remain enabled",
+      "F2 latest server review is absent",
+      "F3 list conflict row is not refreshed"
+    ]
+  },
+  "source_sha256": {
+    "frontend/src/components/EducationMaterialEditor.tsx": "a7d1afd714f716880406fb7a2826ea659a0874a370739d9e76cc40c2c3d98ffd",
+    "frontend/src/components/EducationBundleEditor.tsx": "e7827e058e5cb2a15fe00234a12675ea230f727be0d2ac4433196f100dac6870",
+    "frontend/src/pages/RecommendPage.tsx": "5ac9de91d7af29129b6bc46fc9ba1b7af874b5876d2b65fdb5cd61cdd19b5e34",
+    "frontend/src/api/educationBundles.ts": "caf0a2e1165af761322dd6d70939118f24fa2b2c166e0ba3046386ed9b7f01b6"
+  },
+  "final_cases": [
+    {
+      "title": "F1: delayed save locks all draft controls and only clears the submitted draft",
+      "file": "editors.spec.ts",
+      "line": 32,
+      "status": "passed"
+    },
+    {
+      "title": "F1: response from an unmounted editor cannot clear its remounted draft",
+      "file": "editors.spec.ts",
+      "line": 61,
+      "status": "passed"
+    },
+    {
+      "title": "F1: failed delayed save unlocks controls and preserves content before switching editors",
+      "file": "editors.spec.ts",
+      "line": 83,
+      "status": "passed"
+    },
+    {
+      "title": "F2: latest published material cannot be adopted for editing or overwritten",
+      "file": "editors.spec.ts",
+      "line": 103,
+      "status": "passed"
+    },
+    {
+      "title": "F3: failed row refresh can be retried without losing another editor",
+      "file": "editors.spec.ts",
+      "line": 122,
+      "status": "passed"
+    },
+    {
+      "title": "F3: active bundle save conflict requires review and resubmits only the selected version",
+      "file": "editors.spec.ts",
+      "line": 145,
+      "status": "passed"
+    },
+    {
+      "title": "F2: version conflict requires explicit resolution: 내 입력을 유지하고 최신 버전 선택",
+      "file": "editors.spec.ts",
+      "line": 170,
+      "status": "passed"
+    },
+    {
+      "title": "F2: version conflict requires explicit resolution: 최신 서버본으로 다시 시작",
+      "file": "editors.spec.ts",
+      "line": 170,
+      "status": "passed"
+    },
+    {
+      "title": "F2: scope conflict preserves inputs and asks parent to explicitly reselect target",
+      "file": "editors.spec.ts",
+      "line": 203,
+      "status": "passed"
+    },
+    {
+      "title": "F2: failed conflict refresh stays blocked until latest data is reviewed",
+      "file": "editors.spec.ts",
+      "line": 223,
+      "status": "passed"
+    },
+    {
+      "title": "F3: list publish refreshes row and preserves other draft=false",
+      "file": "editors.spec.ts",
+      "line": 242,
+      "status": "passed"
+    },
+    {
+      "title": "F3: list publish refreshes row and preserves other draft=true",
+      "file": "editors.spec.ts",
+      "line": 242,
+      "status": "passed"
+    },
+    {
+      "title": "F3: list unpublish refreshes row and preserves other draft=false",
+      "file": "editors.spec.ts",
+      "line": 242,
+      "status": "passed"
+    },
+    {
+      "title": "F3: list unpublish refreshes row and preserves other draft=true",
+      "file": "editors.spec.ts",
+      "line": 242,
+      "status": "passed"
+    },
+    {
+      "title": "G1: top three cards and 21 full targets are independent; 20-zone and PPE limits",
+      "file": "targets.spec.ts",
+      "line": 21,
+      "status": "passed"
+    },
+    {
+      "title": "G1: targets status 200 never triggers generation",
+      "file": "targets.spec.ts",
+      "line": 47,
+      "status": "passed"
+    },
+    {
+      "title": "G1: targets status 400 never triggers generation",
+      "file": "targets.spec.ts",
+      "line": 47,
+      "status": "passed"
+    },
+    {
+      "title": "G1: targets status 401 never triggers generation",
+      "file": "targets.spec.ts",
+      "line": 47,
+      "status": "passed"
+    },
+    {
+      "title": "G1: targets status 403 never triggers generation",
+      "file": "targets.spec.ts",
+      "line": 47,
+      "status": "passed"
+    },
+    {
+      "title": "G1: targets status 503 never triggers generation",
+      "file": "targets.spec.ts",
+      "line": 47,
+      "status": "passed"
+    },
+    {
+      "title": "G1: explicit regeneration stages new targets; applying invalidates preview and preserves draft",
+      "file": "targets.spec.ts",
+      "line": 64,
+      "status": "passed"
+    },
+    {
+      "title": "G1: old quarter target response cannot populate the new quarter",
+      "file": "targets.spec.ts",
+      "line": 97,
+      "status": "passed"
+    },
+    {
+      "title": "G1: selection 409 preserves input and requires explicit preview request",
+      "file": "targets.spec.ts",
+      "line": 121,
+      "status": "passed"
+    },
+    {
+      "title": "G1: initial missing recommendations refresh the target pool after generation",
+      "file": "targets.spec.ts",
+      "line": 150,
+      "status": "passed"
+    },
+    {
+      "title": "G1: explicit target application preserves single-material draft removed from top three",
+      "file": "targets.spec.ts",
+      "line": 164,
+      "status": "passed"
+    }
+  ]
+}

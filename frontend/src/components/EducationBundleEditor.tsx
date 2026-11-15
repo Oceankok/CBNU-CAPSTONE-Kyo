@@ -53,6 +53,7 @@ export default function EducationBundleEditor({
   const [showBundles, setShowBundles] = useState(false);
   const [previewSelectionKey, setPreviewSelectionKey] = useState<string | null>(null);
   const [conflictBundle, setConflictBundle] = useState<EducationBundle | null>(null);
+  const [listConflicts, setListConflicts] = useState<Record<string, EducationBundle | null>>({});
   const requestRef = useRef(0);
   const conflictEpochRef = useRef(0);
   const activeBundleIdRef = useRef<string | null>(null);
@@ -114,7 +115,7 @@ export default function EducationBundleEditor({
     : null;
   const selectedSnapshot = currentPreview?.snapshot ?? null;
   const activeDraft = activeBundle ? { title, body, checklist } : null;
-  const conflictNeedsReview = Boolean(conflictBundle);
+  const conflictNeedsReview = Boolean(conflictBundle || (activeBundle && activeBundle.bundle_id in listConflicts));
   const activeDirty = Boolean(
     activeBundle && activeDraft && bundleDraftIsDirty(activeBundle, activeDraft),
   );
@@ -146,7 +147,8 @@ export default function EducationBundleEditor({
       .then((next) => {
         if (!isCurrentPreviewRequest(request)) return;
         setPreview(next);
-        setPreviewSelectionKey(selectionKey);
+        // A refreshed snapshot must be explicitly requested/reviewed before reuse.
+        setPreviewSelectionKey(null);
       })
       .catch((error: unknown) => {
         if (isCurrentPreviewRequest(request)) showError(error);
@@ -155,9 +157,14 @@ export default function EducationBundleEditor({
 
   const refreshBundleAfterConflict = (bundleId: string) => {
     const requestEpoch = ++conflictEpochRef.current;
+    setListConflicts((current) => ({ ...current, [bundleId]: null }));
     setError('다른 관리자가 자료를 변경했습니다. 최신 자료를 확인해 주세요. 입력한 내용은 보존됩니다.');
     return fetchEducationBundle(bundleId)
       .then((latest) => {
+        // A list mutation owns its row even when no editor (or another editor) is open.
+        if (requestEpoch !== conflictEpochRef.current) return;
+        setBundles((current) => current.map((item) => item.bundle_id === bundleId ? latest : item));
+        setListConflicts((current) => ({ ...current, [bundleId]: latest }));
         if (!bundleConflictResponseIsCurrent(
           requestEpoch,
           conflictEpochRef.current,
@@ -167,14 +174,14 @@ export default function EducationBundleEditor({
         setActiveBundle(latest);
         activeBundleIdRef.current = latest.bundle_id;
         setConflictBundle(latest);
+        setListConflicts((current) => {
+          const next = { ...current };
+          delete next[bundleId];
+          return next;
+        });
       })
       .catch((e: unknown) => {
-        if (bundleConflictResponseIsCurrent(
-          requestEpoch,
-          conflictEpochRef.current,
-          bundleId,
-          activeBundleIdRef.current,
-        )) showError(e);
+        if (requestEpoch === conflictEpochRef.current) showError(e);
       });
   };
 
@@ -216,7 +223,12 @@ export default function EducationBundleEditor({
     activeBundleIdRef.current = bundle.bundle_id;
     setPreview(null);
     setPreviewSelectionKey(null);
-    setConflictBundle(null);
+    setConflictBundle(listConflicts[bundle.bundle_id] ?? null);
+    setListConflicts((current) => {
+      const next = { ...current };
+      delete next[bundle.bundle_id];
+      return next;
+    });
     setTitle(bundle.title);
     setBody(bundle.body);
     setChecklist(bundle.checklist.join('\n'));
@@ -291,6 +303,7 @@ export default function EducationBundleEditor({
   };
 
   const canMutateBundle = (bundle: EducationBundle) => {
+    if (busy || bundle.bundle_id in listConflicts) return false;
     const editingThisBundle = activeBundle?.bundle_id === bundle.bundle_id;
     const blocked = editingThisBundle && activeActionsBlocked;
     if (!bundleMutationIsAllowed(
@@ -392,7 +405,7 @@ export default function EducationBundleEditor({
                 {formatSeoul(bundle.updated_at)}
               </p>
               <div className={styles.actions}>
-                <button type="button" className={styles.secondary} disabled={busy} onClick={() => openBundle(bundle)}>
+                <button type="button" className={styles.secondary} disabled={busy || (bundle.bundle_id in listConflicts && !listConflicts[bundle.bundle_id])} onClick={() => openBundle(bundle)}>
                   검토·편집
                 </button>
                 {bundle.status === 'draft' && (
@@ -402,7 +415,7 @@ export default function EducationBundleEditor({
                     question="검토한 공통 본문을 작업자에게 게시하시겠습니까?"
                     confirmLabel="게시"
                     danger={false}
-                    disabled={busy || (activeBundle?.bundle_id === bundle.bundle_id && activeActionsBlocked)}
+                    disabled={busy || bundle.bundle_id in listConflicts || (activeBundle?.bundle_id === bundle.bundle_id && activeActionsBlocked)}
                     onConfirm={() => publish(bundle)}
                   />
                 )}
@@ -412,11 +425,29 @@ export default function EducationBundleEditor({
                     label="게시 취소"
                     question="게시를 취소하면 작업자는 이 자료를 더 이상 볼 수 없습니다."
                     confirmLabel="게시 취소"
-                    disabled={busy || (activeBundle?.bundle_id === bundle.bundle_id && activeActionsBlocked)}
+                    disabled={busy || bundle.bundle_id in listConflicts || (activeBundle?.bundle_id === bundle.bundle_id && activeActionsBlocked)}
                     onConfirm={() => unpublish(bundle)}
                   />
                 )}
               </div>
+              {bundle.bundle_id in listConflicts && (
+                <div className={styles.conflict} role="alert">
+                  {listConflicts[bundle.bundle_id] ? <>
+                    <strong>최신 서버본 · v{bundle.version} · {STATUS_LABEL[bundle.status]}</strong>
+                    <p>{bundle.title}</p>
+                    <p className={styles.serverBody}>{bundle.body}</p>
+                    <ul>{bundle.checklist.map((item, index) => <li key={index}>{item}</li>)}</ul>
+                    <button type="button" disabled={busy} onClick={() => setListConflicts((current) => {
+                      const next = { ...current };
+                      delete next[bundle.bundle_id];
+                      return next;
+                    })}>최신 자료 확인 완료</button>
+                  </> : <button type="button" disabled={busy} onClick={() => {
+                    setBusy(true);
+                    void refreshBundleAfterConflict(bundle.bundle_id).finally(() => setBusy(false));
+                  }}>최신 자료 다시 조회</button>}
+                </div>
+              )}
             </article>
           ))}
         </div>
@@ -490,6 +521,7 @@ export default function EducationBundleEditor({
           <p>현재 입력은 보존했으며 자동 저장·게시하지 않았습니다. 아래 최신 서버본을 검토한 뒤 명시적으로 선택하세요.</p>
           <p><b>서버 제목:</b> {conflictBundle.title}</p>
           <p className={styles.serverBody}><b>서버 본문:</b> {conflictBundle.body}</p>
+          <ul>{conflictBundle.checklist.map((item, index) => <li key={index}>{item}</li>)}</ul>
           <div className={styles.actions}>
             <button
               type="button"
