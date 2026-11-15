@@ -20,6 +20,8 @@ class ContinuousFrameRuntime:
         if journal.lifecycle.threshold!=3 or capture.pre!=2 or capture.post!=2:
             raise ValueError('API three-second qualification and two-second roll contract')
         if capture.events:raise ValueError('new frame session requires empty coordinator')
+        if journal.capture_output_fps != capture.capture_output_fps:
+            raise ValueError('capture output grid contract mismatch')
         self.journal,self.capture,self.dispatcher=journal,capture,dispatcher
         self.outbox=journal.outbox;self.budget=metadata_steps_per_pump
         self.cameras=self.outbox._camera_ids(journal.snapshot)

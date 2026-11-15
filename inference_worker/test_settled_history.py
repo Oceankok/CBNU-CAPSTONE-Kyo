@@ -16,12 +16,16 @@ from inference_worker.lifecycle_journal import LifecycleJournal
 from inference_worker.segment_spool import Segment
 from inference_worker.session_recovery import SessionRecovery,RecoveryRequired
 from inference_worker.test_continuous_dispatcher import FakeTransport
+from backend.capture_grid import required_capture_end
+from datetime import datetime, timezone, timedelta
 
 
 class SettledHistoryTests(TestCase):
-    def make(self, *, incomplete=False,discard=False,no_sources=False):
+    def make(self, *, incomplete=False,discard=False,no_sources=False,capture_output_fps=None,tail_jitter=0,
+             epoch=None,retain_encoder_grid=False):
         temp=TemporaryDirectory();self.addCleanup(temp.cleanup)
-        f=SimpleNamespace(root=Path(temp.name),transport=FakeTransport(),now=1767225610.1234567)
+        f=SimpleNamespace(root=Path(temp.name),transport=FakeTransport(),
+            now=1767225610.1234567 if epoch is None else epoch+10)
         def open_box():
             return CaptureOutbox(f.root/'journal',private_root=f.root/'raw',max_db_bytes=2000000,
                 max_records=300,max_body_bytes=30000,source_ttl_seconds=100,clock=lambda:f.now)
@@ -33,13 +37,15 @@ class SettledHistoryTests(TestCase):
         f.session=f.box.session
         f.box.bind_runtime({'endpoint':'https://test','primary':'main'})
         journal=LifecycleJournal(f.box,camera_id='main',camera_snapshot=['main','ref'],model_version='fixture',
-            missing_grace_seconds=1,threshold_seconds=3,max_sample_gap_seconds=.5,progress_emit_interval_seconds=1)
+            missing_grace_seconds=1,threshold_seconds=3,max_sample_gap_seconds=.5,progress_emit_interval_seconds=1,
+            capture_output_fps=capture_output_fps)
         epoch=f.now-10
         absent={'tracking_id':'t','ppe_type':'helmet','status':'suspected_no_helmet',
                 'verified_ppe_confidence':None,'policy_scope_key':'fixture'}
         for step in range(13):
             transitions=journal.update([absent],epoch+step*.25)
         f.event=next(t['event_id'] for t in transitions if t['kind']=='start')
+        if tail_jitter:journal.update([absent],epoch+3+tail_jitter)
         def ack(row,*,segments=()):
             body=json.loads(row['body']);kind='close' if row['kind']=='incomplete' else row['kind']
             camera=row['idem'].split(':')[0] if kind=='capture_report' else None
@@ -48,7 +54,11 @@ class SettledHistoryTests(TestCase):
                 'lifecycle':{'phase':'interrupted' if incomplete else 'closed'},'segments':list(segments)}
             f.box.acknowledge(f.event,row['seq'],receipt=receipt)
         ack(f.box.db.execute('SELECT * FROM requests').fetchone())
-        f.sources={};left,right=epoch-2,epoch+5
+        f.sources={};left=epoch-2
+        right=required_capture_end(datetime.fromtimestamp(epoch,tz=timezone.utc),
+            datetime.fromtimestamp(epoch+3+tail_jitter,tz=timezone.utc),capture_output_fps).timestamp()
+        if retain_encoder_grid:
+            right=left+round((right-left)*capture_output_fps)/capture_output_fps
         for camera in (() if no_sources else ('main','ref') if discard or not incomplete else ('main',)):
             directory,sid=uuid4().hex,uuid4().hex
             f.box.begin_capture(f.event,camera=camera,spool_directory=directory)
@@ -56,7 +66,9 @@ class SettledHistoryTests(TestCase):
             segment=Segment(sid,0,left,right,14,2,path.stat().st_size,f.now)
             f.box.bind_segment(f.event,camera=camera,segment=segment,relative_path=directory+'/'+sid+'.mp4')
             f.sources[camera]=(segment,path)
-        journal.update([{**absent,'status':'helmet'}],epoch+3.25)
+        journal.update([{**absent,'status':'helmet'}],epoch+3.25+tail_jitter)
+        for pending in f.box.db.execute("SELECT * FROM requests WHERE ack IS NULL ORDER BY seq").fetchall():
+            ack(pending)
         if incomplete:f.box.mark_incomplete(f.event,reason='camera_capture_incomplete')
         remote=[]
         if not no_sources:
@@ -119,6 +131,62 @@ class SettledHistoryTests(TestCase):
         f=self.make()
         self.assertEqual(f.box.db.execute('SELECT count(*) FROM recovery_states').fetchone()[0],0)
         self.assert_noop(f)
+
+    def test_opted_in_offgrid_end_is_settled_after_restart_without_mutation(self):
+        f=self.make(capture_output_fps=15,tail_jitter=.008)
+        start=json.loads(f.box.db.execute("SELECT body FROM requests WHERE kind='start'").fetchone()[0])
+        self.assertEqual(start['capture_output_fps'],15)
+        self.assert_noop(f)
+
+    def test_supported_117fps_one_wire_microsecond_outer_end_is_settled(self):
+        f=self.make(capture_output_fps=117,tail_jitter=.49,
+            epoch=1794759195.0032425,retain_encoder_grid=True)
+        actual=f.sources['main'][0].capture_end
+        required=required_capture_end(datetime.fromtimestamp(1794759195.0032425,tz=timezone.utc),
+            datetime.fromtimestamp(1794759195.0032425+3.49,tz=timezone.utc),117)
+        self.assertEqual(datetime.fromtimestamp(actual,tz=timezone.utc)-required,timedelta(microseconds=1))
+        self.assertGreater(actual-required.timestamp(),1e-6)
+        self.assert_noop(f)
+
+    def test_supported_117fps_two_wire_microsecond_plan_difference_stays_protected(self):
+        f=self.make(capture_output_fps=117,tail_jitter=.49,
+            epoch=1794759195.0032425,retain_encoder_grid=True)
+        sid=f.sources['main'][0].segment_id
+        with f.dispatcher.db:
+            plan=json.loads(f.dispatcher.db.execute('SELECT plan FROM uploads WHERE segment=?',(sid,)).fetchone()[0])
+            plan['required_end']+=1e-6
+            f.dispatcher.db.execute('UPDATE uploads SET plan=? WHERE segment=?',(json.dumps(plan),sid))
+        self.assert_protected(f)
+
+    def test_internal_one_microsecond_capture_gap_remains_unsettled(self):
+        f=self.make()
+        row=f.box.db.execute("SELECT * FROM requests WHERE kind='capture_report' AND idem='main:report'").fetchone()
+        body=json.loads(row['body']);span=body['captured_ranges'][0]
+        middle=datetime.fromisoformat(span['start_at'])+timedelta(seconds=3)
+        body['captured_ranges']=[{'start_at':span['start_at'],'end_at':middle.isoformat()},
+            {'start_at':(middle+timedelta(microseconds=1)).isoformat(),'end_at':span['end_at']}]
+        payload=json.dumps(body,sort_keys=True,separators=(',',':')).encode()
+        with f.box.transaction():
+            f.box.db.execute('UPDATE requests SET body=?,digest=? WHERE event=? AND seq=?',
+                (payload,hashlib.sha256(payload).hexdigest(),f.event,row['seq']))
+        self.assert_protected(f)
+
+    def test_retained_117fps_range_uses_wire_outer_precision_and_exact_adjacency(self):
+        epoch=1794759195.0032425;left=epoch-2
+        required=required_capture_end(datetime.fromtimestamp(epoch,tz=timezone.utc),
+            datetime.fromtimestamp(epoch+3.49,tz=timezone.utc),117)
+        right=left+round((required.timestamp()-left)*117)/117
+        camera={'camera_id':'main','required_start_at':_time(left),'required_end_at':required.isoformat()}
+        rows=[{'start':left,'end':right}]
+        box=SimpleNamespace(reconcile=lambda:None,db=SimpleNamespace(execute=lambda *args:rows))
+        recovery=SessionRecovery(box,SimpleNamespace(transport=None),endpoint='https://test')
+        ranges,complete=recovery._available_ranges('fixture',camera)
+        self.assertTrue(complete)
+        self.assertEqual(ranges,[{'start_at':_time(left),'end_at':_time(right)}])
+        middle=datetime.fromtimestamp(left,tz=timezone.utc)+timedelta(seconds=3)
+        rows[:]=[{'start':left,'end':middle.timestamp()},
+            {'start':(middle+timedelta(microseconds=1)).timestamp(),'end':right}]
+        self.assertFalse(recovery._available_ranges('fixture',camera)[1])
 
     def test_settled_incomplete_missing_discarded_or_zero_sources_is_a_local_noop(self):
         for options in ({},{'discard':True},{'no_sources':True}):

@@ -73,7 +73,10 @@ export interface ReviewAvailability {
     | 'awaiting_clip'
     | 'processing'
     | 'retryable_failure'
-    | 'no_usable_media';
+    | 'no_usable_media'
+    | 'continuous_event_not_closed'
+    | 'continuous_evidence_incomplete'
+    | 'event_media_deleted_or_expired';
   can_review: boolean;
   can_mark_unreviewable: boolean;
   missing_media_count: number;

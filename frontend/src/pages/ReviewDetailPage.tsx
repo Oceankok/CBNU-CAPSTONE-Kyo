@@ -86,7 +86,20 @@ const AVAILABILITY_MSG: Record<ReviewAvailability['state'], string> = {
     '자료 처리에 실패했습니다. 왼쪽 "자료 처리 정보"에서 재처리하거나 클립을 다시 받아야 합니다. (보류는 가능)',
   no_usable_media:
     '판단에 쓸 수 있는 자료가 없습니다. 자료를 복구할 수 없다면 "검토 불가"로 종결하세요.',
+  continuous_event_not_closed:
+    '영상 수집이 정상 완료되지 않아 판정을 저장할 수 없습니다. 왼쪽 카메라별 영상 확보 상태를 확인하세요.',
+  continuous_evidence_incomplete:
+    '필요한 영상이나 처리 결과가 부족해 판정을 저장할 수 없습니다. 왼쪽 카메라별 영상 확보 상태를 확인하세요.',
+  event_media_deleted_or_expired:
+    '자료가 삭제되었거나 보관 기간이 지나 판정을 저장할 수 없습니다.',
 };
+
+// These lifecycle checks also block hold and unreviewable on the server.
+const LIFECYCLE_BLOCKED_STATES = new Set<ReviewAvailability['state']>([
+  'continuous_event_not_closed',
+  'continuous_evidence_incomplete',
+  'event_media_deleted_or_expired',
+]);
 
 // Backend 409 codes on review submit
 const SUBMIT_ERRORS: Record<string, string> = {
@@ -94,6 +107,9 @@ const SUBMIT_ERRORS: Record<string, string> = {
     '얼굴 가림 처리된 자료가 있어야 확정·오탐으로 판단할 수 있습니다.',
   media_recovery_pending:
     '자료를 아직 복구할 수 있어 검토 불가로 종결할 수 없습니다. 재처리나 클립 수신을 먼저 확인하세요.',
+  continuous_event_not_closed: AVAILABILITY_MSG.continuous_event_not_closed,
+  continuous_evidence_incomplete: AVAILABILITY_MSG.continuous_evidence_incomplete,
+  event_media_deleted_or_expired: AVAILABILITY_MSG.event_media_deleted_or_expired,
 };
 
 // Populate the lookup map after REASON_OPTIONS is defined
@@ -300,6 +316,13 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
     );
   }
 
+  const lifecycleBlocked = availability !== null && LIFECYCLE_BLOCKED_STATES.has(availability.state);
+  const selectedResultBlocked = lifecycleBlocked || (
+    reviewResult === 'confirmed' || reviewResult === 'false_positive'
+      ? availability?.can_review === false
+      : reviewResult === 'unreviewable' && availability?.can_mark_unreviewable === false
+  );
+
   const handleResultClick = (result: ReviewResult) => {
     setReviewResult(result);
     setReasonCode(''); // reset reason when the main result changes
@@ -316,7 +339,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
   };
 
   const handleSubmit = async () => {
-    if (!reviewResult || !reasonCode || !event_id) return;
+    if (!reviewResult || !reasonCode || !event_id || selectedResultBlocked) return;
     if (reviewResult === 'unreviewable' && !comment.trim()) return;
     setSubmitError(null);
     const body: ReviewRequest = {
@@ -586,7 +609,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
 
               {availability && !availability.can_review && (
                 <p className={styles.blockedNote} role="status">
-                  {AVAILABILITY_MSG[availability.state]}
+                  {AVAILABILITY_MSG[availability.state] || '현재 자료 상태에서는 판정을 저장할 수 없습니다. 영상 확보 상태를 확인하세요.'}
                 </p>
               )}
 
@@ -609,6 +632,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
                 <button
                   className={`${styles.resultBtn} ${styles.holdBtn} ${reviewResult === 'hold' ? styles.activeHold : ''}`}
                   onClick={() => handleResultClick('hold')}
+                  disabled={lifecycleBlocked}
                 >
                   ⏸ 보류
                 </button>
@@ -617,6 +641,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
                   <button
                     className={`${styles.resultBtn} ${styles.unreviewableBtn} ${reviewResult === 'unreviewable' ? styles.activeUnreviewable : ''}`}
                     onClick={() => handleResultClick('unreviewable')}
+                    disabled={lifecycleBlocked || availability?.can_mark_unreviewable === false}
                   >
                     ⊘ 검토 불가
                   </button>
@@ -694,6 +719,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
                   disabled={
                     !reviewResult ||
                     !reasonCode ||
+                    selectedResultBlocked ||
                     (reviewResult === 'unreviewable' && !comment.trim())
                   }
                   onClick={handleSubmit}

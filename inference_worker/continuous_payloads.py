@@ -7,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 import hashlib
 import json
 import re
+from backend.capture_grid import validate_output_fps
 
 WIRE_TIME_EPSILON = timedelta(microseconds=1)
 
@@ -29,7 +30,7 @@ def _observation(transition):
             'gap_count': transition['observation_gap_count']}
 
 
-def start_payload(transition, *, session_id, model_version, capture_context_id=None):
+def start_payload(transition, *, session_id, model_version, capture_context_id=None, capture_output_fps=None):
     if transition['kind'] != 'start':
         raise ValueError('start transition required')
     policy = json.dumps(transition['policy_scope_key'], sort_keys=True,
@@ -37,7 +38,9 @@ def start_payload(transition, *, session_id, model_version, capture_context_id=N
     if capture_context_id is not None and (not isinstance(capture_context_id,str) or
             not re.fullmatch('[A-Za-z0-9_-]{1,100}',capture_context_id)):
         raise ValueError('capture_context_id')
+    if capture_output_fps is not None:validate_output_fps(capture_output_fps)
     return {**({'capture_context_id':capture_context_id} if capture_context_id is not None else {}),
+            **({'capture_output_fps':capture_output_fps} if capture_output_fps is not None else {}),
             'event_id': transition['event_id'], 'camera_id': transition['camera_id'],
             'tracking_id': transition['tracking_id'], 'ppe_type': transition['ppe_type'],
             'timestamp_start': _time(transition['start_time']),
@@ -87,7 +90,8 @@ def capture_payload(status, *, camera_id, clock, session_id, sequence,
                     time_basis, required_end, previous_missing_ranges=()):
     """Map an isolated coordinator snapshot, not a durable upload authorization.
 
-    required_end is the server's current last-positive + post-roll boundary.
+    required_end is the server's current capture obligation (including an
+    explicitly advertised output grid for opted-in sessions).
     Provisional encoded ranges beyond that boundary cannot be reported/uploaded.
     Clock validation and a stable epoch conversion remain caller obligations.
     Caller must supply persisted previous_missing_ranges; this stateless builder

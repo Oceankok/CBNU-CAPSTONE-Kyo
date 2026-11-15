@@ -2,8 +2,10 @@
 import hashlib
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from inference_worker.continuous_payloads import _time
+from backend.capture_grid import required_capture_end
 
 
 class RecoveryRequired(RuntimeError):
@@ -127,19 +129,22 @@ class SessionRecovery:
 
     def _available_ranges(self,event,camera):
         self.box.reconcile()
-        from datetime import datetime,timezone
-        parse=lambda value:datetime.fromisoformat(value.replace("Z","+00:00")).timestamp()
+        parse=lambda value:datetime.fromisoformat(value.replace("Z","+00:00"))
+        wire=lambda value:datetime.fromtimestamp(value,tz=timezone.utc)
+        epsilon=timedelta(microseconds=1)
         start,end=parse(camera["required_start_at"]),parse(camera["required_end_at"])
         result=[]
         for row in self.box.db.execute("SELECT * FROM segments WHERE event=? AND camera=? AND state='present' ORDER BY start",
                                        (event,camera["camera_id"])):
-            if start-1e-6<=row["start"]<row["end"]<=end+1e-6:
+            if start-epsilon<=wire(row["start"])<wire(row["end"])<=end+epsilon:
                 result.append({"start_at":_time(row["start"]),"end_at":_time(row["end"])})
         cursor=start
-        for row in result:
-            if abs(parse(row["start_at"])-cursor)>1e-6:return result,False
+        for index,row in enumerate(result):
+            left=parse(row["start_at"])
+            adjacent=abs(left-cursor)<=epsilon if index==0 else left==cursor
+            if not adjacent:return result,False
             cursor=parse(row["end_at"])
-        return result,bool(result) and abs(cursor-end)<=1e-6
+        return result,bool(result) and abs(cursor-end)<=epsilon
 
     def _recover_uploads(self,event,session,remote):
         from datetime import datetime
@@ -206,15 +211,18 @@ class SessionRecovery:
         camera and source needs an ACKed delivery or incomplete disposition.
         Retired/conflicting or ambiguous history stays on protected recovery.
         """
-        from datetime import datetime
-        stamp=lambda value:datetime.fromisoformat(value.replace("Z","+00:00")).timestamp()
+        # Compare serialized endpoints at wire precision, not epoch-float ULPs.
+        # The one-microsecond allowance belongs only to outer boundaries.
+        stamp=lambda value:datetime.fromisoformat(value.replace("Z","+00:00"))
+        wire=lambda value:datetime.fromtimestamp(value,tz=timezone.utc)
+        epsilon=timedelta(microseconds=1)
         def covers(ranges,left,right):
             cursor=left
             for start,end in sorted(ranges):
-                if start>cursor+1e-6:return False
+                if start>cursor and (cursor!=left or start>left+epsilon):return False
                 cursor=max(cursor,end)
-                if cursor>=right-1e-6:return True
-            return cursor>=right-1e-6
+                if cursor>=right:return True
+            return bool(ranges) and cursor>=right-epsilon
         event,session=eventrow["id"],eventrow["session"]
         if eventrow["state"] not in ("closed","incomplete"):return False
         complete=eventrow["state"]=="closed"
@@ -269,23 +277,25 @@ class SessionRecovery:
                     or phase!=("closed" if complete else "interrupted")):return False
             if complete and any(r["state"]!="complete" for r in reports.values()):return False
             if not complete and not any(r["state"]=="incomplete" for r in reports.values()):return False
-            required_start=stamp(start["timestamp_start"])-2
-            required_end=stamp(close["timestamp_end"])+2
+            required_start=stamp(start["timestamp_start"])-timedelta(seconds=2)
+            required_end=required_capture_end(stamp(start['timestamp_start']),stamp(close['timestamp_end']),
+                start.get('capture_output_fps'))
             captured={};missing={}
             for camera,report in reports.items():
                 captured[camera]=[(stamp(r["start_at"]),stamp(r["end_at"])) for r in report["captured_ranges"]]
                 missing[camera]=[(stamp(r["start_at"]),stamp(r["end_at"])) for r in report["missing_ranges"]]
                 ranges=captured[camera]+missing[camera]
-                if (any(a<required_start-1e-6 or b>required_end+1e-6 or b<=a for a,b in ranges)
+                if (any(a<required_start-epsilon or b>required_end+epsilon or b<=a for a,b in ranges)
                         or not covers(ranges,required_start,required_end)
                         or (report["state"]=="complete" and missing[camera])
                         or (report["state"]=="incomplete" and not report.get("reason"))):return False
             manifests=[(b,a) for k,b,a in commands if k=="manifest"]
             if len(manifests)!=count or [b["sequence"] for b,a in manifests]!=list(range(count)):return False
             bindings={};cursor=required_start
-            for body,ack in manifests:
+            for index,(body,ack) in enumerate(manifests):
                 left,right=stamp(body["capture_start_at"]),stamp(body["capture_end_at"])
-                if abs(left-cursor)>1e-6 or right<=left or right>required_end+1e-6:return False
+                adjacent=abs(left-cursor)<=epsilon if index==0 else left==cursor
+                if not adjacent or right<=left or right>required_end+epsilon:return False
                 cursor=right
                 current=[r for r in ack["segments"] if r["sequence"]==body["sequence"]]
                 if len(current)!=len(cameras) or {r["camera_id"] for r in current}!=set(cameras):return False
@@ -295,7 +305,7 @@ class SessionRecovery:
                             or stamp(remote["capture_start_at"])!=left
                             or stamp(remote["capture_end_at"])!=right):return False
                     bindings[(camera,left,right)]=remote
-            if complete and abs(cursor-required_end)>1e-6:return False
+            if complete and abs(cursor-required_end)>epsilon:return False
             owners=self.box.db.execute("SELECT * FROM captures WHERE event=?",(event,)).fetchall()
             if len({r["camera"] for r in owners})!=len(owners) or any(r["camera"] not in cameras for r in owners):return False
             if complete and {r["camera"] for r in owners}!=set(cameras):return False
@@ -312,7 +322,7 @@ class SessionRecovery:
                 if (camera not in cameras or spools.get(segment["path"].split("/")[0])!=camera
                         or segment["cleanup"]!=0 or self.box._path(segment["path"]).exists()):return False
                 if segment["state"]=="unavailable":
-                    left=max(segment["start"],required_start);right=min(segment["end"],required_end)
+                    left=max(wire(segment["start"]),required_start);right=min(wire(segment["end"]),required_end)
                     if (complete or not segment["reason"] or segment["id"] in plans
                             or reports[camera]["state"]!="incomplete"
                             or (right>left and not covers(missing[camera],left,right))):return False
@@ -322,17 +332,17 @@ class SessionRecovery:
                 if (not remote or key in seen or not upload or upload["state"]!="accepted"
                         or upload["session"]!=session or upload["role"]!=remote["role"]
                         or segment["state"]!="uploaded_private" or segment["reason"]!="verified_upload_receipt"
-                        or not covers(captured[camera],segment["start"],segment["end"])):return False
+                        or not covers(captured[camera],wire(segment["start"]),wire(segment["end"]))):return False
                 plan=json.loads(upload["plan"])
                 if (plan["event_id"]!=event or plan["camera_id"]!=camera
                         or plan["request_id"]!=remote["request_id"] or plan["relative_path"]!=segment["path"]
                         or plan["capture_start"]!=segment["start"] or plan["capture_end"]!=segment["end"]
-                        or abs(plan["required_start"]-required_start)>1e-6
-                        or abs(plan["required_end"]-required_end)>1e-6
+                        or abs(wire(plan["required_start"])-required_start)>epsilon
+                        or abs(wire(plan["required_end"])-required_end)>epsilon
                         or plan["final_range_verified"] is not True
                         or not re.fullmatch("[a-f0-9]{64}",plan["sha256"])
                         or not self.dispatcher.cleanup_receipt_verified(dict(segment))):return False
-                seen.add(key);used.add(segment["id"]);delivered[camera].append((segment["start"],segment["end"]))
+                seen.add(key);used.add(segment["id"]);delivered[camera].append((wire(segment["start"]),wire(segment["end"])))
             if used!=set(plans):return False
             for camera in cameras:
                 if any(not covers(delivered[camera],a,b) for a,b in captured[camera]):return False
@@ -340,7 +350,7 @@ class SessionRecovery:
                 if (camera,left,right) not in seen and (reports[camera]["state"]!="incomplete"
                         or not covers(missing[camera],left,right)):return False
             return True
-        except (KeyError,TypeError,ValueError,AttributeError,OSError):
+        except (KeyError,TypeError,ValueError,OverflowError,AttributeError,OSError):
             return False
 
     def run(self):

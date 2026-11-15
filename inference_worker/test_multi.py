@@ -235,6 +235,22 @@ class MultiCameraTests(unittest.TestCase):
                 self.assertEqual(child_main('inference_worker.run_server'), code)
             self.assertNotIn('sensitive token', output.getvalue())
 
+    def test_child_source_diagnostics_only_include_fixed_safe_codes(self):
+        from io import StringIO
+        from inference_worker.continuous_source_mux import SourceMuxError
+        for code in ('source_initial_frame_timeout', 'camera_missing_or_stalled', 'camera_chunk_discontinuity'):
+            with patch('inference_worker.run_multi.runpy.run_module', side_effect=SourceMuxError(code)), \
+                 patch('sys.stdout', new_callable=StringIO) as output:
+                self.assertEqual(child_main('inference_worker.run_server'), 1)
+            self.assertIn('reason=' + code, output.getvalue())
+        for code in ('sensitive_token', 'https://server.invalid/?token=secret',
+                     'camera_missing_or_stalled token=secret'):
+            with patch('inference_worker.run_multi.runpy.run_module', side_effect=SourceMuxError(code)), \
+                 patch('sys.stdout', new_callable=StringIO) as output:
+                self.assertEqual(child_main('inference_worker.run_server'), 1)
+            self.assertNotIn(code, output.getvalue())
+            self.assertNotIn('reason=', output.getvalue())
+
     def test_preflight_checks_auth_model_mode_and_tracker_before_children(self):
         from types import SimpleNamespace
         # Keep these tests dependency-free: model, HTTP and tracker are explicit doubles.

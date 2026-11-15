@@ -100,7 +100,11 @@ def child_main(module):
     except Exception as error:
         status = getattr(getattr(error, 'response', None), 'status_code', None)
         # Never log exception bodies: they may contain tokens or server URLs.
-        print(f'[CHILD ERROR] type={type(error).__name__} status={status}', flush=True)
+        reason = ''
+        if type(error).__name__ == 'SourceMuxError' and str(error) in {
+                'source_initial_frame_timeout', 'camera_missing_or_stalled', 'camera_chunk_discontinuity'}:
+            reason = ' reason=' + str(error)
+        print(f'[CHILD ERROR] type={type(error).__name__} status={status}{reason}', flush=True)
         return FATAL_EXIT if status in {400, 401, 403, 422} else 1
     return 0
 

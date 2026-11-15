@@ -6,6 +6,8 @@ Call update/close_all from one decoder-owner thread; transport workers consume
 immutable transition bodies rather than sharing this mutable state machine.
 """
 from collections.abc import Mapping
+import hashlib
+import json
 from math import isfinite
 from uuid import uuid4
 
@@ -23,6 +25,21 @@ def _scope_value(value):
     if isinstance(value, Mapping) and all(isinstance(key, str) for key in value):
         return tuple(sorted((key, _scope_value(item)) for key, item in value.items()))
     raise ValueError('policy_scope_key')
+
+
+def _scope_change(previous, current, timestamp):
+    """Fixed-size local diagnostic; no raw scope values enter the new fields."""
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    result = dict(observed_at=timestamp, previous_scope_sha256=digest(previous),
+                  next_scope_sha256=digest(current), previous_scope_resolved=previous is not None,
+                  next_scope_resolved=current is not None)
+    if all(isinstance(value, tuple) and len(value) == 4 and value[1] in ('person', 'camera')
+           for value in (previous, current)):
+        for name, index in (('policy_version_changed', 0), ('scope_basis_changed', 1),
+                            ('area_membership_changed', 2), ('required_ppe_changed', 3)):
+            result[name] = previous[index] != current[index]
+    return result
 
 
 class EventLifecycle:
@@ -53,6 +70,7 @@ class EventLifecycle:
         self.qualification_grace = qualification_grace_seconds
         self.qualification_window = qualification_window_seconds
         self.states = {}
+        self.scoped_tracks = {}  # Last presence only; independent of qualification state.
         self.last_timestamp = None
 
     def _snapshot(self, key, state, kind, reason=None):
@@ -90,6 +108,7 @@ class EventLifecycle:
         output = []
         for key in list(self.states):
             self._close(key, reason, output)
+        self.scoped_tracks.clear()
         self.last_timestamp = None
         return output
 
@@ -111,6 +130,7 @@ class EventLifecycle:
             raise ValueError('departed_tracking_ids')
         departed = set(departed_rows)
         observations = {}
+        present_tracks, known_scoped_tracks = set(), set()
         for person in assessments:
             if not isinstance(person, Mapping):
                 raise ValueError('person assessment')
@@ -121,6 +141,9 @@ class EventLifecycle:
             if ppes is not None and not isinstance(ppes, Mapping):
                 raise ValueError('ppe assessments')
             scope = _scope_value(person.get('policy_scope_key'))
+            present_tracks.add(tracking_id)
+            if scope is not None:
+                known_scoped_tracks.add(tracking_id)
             rows = ppes.items() if ppes is not None else [(person.get('ppe_type', 'helmet'), person)]
             for ppe, assessment in rows:
                 if not isinstance(ppe, str) or not ppe or not isinstance(assessment, Mapping):
@@ -132,6 +155,17 @@ class EventLifecycle:
                 if key in observations:
                     raise ValueError('duplicate track/PPE observation')
                 observations[key] = {**person, **assessment, 'policy_scope_key': scope}
+
+        # Remember scoped mode for a currently visible track even when its
+        # unqualified PPE state expires. Never-scoped legacy tracks stay valid.
+        self.scoped_tracks = {track: seen for track, seen in self.scoped_tracks.items()
+                              if track not in departed and
+                              (track in present_tracks or timestamp - seen <= self.grace)}
+        for track in (known_scoped_tracks | (present_tracks & self.scoped_tracks.keys())) - departed:
+            self.scoped_tracks[track] = timestamp
+        for key, observation in observations.items():
+            if key[0] in self.scoped_tracks and observation['policy_scope_key'] is None:
+                observation['status'] = 'unknown'
 
         self.last_timestamp = timestamp
         output = []
@@ -145,8 +179,14 @@ class EventLifecycle:
             status = observation['status']
             scope = observation.get('policy_scope_key')
             state = self.states.get(key)
-            if state is not None and state['scope'] != scope:
+            if state is not None and state['scope'] is not None and scope is None:
+                # Unresolved position/policy is an unknown observation, not a
+                # known membership change or evidence of absence/rewear.
+                status = observation['status'] = 'unknown'
+            elif state is not None and state['scope'] != scope:
                 self._close(key, 'policy_scope_changed', output)
+                if state['event_id'] is not None:
+                    output[-1]['policy_scope_change'] = _scope_change(state['scope'], scope, timestamp)
                 state = None
             if state is not None and state['event_id'] is not None:
                 person_delta = timestamp - state['last_seen']

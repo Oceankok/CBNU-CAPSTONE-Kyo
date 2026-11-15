@@ -91,3 +91,35 @@ test('open collection without segment requests still refreshes to receive final 
   const before = calls.length; await page.clock.fastForward(5100);
   await expect.poll(() => calls.length).toBeGreaterThan(before);
 });
+
+test('continuous review blocks explain the reason and disable every result blocked by the API', async ({ page }) => {
+  const media = clone(); const calls = await serve(page, media);
+  for (const [state, message] of [
+    ['continuous_event_not_closed', '영상 수집이 정상 완료되지 않아'],
+    ['continuous_evidence_incomplete', '필요한 영상이나 처리 결과가 부족해'],
+    ['event_media_deleted_or_expired', '자료가 삭제되었거나 보관 기간이 지나'],
+  ]) {
+    media.review_availability = { ...media.review_availability, state, can_review: false, can_mark_unreviewable: false };
+    await open(page, true);
+    await expect(page.getByRole('status').filter({ hasText: message })).toBeVisible();
+    await expect(page.getByRole('button', { name: /확정 위반/ })).toBeDisabled();
+    await expect(page.getByRole('button', { name: '✕ 오탐', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: '⏸ 보류', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: '검토 제출', exact: true })).toBeDisabled();
+  }
+  expect(calls.every(call => call.startsWith('GET '))).toBe(true);
+});
+
+test('a legacy hold draft becomes blocked when refreshed evidence fails the continuous lifecycle gate', async ({ page }) => {
+  const media = clone();
+  media.review_availability = { ...media.review_availability, state: 'processing', can_review: false, can_mark_unreviewable: false };
+  const calls = await serve(page, media); await open(page, true);
+  await page.getByRole('button', { name: '⏸ 보류', exact: true }).click();
+  await page.getByRole('combobox').selectOption('hold_unclear');
+  await expect(page.getByRole('button', { name: '검토 제출', exact: true })).toBeEnabled();
+  media.review_availability.state = 'continuous_evidence_incomplete';
+  await page.getByRole('button', { name: '영상 상태 새로고침' }).click();
+  await expect(page.getByRole('button', { name: '검토 제출', exact: true })).toBeDisabled();
+  await expect(page.getByRole('status').filter({ hasText: '필요한 영상이나 처리 결과가 부족해' })).toBeVisible();
+  expect(calls.every(call => call.startsWith('GET '))).toBe(true);
+});
