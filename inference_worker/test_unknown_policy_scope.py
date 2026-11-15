@@ -143,3 +143,57 @@ class UnknownPolicyScopeTests(TestCase):
             starts += lifecycle.update([row], step / 10)
         self.assertEqual(len(starts), 2)
         self.assertTrue(all(row['policy_scope_key'] is None for row in starts))
+
+    def test_visible_unresolved_scope_cannot_become_legacy_after_qualification_expires(self):
+        lifecycle = self.make()
+        self.assertEqual(self.feed(lifecycle, end=20), [])
+        for step in range(21, 61):
+            unresolved = person()
+            unresolved.pop('policy_scope_key')  # Contradictory direct-caller absence.
+            self.assertEqual(lifecycle.update([unresolved], step / 10), [])
+        self.assertEqual(lifecycle.states, {})
+        starts = self.feed(lifecycle, start=61, end=91)
+        self.assertEqual(len(starts), 2)
+        self.assertTrue(all(row['start_time'] == 6.1 for row in starts))
+        self.assertTrue(all(row['policy_scope_key'] == person()['policy_scope_key'] for row in starts))
+
+    def test_scoped_mode_expires_with_existing_missing_person_grace(self):
+        lifecycle = self.make()
+        self.feed(lifecycle, end=20)
+        unresolved = person()
+        unresolved.pop('policy_scope_key')
+        lifecycle.update([unresolved], 2.1)
+        self.assertEqual(lifecycle.update([], 3.1), [])
+        self.assertIn('track-1', lifecycle.scoped_tracks)
+        self.assertEqual(lifecycle.update([], 3.11), [])
+        self.assertEqual(lifecycle.scoped_tracks, {})
+
+    def test_departure_and_explicit_reset_clear_scoped_mode(self):
+        for reset in ('departure', 'reset'):
+            with self.subTest(reset=reset):
+                lifecycle = self.make()
+                self.feed(lifecycle, end=20)
+                if reset == 'departure':
+                    lifecycle.update([], 2.1, departed_tracking_ids=['track-1'])
+                else:
+                    lifecycle.close_all('stream_changed')
+                self.assertEqual(lifecycle.scoped_tracks, {})
+
+    def test_scoped_mode_keeps_one_entry_per_live_track_not_frame_history(self):
+        lifecycle = self.make()
+        for index in range(50):
+            lifecycle.update([person(track=f'track-{index}', status='present')], index * 2)
+            self.assertEqual(len(lifecycle.scoped_tracks), 1)
+        lifecycle.update([], 99.01)
+        self.assertEqual(lifecycle.scoped_tracks, {})
+
+    def test_malformed_later_row_cannot_mutate_scoped_presence(self):
+        lifecycle = self.make()
+        self.feed(lifecycle, end=20)
+        before = dict(lifecycle.scoped_tracks)
+        malformed = person(track='track-2')
+        malformed['ppe']['helmet']['status'] = 'invalid'
+        with self.assertRaises(ValueError):
+            lifecycle.update([person(), malformed], 2.1)
+        self.assertEqual(lifecycle.scoped_tracks, before)
+        self.assertEqual(lifecycle.last_timestamp, 2)

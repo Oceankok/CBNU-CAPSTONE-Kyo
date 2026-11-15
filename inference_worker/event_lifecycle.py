@@ -70,6 +70,7 @@ class EventLifecycle:
         self.qualification_grace = qualification_grace_seconds
         self.qualification_window = qualification_window_seconds
         self.states = {}
+        self.scoped_tracks = {}  # Last presence only; independent of qualification state.
         self.last_timestamp = None
 
     def _snapshot(self, key, state, kind, reason=None):
@@ -107,6 +108,7 @@ class EventLifecycle:
         output = []
         for key in list(self.states):
             self._close(key, reason, output)
+        self.scoped_tracks.clear()
         self.last_timestamp = None
         return output
 
@@ -128,6 +130,7 @@ class EventLifecycle:
             raise ValueError('departed_tracking_ids')
         departed = set(departed_rows)
         observations = {}
+        present_tracks, known_scoped_tracks = set(), set()
         for person in assessments:
             if not isinstance(person, Mapping):
                 raise ValueError('person assessment')
@@ -138,6 +141,9 @@ class EventLifecycle:
             if ppes is not None and not isinstance(ppes, Mapping):
                 raise ValueError('ppe assessments')
             scope = _scope_value(person.get('policy_scope_key'))
+            present_tracks.add(tracking_id)
+            if scope is not None:
+                known_scoped_tracks.add(tracking_id)
             rows = ppes.items() if ppes is not None else [(person.get('ppe_type', 'helmet'), person)]
             for ppe, assessment in rows:
                 if not isinstance(ppe, str) or not ppe or not isinstance(assessment, Mapping):
@@ -149,6 +155,17 @@ class EventLifecycle:
                 if key in observations:
                     raise ValueError('duplicate track/PPE observation')
                 observations[key] = {**person, **assessment, 'policy_scope_key': scope}
+
+        # Remember scoped mode for a currently visible track even when its
+        # unqualified PPE state expires. Never-scoped legacy tracks stay valid.
+        self.scoped_tracks = {track: seen for track, seen in self.scoped_tracks.items()
+                              if track not in departed and
+                              (track in present_tracks or timestamp - seen <= self.grace)}
+        for track in (known_scoped_tracks | (present_tracks & self.scoped_tracks.keys())) - departed:
+            self.scoped_tracks[track] = timestamp
+        for key, observation in observations.items():
+            if key[0] in self.scoped_tracks and observation['policy_scope_key'] is None:
+                observation['status'] = 'unknown'
 
         self.last_timestamp = timestamp
         output = []

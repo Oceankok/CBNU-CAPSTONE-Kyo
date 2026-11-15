@@ -35,6 +35,7 @@
 
 위 수치는 이 변경의 초기 설정이며 일반 환경에서 검증된 정확도·운영 최적값을 뜻하지 않습니다.
 확인된 정책 범위 변경으로 종료할 때는 로컬 close-intent에 이전·다음 범위의 SHA-256, 버전·영역·필수 PPE 변경 여부와 해당 관측 시각을 기록합니다. 이 고정 크기 진단은 HTTP 요청에 추가하지 않으며 좌표나 원문 범위 값을 복제하지 않습니다.
+정책 범위를 한 번 확인한 추적 ID는 현재 인물이 관측되는 동안 후보 자격 대기 상태가 만료돼도 범위 기반 입력으로 유지합니다. 그동안 범위가 없는 입력은 미착용으로 세지 않습니다. 이 정보는 ID별 마지막 관측 시각 하나만 저장하며, 명시적 이탈·세션 초기화 또는 기존 사람 미관측 유예 초과 시 제거합니다. 처음부터 범위를 사용하지 않는 legacy 입력은 유지합니다.
 `run_server`는 `--episode-missing-grace-seconds`, `--rewear-seconds`, `--qualification-grace-seconds`를 받습니다.
 continuous의 `lifecycle` 설정은 CLI 재착용/qualification 기본값을 덮어쓸 수 있습니다. 이 경로의 missing_grace는 기존 명시적 설정값을 사용합니다.
 직접 `EventLifecycle/LifecycleJournal`을 만드는 기존 호출자의 재착용/qualification 기본값 0은 유지했으며 실제 runner가 새 값을 전달합니다.
