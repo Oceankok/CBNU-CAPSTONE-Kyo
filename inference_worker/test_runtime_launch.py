@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 import httpx
 
-from inference_worker.run_multi import commands, continuous_profiles, main, child_main, FATAL_EXIT
+from inference_worker.run_multi import commands, continuous_profiles, main, child_main, run_preflight, FATAL_EXIT
 from inference_worker.reference_collector import ReferenceCollector
 from deploy.host_runtime.settings import arguments
 from deploy.host_runtime.ownership import primary_ownership
@@ -19,6 +19,17 @@ def status_error(code):
 
 
 class RuntimeLaunchTests(unittest.TestCase):
+    def test_preflight_terminate_error_still_closes_owned_trees(self):
+        trees = Mock()
+        child = trees.spawn.return_value
+        child.poll.return_value = None
+        child.wait.side_effect = RuntimeError('injected wait failure')
+        child.terminate.side_effect = OSError('injected termination failure')
+        with patch('deploy.host_runtime.processes.ProcessTrees', return_value=trees):
+            with self.assertRaisesRegex(OSError, 'termination failure'):
+                run_preflight(['unused'], process_trees=True)
+        trees.close.assert_called_once()
+
     def setUp(self):
         self.temp = self.enterContext(TemporaryDirectory())
         self.root = Path(self.temp)

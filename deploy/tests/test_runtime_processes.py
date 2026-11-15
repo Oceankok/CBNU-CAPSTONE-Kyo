@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from deploy.host_runtime.processes import ProcessTrees
 from inference_worker.run_multi import run_preflight, supervise
@@ -59,6 +60,32 @@ def wait_for(predicate, seconds=8):
 
 
 class RuntimeProcessTests(unittest.TestCase):
+    def test_release_failure_still_cleans_and_reaps_all_owned_peers(self):
+        with TemporaryDirectory() as folder:
+            trees = ProcessTrees()
+            markers = [Path(folder)/f'family-{index}.json' for index in range(2)]
+            children = [trees.spawn([sys.executable, '-c', FAMILY, str(marker)]) for marker in markers]
+            release = trees.release
+            attempts = []
+            def fail_first(child):
+                attempts.append(child)
+                if len(attempts) == 1:
+                    raise OSError('injected release failure before cleanup')
+                return release(child)
+            try:
+                wait_for(lambda: all(marker.exists() for marker in markers))
+                pids = sum([json.loads(marker.read_text()) for marker in markers], [])
+                with patch.object(trees, 'release', side_effect=fail_first):
+                    with self.assertRaisesRegex(RuntimeError, 'all trees were attempted'):
+                        trees.close()
+                self.assertTrue(all(child.returncode is not None for child in children))
+                self.assertTrue(all(child in attempts for child in children))
+                wait_for(lambda: all(not alive(pid) for pid in pids))
+                self.assertFalse(trees.jobs)
+                print('[RUNTIME TREE] injected-release-failure peers-reaped orphan0', flush=True)
+            finally:
+                trees.close()
+
     def test_profile_failure_leaves_healthy_primary_processing_and_reaps_encoders(self):
         worker = r'''
 import json,os,subprocess,sys,time

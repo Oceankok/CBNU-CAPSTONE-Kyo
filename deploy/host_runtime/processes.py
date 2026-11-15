@@ -3,6 +3,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 
 
 class ProcessTrees:
@@ -60,20 +61,25 @@ class ProcessTrees:
             self.jobs[child] = (kernel, job)
             return child
         except BaseException:
-            if child is not None:
-                if child.stdin and not child.stdin.closed:
-                    child.stdin.close()
-                if child.poll() is None:
-                    child.kill()
-                child.wait()
-            kernel.CloseHandle(job)
+            try:
+                if child is not None:
+                    if child.stdin and not child.stdin.closed:
+                        try:
+                            child.stdin.close()
+                        except OSError:
+                            pass
+                    if child.poll() is None:
+                        child.kill()
+                    child.wait(timeout=5)
+            finally:
+                kernel.CloseHandle(job)
             raise
 
     def release(self, child):
         """Retire a dead/reaped slot and any descendants it left behind."""
         if child not in self.jobs:
             return
-        job = self.jobs.pop(child)
+        job = self.jobs[child]
         if os.name == 'nt':
             kernel, handle = job
             try:
@@ -82,20 +88,40 @@ class ProcessTrees:
                     raise ctypes.WinError(ctypes.get_last_error())
             finally:
                 kernel.CloseHandle(handle)
+                self.jobs.pop(child, None)
         else:
             try:
                 os.killpg(child.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            self.jobs.pop(child, None)
 
     def close(self):
         children = list(self.jobs)
-        try:
-            for child in children:
+        errors, failed = [], []
+        for child in children:
+            try:
                 self.release(child)
-        finally:
-            for child in children:
-                child.wait()
+            except BaseException as error:
+                errors.append(error)
+                failed.append(child)
+        # One tree failure must not skip peers. Retry any retained ownership once.
+        for child in failed:
+            try:
+                self.release(child)
+            except BaseException as error:
+                errors.append(error)
+        deadline = time.monotonic()+5
+        for child in children:
+            try:
+                if child.poll() is None:
+                    child.kill()  # Exact owned direct handle, never a name/PID search.
+                child.wait(timeout=max(0, deadline-time.monotonic()))
+            except BaseException as error:
+                errors.append(error)
+        if errors:
+            raise RuntimeError('Owned process cleanup encountered errors after all trees were attempted: '+
+                               ','.join(type(error).__name__ for error in errors)) from errors[0]
 
 
 def guarded_command(command):
