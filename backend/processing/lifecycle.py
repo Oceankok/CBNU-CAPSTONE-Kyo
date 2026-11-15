@@ -20,6 +20,10 @@ from backend.processing.events import EventSubmission
 from backend.field.service import enqueue_event_broadcast
 
 
+# Match the producer's qualification tolerance and microsecond wire precision.
+# This does not round stored observations or relax automatic-review criteria.
+OBSERVATION_EPSILON_SECONDS = 1e-6
+
 def enabled():
     if os.environ.get('PPE_CONTINUOUS_EVENTS_ENABLED', '').lower() != 'true':
         raise HTTPException(503, 'continuous_events_disabled')
@@ -55,7 +59,9 @@ class Start(EventSubmission, Observation):
     @model_validator(mode='after')
     def observation_span(self):
         span = (self.timestamp_end-self.timestamp_start).total_seconds()
-        if span < 3 or self.observed_seconds < 3 or self.observed_seconds+self.gap_seconds > span+1e-6:
+        if (span+OBSERVATION_EPSILON_SECONDS < 3
+                or self.observed_seconds+OBSERVATION_EPSILON_SECONDS < 3
+                or self.observed_seconds+self.gap_seconds > span+OBSERVATION_EPSILON_SECONDS):
             raise ValueError('invalid_continuous_observation')
         if not self.tracking_id:
             raise ValueError('tracking_id_required')
