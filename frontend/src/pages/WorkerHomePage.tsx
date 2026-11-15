@@ -62,11 +62,11 @@ export default function WorkerHomePage() {
           const next = { ...previous }; delete next[key]; return next;
         });
         if (meta.status === 'pending') delay = Math.max(3, meta.poll_after_seconds ?? 3);
-        if (meta.status !== 'missing' || !item.requested_language || item.requested_language === 'ko') continue;
+        if (meta.status !== 'missing' || !meta.request_language || meta.request_language === 'ko') continue;
         if (attempted.current.has(key)) continue;
         attempted.current.add(key);
         try {
-          const queued = await bounded(requestWorkerTranslation(meta, item.requested_language));
+          const queued = await bounded(requestWorkerTranslation(meta, meta.request_language));
           // Another request may have completed or published a manual translation meanwhile.
           if (['pending', 'ready', 'manual'].includes(queued.status)) delay = Math.max(3, queued.poll_after_seconds ?? 3);
         } catch {

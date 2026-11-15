@@ -6,6 +6,7 @@ export interface WorkerTranslation {
   origin: 'ko' | 'reviewed' | 'ai';
   source_kind: 'material' | 'bundle'; source_id: string; source_version: number;
   available_languages: string[];
+  request_language: string | null;
   poll_after_seconds: number | null;
 }
 export interface WorkerTranslationFields {

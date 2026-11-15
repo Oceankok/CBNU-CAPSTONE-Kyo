@@ -83,7 +83,7 @@ const original = { title: '한국어 제목', body: '한국어 교육 본문', c
 const item = (status: string, origin = 'ko', language = 'ko', requested = 'en') => ({
   recommendation_id: 'r1', ppe_type: 'helmet', zone_name: 'A', education_topic: 'Safety', material: origin === 'ko' ? original.body : 'English education',
   language, requested_language: requested, translation_fallback: language !== requested, original,
-  translation: { status, origin, source_kind: 'material', source_id: 'm1', source_version: 1, available_languages: ['en'], poll_after_seconds: 3 },
+  translation: { status, origin, source_kind: 'material', source_id: 'm1', source_version: 1, available_languages: ['en'], request_language: ['missing', 'pending'].includes(status) ? 'en' : null, poll_after_seconds: 3 },
 });
 const groups = (entry: ReturnType<typeof item>) => ({ groups: [{ quarter: '2026-Q4', zone_name: 'A', items: [entry] }] });
 async function workerSetup(page: Page, get: (url: URL) => ReturnType<typeof item>, post?: () => void) {
@@ -376,4 +376,16 @@ test('worker language options use native names and admin job status uses readabl
   await page.goto('/scripts/education-browser/index.html?kind=translations');
   await page.getByRole('button', { name: '수동 번역 작성·게시' }).click();
   await expect(page.getByText('AI 자동 번역 · en · 번역 결과 확인 불가', { exact: true })).toBeVisible();
+});
+
+test('enqueue uses verified request language instead of unmatched browser first preference', async ({ page }) => {
+  let target: string | undefined;
+  await setup(page, async (route, url) => {
+    if (url.pathname.endsWith('/request')) { target = route.request().postDataJSON().language; return json(route, { status: 'pending', poll_after_seconds: 3 }, 202); }
+    if (url.pathname.endsWith('/education')) return json(route, groups(item('missing', 'ko', 'ko', 'fr')));
+    if (url.pathname.endsWith('/zones')) return json(route, { items: [] });
+    return json(route, { items: [] });
+  });
+  await page.goto('/scripts/education-browser/index.html?kind=worker');
+  await expect.poll(() => target).toBe('en');
 });
