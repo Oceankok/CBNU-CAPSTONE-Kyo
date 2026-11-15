@@ -15,6 +15,8 @@ from types import ModuleType
 import cv2
 
 from inference_worker.person_tracker import PersonTracker
+from inference_worker.assessment_pipeline import assess_detection_frame
+from inference_worker.validation_harness import validate_cached_detections
 from inference_worker.ppe_rules import assess_ppe
 from inference_worker.violation_tracker import ViolationTracker
 
@@ -38,6 +40,7 @@ def main():
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--baseline-ref", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--assessment-mode",choices=("review","verified_helmet"),default="review")
     args = parser.parse_args()
     commit = subprocess.check_output(
         ["git", "rev-parse", "--verify", args.baseline_ref+"^{commit}"], text=True).strip()
@@ -46,7 +49,10 @@ def main():
     old_events = baseline_module(commit, "violation_tracker")
     args.output.mkdir(parents=True, exist_ok=True)
     model_digest = digest(args.model)
-    detector = None
+    from inference_worker.ppe_detector import PPEDetector
+    detector = PPEDetector(args.model)
+    if args.assessment_mode=="verified_helmet" and not detector.supports_no_helmet:
+        raise ValueError("negative_class_unsupported")
     for video in args.video:
         capture = cv2.VideoCapture(str(video))
         fps = capture.get(cv2.CAP_PROP_FPS)
@@ -56,7 +62,8 @@ def main():
         capture.release()
         metadata = {"video_sha256": digest(video), "model_sha256": model_digest,
                     "fps": fps, "frame_count": total, "shape": shape,
-                    "detection_threshold": .1, "ppe_threshold": .5}
+                    "detection_threshold": .1, "ppe_threshold": .5,
+                    "assessment_mode":args.assessment_mode,"contract_version":"scored_xyxy_v1"}
         cache = args.output/(video.stem+".detections.json")
         if cache.exists():
             saved = json.loads(cache.read_text(encoding="utf-8"))
@@ -79,10 +86,12 @@ def main():
                         print(f"{video.name}: detected {index}/{total}", flush=True)
             finally:
                 capture.release()
-            saved = {"metadata": metadata, "model_version": detector.model_version,
+            saved = {"metadata": metadata,"detector_contract":detector.contract_manifest,
+                     "model_version": detector.model_version,
                      "device": str(detector.model.predictor.device),
                      "ultralytics": ultralytics.__version__, "detections": frames}
             cache.write_text(json.dumps(saved, allow_nan=False), encoding="utf-8")
+        validate_cached_detections(saved)
         outputs = {}
         for variant in ("baseline", "updated_strong_only", "updated_weak_tracking"):
             tracker = old_tracking.PersonTracker() if variant == "baseline" else PersonTracker()
@@ -95,20 +104,23 @@ def main():
                 strong = [d for d in detections if d["confidence"] >= .5]
                 input_rows = strong if variant != "updated_weak_tracking" else detections
                 if variant == "baseline":
-                    people = tracker.update(old_rules.assess_ppe(input_rows, shape))
+                    old_assessment=(old_rules.assess_ppe(input_rows,shape) if args.assessment_mode=="review"
+                                    else old_rules.assess_helmets(input_rows))
+                    people = tracker.update(old_assessment)
                 else:
-                    people = tracker.update(assess_ppe(input_rows, shape), timestamp)
+                    people = tracker.update(assess_detection_frame(input_rows,shape,
+                        supported_ppe=detector.supported_ppe,mode=args.assessment_mode),timestamp)
                 assessments.append({"t": timestamp, "people": people})
                 for policy, timer in timers.items():
                     rows = deepcopy(people)
                     for row in rows:
                         row["policy_scope_key"] = ("replay", policy)
-                        if policy == "helmet":
+                        if policy == "helmet" and "ppe" in row:
                             row["ppe"]["vest"]["status"] = "unknown"
                     if variant == "baseline":
                         candidates = timer.update(rows, timestamp)
                     else:
-                        changes = timer.lifecycle.update(rows, timestamp)
+                        changes = timer.update_transitions(rows, timestamp)
                         transitions.extend({"policy": policy, **change,
                             "model_version": saved["model_version"]} for change in changes)
                         candidates = [c for c in changes if c["kind"] == "start"]
@@ -129,6 +141,7 @@ def main():
         result = {"source": video.name, "metadata": metadata, "baseline_commit": commit,
                   "source_time": "frame_index / native_fps; relative seconds, no shared UTC calibration",
                   "model_version": saved["model_version"], "device": saved["device"],
+                  "detector_contract":saved["detector_contract"],"assessment_mode":args.assessment_mode,
                   "ultralytics": saved["ultralytics"],
                   "settings": {"threshold_seconds":3, "missing_grace_seconds":1,
                                "rewear_seconds":.5,"qualification_grace_seconds":.5,

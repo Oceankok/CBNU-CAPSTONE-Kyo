@@ -33,6 +33,14 @@ class PrivateDecoderTests(unittest.TestCase):
         if self.decoder:self.decoder.close()
         self.owner.close();self.temp.cleanup()
 
+    def test_private_source_bytes_are_exact_on_binary_write(self):
+        capture=cv2.VideoCapture
+        def checked(path):
+            self.assertEqual(Path(path).read_bytes(),self.data)
+            return capture(path)
+        with patch("inference_worker.private_chunk_decoder.cv2.VideoCapture",side_effect=checked):
+            self.assertEqual(len(list(self.decoder(self.data))),10)
+
     def test_normal_timed_frames_private_cleanup(self):
         rows=list(self.decoder(self.data,with_timing=True,duration_ms=1000))
         self.assertEqual(len(rows),10);self.assertEqual(rows[-1][0],9)

@@ -8,6 +8,7 @@ import hashlib
 import json
 import sqlite3
 import os
+import httpx
 from inference_worker.continuous_transport import UploadPlan
 
 
@@ -120,6 +121,9 @@ class ContinuousDispatcher:
                     results.append((row['segment'],'unknown'));continue
                 self._accept(row,receipt)
                 results.append((row['segment'],'accepted_private'))
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code in (401,403):raise
+                results.append((row['segment'],'blocked'))
             except Exception:
                 # Never persist credentials, source paths or remote response bodies.
                 with self.db:self.db.execute("UPDATE uploads SET error='delivery_or_recovery_failed' WHERE segment=?",(row['segment'],))
@@ -176,6 +180,7 @@ class ContinuousDispatcher:
             try:
                 deadline=time.monotonic()+self.transport.total_seconds
                 with self.transport.client.stream('POST',route,headers={'Content-Type':'application/json'},content=payload) as response:
+                    if response.status_code in (401,403):response.raise_for_status()
                     if response.status_code not in (200,201):raise ValueError('metadata refused')
                     if response.headers.get('content-encoding','identity').lower()!='identity':raise ValueError('encoded metadata')
                     raw=bytearray()
@@ -200,6 +205,9 @@ class ContinuousDispatcher:
                         raise MetadataBindingError('camera_snapshot_mismatch')
                 self.outbox.acknowledge(event,row['seq'],receipt=receipt)
                 results.append((event,'acknowledged'))
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code in (401,403):raise
+                results.append((event,'blocked'))
             except MetadataBindingError as error:results.append((event,str(error)))
             except Exception:results.append((event,'blocked'))
         return results

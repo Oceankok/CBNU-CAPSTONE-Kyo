@@ -24,21 +24,26 @@ class RuntimeTests(TestCase):
             rows=self.manifests.setdefault(event,[])
             if kind=='manifest':
                 rows += [dict(camera_id=c,sequence=body['sequence'],request_id=event+c+str(body['sequence']),
-                    role='clip' if c=='main' else 'reference') for c in ('main','ref')]
+                    role='clip' if c=='main' else 'reference') for c in getattr(self,'camera_ids',('main','ref'))]
             return httpx.Response(200,json={'event_id':event,'segments':rows,
-                'cameras':[{'camera_id':c,'role':'clip' if c=='main' else 'reference'} for c in ('main','ref')],
+                'cameras':[{'camera_id':c,'role':'clip' if c=='main' else 'reference'} for c in getattr(self,'camera_ids',('main','ref'))],
                 'accepted_command':dict(kind=kind,session_id=body['session_id'],sequence=body.get('sequence',0),camera_id=camera)})
         self.transport.client=httpx.Client(base_url='https://test',transport=httpx.MockTransport(handler))
         self.dispatcher=ContinuousDispatcher(self.box,self.transport,enabled=True,max_delivery_records=30,max_delivery_db_bytes=2000000)
-        self.capture=MultiCameraCapture(self.root/'raw',cameras={c:CameraClock(0,0,True) for c in ('main','ref')},
+        self.capture=MultiCameraCapture(self.root/'raw',cameras={c:CameraClock(0,0,True) for c in getattr(self,'camera_ids',('main','ref'))},
             max_clock_error=0,pre_seconds=2,post_seconds=2,discovery_delay_limit=3.5,prebuffer_seconds=6,
             prebuffer_bytes=100000,max_buffer_frames=50,max_events=2,global_spool_bytes=4000000,
             spool_config=dict(max_bytes=1000000,max_segments=20,max_age_seconds=100,max_attempts=3,clock=lambda:self.now),
             writer_config=dict(segment_seconds=2,output_fps=2,max_frame_pixels=256,max_input_gap_seconds=.6,encoder_timeout_seconds=5))
-        journal=LifecycleJournal(self.box,camera_id='main',camera_snapshot=['main','ref'],model_version='test',
+        journal=LifecycleJournal(self.box,camera_id='main',camera_snapshot=list(self.capture.cameras),model_version='test',
             missing_grace_seconds=.6,threshold_seconds=3,max_sample_gap_seconds=.6,progress_emit_interval_seconds=1)
         self.runtime=ContinuousFrameRuntime(journal=journal,capture=self.capture,dispatcher=self.dispatcher,metadata_steps_per_pump=30)
         self.frame=np.zeros((16,16,3),np.uint8)
+        # Explicit synthetic pre-roll, independent of whether a person appears.
+        for timestamp in (-2,-1.5,-1,-.5):
+            if 'ref' in self.capture.cameras:self.runtime.frame('ref',timestamp,self.frame)
+            self.runtime.frame('main',timestamp,self.frame,assessments=[])
+
     def tearDown(self):
         self.runtime.stop('test_stop');self.dispatcher.close();self.transport.client.close();self.box.close();self.temp.cleanup()
     def feed(self,fail_ref=False):
