@@ -138,6 +138,9 @@ jobs:
         run: npm run test:education:browser
       - name: Education translation browser checks (isolated HTTP mocks)
         run: npm run test:translations:browser
+      - name: Automatic rule UI browser checks (isolated HTTP mocks)
+        timeout-minutes: 5
+        run: npm run test:auto-rules:browser
       - name: Zone rule locks and revision recovery (isolated HTTP mocks)
         timeout-minutes: 5
         run: |
