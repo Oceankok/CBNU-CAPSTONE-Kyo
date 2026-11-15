@@ -76,7 +76,7 @@ def _covers(ranges,start,end):
 
 def report(event_id,camera_id,body,node_id):
     result = _record_report(event_id,camera_id,body,node_id)
-    if body.state == 'complete':
+    if body.state in {'complete', 'incomplete'}:
         # Capture has committed, including on an identical retry. Secondary
         # policy evaluation must never reject an accepted evidence report.
         try:
