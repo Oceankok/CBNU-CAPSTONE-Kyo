@@ -64,9 +64,11 @@ pending은 같은 GET을 최소3초 간격으로 조회합니다. 큐60초·발�
 
 native 서비스는 동일 DB/schema·정책·공급자 환경에서 `python -m backend.education.auto_translation`을 별도 프로세스로 실행합니다. --once는 한 큐 항목 처리 후 종료하는 검사/단발 실행용입니다. 자동 DB 초기화는 하지 않습니다. 정책/공급자 설정 전에는 발송하지 않습니다.
 
-Compose overlay와 native worker는 **별도로 관리하는 opt-in 후보**입니다. `deploy/Release.ps1`은 compose.release.yaml과 Caddyfile만 release 디렉터리에 복사하며, 일반 업그레이드/rollback에 compose.translation.yaml 또는 translation-worker를 포함하지 않습니다. overlay를 준비했다는 사실이 기존 배포 도구에 통합됐거나 운영 준비가 검증됐다는 뜻은 아닙니다.
+`deploy/Release.ps1 -Translation`은 기본 OFF인 명시적 opt-in입니다. 같은 project-name/env-file/API 이미지/DB를 사용해 release 디렉터리에 `compose.translation.yaml`과 내용 SHA256 이름의 정책 snapshot을 보존하고 API와 translation-worker를 함께 시작합니다. `current-release.json`/`previous-release.json`의 `translation`과 `translation_policy_file`이 적용 상태와 snapshot을 기록합니다. 이전 manifest에 이 필드가 없으면 OFF로 취급합니다. 배포 시 snapshot 무결성·worker process·정책 형식을 확인하고, 활성 정책일 때만 실제 provider configured 상태도 요구합니다. OFF 정책을 올리는 준비 단계는 공급자 없이 가능합니다.
 
-별도 운영자가 overlay 경로와 PPE_AUTO_TRANSLATION_POLICY_FILE, **기존 배포와 같은 project-name/env-file, API 이미지 digest와 DB/schema36**을 명시적으로 맞춰야 합니다. 예시 형식은 `docker compose --project-name <기존-project> --env-file <기존-env> -f <배포-compose.release.yaml> -f <별도-compose.translation.yaml> --profile translation up -d api translation-worker`입니다. 각 꺾쇠 항목은 실제 경로/이름으로 대체해야 합니다. 다른 project로 실행해 서비스/DB를 중복 생성하거나, 이미지/정책을 일반 Release.ps1 rollback과 독립적으로 방치하지 않아야 합니다. worker 시작·중단·버전 변경·rollback은 이 후보를 사용하는 운영자의 별도 관리 대상입니다. 이 구현은 release-script를 변경하거나 운영 명령/활성화를 실행하지 않습니다. 실제 runtime 결합 검증은 격리 native worker로 수행하며 일반 배포 lifecycle 통합은 별도 범위입니다.
+업그레이드/opt-out은 기록된 번역 worker만 중단·제거하며 DB/volume과 기존 작업·예산을 삭제하지 않습니다. 실패 시 이전 API 이미지·번역 상태·정책 snapshot으로 복구합니다. `stop --timeout 130`은 **진행 중 유료 호출을 완료하는 graceful stop 보장이 아닙니다**. SIGTERM/강제 종료로 발송 결과가 불명확해질 수 있으며 기존 dispatched fence·unknown/실패·무재시도 계약을 유지합니다. 한도를 초기화하거나 같은 작업을 재발송하여 복구하지 않습니다.
+
+일반 host 시작·중단/재시작 실행기도 최종 manifest의 `translation`을 확인하고 해당 release overlay/profile과 `translation_policy_file` snapshot mount를 재사용해야 합니다. 가변 운영 원본 정책 파일이나 다른 project/image/DB로 조용히 대체해서는 안 됩니다. 이 host 실행기 연결은 실제 배포 담당자가 별도로 검사합니다. native 별도 worker를 사용하는 경우에도 동일 DB/schema·정책·버전 및 시작·중단 소유권을 명시해야 합니다. opt-in 지원이나 configured 응답은 문구/언어 검토 승인·실제 유료 생성·운영 수락검사 통과를 뜻하지 않습니다.
 
 DB의 schema advisory lock(PG)/write lock(SQLite)이 큐·한도·claim을 직렬화합니다. queued→dispatched와 총/UTC일별 요청 수·누적 원문 문자 수를 **외부 I/O 이전 commit**합니다. 고유 claim token/120초 deadline이 있으며 다른 프로세스가 재claim하지 않습니다. 원문/검증목록/현재 검토 게시본도 발송 전에 재확인합니다. 큐에 있는 동안 수동 게시가 생기면 호출/한도 소비 없이 제외합니다. 발송 후 수동 게시가 생기면 비용을 취소할 수 없지만 조회는 수동이 우선합니다.
 
