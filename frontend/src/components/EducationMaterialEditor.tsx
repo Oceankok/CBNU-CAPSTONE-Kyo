@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import ConfirmButton from './ConfirmButton';
+import EducationTranslationEditor from './EducationTranslationEditor';
 import {
   MATERIAL_ERRORS,
   createMaterial,
@@ -377,6 +378,7 @@ export default function EducationMaterialEditor({
                   />
                 </div>
               )}
+              <EducationTranslationEditor kind="material" sourceId={m.material_id} sourceVersion={m.version} published={m.status === 'published'} disabled={locked} />
             </div>
           ))}
           {items?.length === 0 && !editing && (

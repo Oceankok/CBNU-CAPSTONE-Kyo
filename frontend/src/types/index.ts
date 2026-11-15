@@ -1,3 +1,5 @@
+import type { WorkerTranslationFields } from '../api/workerTranslation';
+
 // Event status reflects the review lifecycle of a candidate event
 // unreviewable: media could not be recovered, recorded separately from violations (#116)
 export type EventStatus =
@@ -259,7 +261,7 @@ export interface EducationBundle {
 }
 
 // Deliberately contains only the fields exposed by GET /api/worker/education-bundles.
-export interface WorkerEducationBundle {
+export interface WorkerEducationBundle extends WorkerTranslationFields {
   bundle_id: string;
   quarter: string;
   ppe_type: string;
@@ -394,13 +396,13 @@ export interface FieldCommand {
 export interface EducationGroup {
   quarter: string | null;
   zone_name: string | null;
-  items: {
+  items: (WorkerTranslationFields & {
     recommendation_id: string;
     ppe_type: string;
     zone_name: string;
     education_topic: string;
     material: string | null; // AI-generated, admin-approved text (not generated yet)
-  }[];
+  })[];
   empty_reason: 'zone_unassigned' | 'recommendations_unavailable' | null;
 }
 

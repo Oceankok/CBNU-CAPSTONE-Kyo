@@ -1,0 +1,42 @@
+{
+  "base_sha": "562b2dffdab6f22cf18aff16185499f2f418e55f",
+  "method": "Real React/DOM/API client in headless Edge; HTTP routes mocked; no backend/DB/provider calls",
+  "browser": "Microsoft Edge headless",
+  "runs": [
+    {
+      "command": "npm run test:translations:browser",
+      "passed": 27,
+      "failed": 0,
+      "duration_seconds": 23.2,
+      "note": "After concurrency/source recovery/freshness corrections"
+    },
+    {
+      "command": "npm run test:translations:browser -- --grep \"native names\"",
+      "passed": 1,
+      "failed": 0,
+      "duration_seconds": 1.8,
+      "note": "Native language/status labels added afterward; no other behavior changed"
+    },
+    {
+      "command": "npm run test:education:browser",
+      "passed": 25,
+      "failed": 0,
+      "duration_seconds": 11.3
+    }
+  ],
+  "lint": "passed,0 errors,0 warnings",
+  "build": "passed before final label-only change; final CI rebuild pending",
+  "sha256": {
+    "frontend/src/components/EducationTranslationEditor.tsx": "bd9c2fd20cc2e9aa16114f5ef73b5f912422825b4924199700c75c709eb9832d",
+    "frontend/src/components/WorkerTranslationNote.tsx": "d8a2d4803cd509615a6b990f07e7b6b4b5ad5a8559105b9ea45b83b7b4622b18",
+    "frontend/src/pages/WorkerHomePage.tsx": "8fd70f5c5919212d1216f0d3148f094fab6f984e555b9009631c4242ec563e93",
+    "frontend/src/api/educationTranslations.ts": "6111634137e66c97eaf54e310700854a7a00b627201e3d75fc66e2d34da3f0ca",
+    "frontend/src/api/workerTranslation.ts": "64b96c7735c976ed3fb9e449886fce8058637550abd2284686203df442e8b77c",
+    "frontend/scripts/education-browser/translations.spec.ts": "513863f6c8481b26621190b96f1fae3fcddb2e5256e2d846cd06b95c91e5f9e5"
+  },
+  "limitations": [
+    "Backend async schema36 integration pending",
+    "No live provider calls or catalog approvals",
+    "No remote main merge or deployment"
+  ]
+}

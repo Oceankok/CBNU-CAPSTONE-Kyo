@@ -114,6 +114,8 @@ jobs:
         run: npm test
       - name: Education browser regression checks (isolated HTTP mocks)
         run: npm run test:education:browser
+      - name: Education translation browser checks (isolated HTTP mocks)
+        run: npm run test:translations:browser
       - name: Upload education browser results
         if: always()
         uses: actions/upload-artifact@v4
