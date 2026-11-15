@@ -1,0 +1,13 @@
+{
+  "camera_ids": ["CAM_A", "CAM_B"],
+  "model_path": "C:\\Models\\best.pt",
+  "mode": "review",
+  "runner": "legacy",
+  "buffer_mib": 256,
+  "failure_policy": "isolate",
+  "camera_restart_limit": 3,
+  "camera_restart_delay": 5,
+  "reference_restart_limit": 3,
+  "reference_restart_delay": 5,
+  "preflight_timeout": 120
+}

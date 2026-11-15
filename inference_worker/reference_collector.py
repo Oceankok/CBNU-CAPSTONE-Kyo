@@ -200,6 +200,8 @@ class ReferenceCollector:
             try:
                 self.collect(request, streams)
             except httpx.HTTPStatusError as error:
+                if error.response.status_code in {401, 403}:
+                    raise  # Revoked global credentials must reach the supervisor.
                 # Deletion, concurrent upload and an unavailable source must not stop peers.
                 if error.response.status_code not in {404, 409}:
                     logger.warning('Reference request deferred: %s', request['request_id'])
@@ -222,7 +224,9 @@ def main():
         while not (args.stop_file and args.stop_file.exists()):
             try:
                 collector.run_once()
-            except httpx.HTTPError:
+            except httpx.HTTPError as error:
+                if isinstance(error, httpx.HTTPStatusError) and error.response.status_code in {401, 403}:
+                    raise
                 logger.warning('Reference server unavailable; will retry')
             if args.once:
                 break

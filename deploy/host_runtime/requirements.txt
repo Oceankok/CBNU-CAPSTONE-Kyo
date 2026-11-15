@@ -1,0 +1,3 @@
+# Explicitly prepare the selected host interpreter, never the API container.
+-r ../../requirements.txt
+httpx>=0.28,<1
