@@ -84,7 +84,11 @@ class PrivateDecoderTests(unittest.TestCase):
         path=self.decoder.root/(uuid4().hex+'.mp4');path.write_bytes(b'unknown')
         with self.assertRaises(PrivateDecodeError):self.open()
         self.assertTrue(path.exists());path.unlink()
-        path.symlink_to(self.root/'nonexistent')
+        try:path.symlink_to(self.root/'nonexistent')
+        except OSError as error:
+            if getattr(error,"winerror",None)==1314:
+                self.skipTest("Windows symlink privilege unavailable; Linux CI must exercise this case")
+            raise
         with self.assertRaises(PrivateDecodeError):self.open()
         self.assertTrue(path.is_symlink());path.unlink()
 

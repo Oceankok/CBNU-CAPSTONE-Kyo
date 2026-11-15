@@ -395,6 +395,13 @@ def main():
                 chunks = client.list_chunks(stream_id, last_sequence)
 
                 if not chunks:
+                    final=selected.get("final_sequence")
+                    if (selected.get("capture_stopped") is True and type(final) is int
+                            and final==last_sequence and pending_clips.pending):
+                        if outbox is not None:
+                            outbox.unavailable_clips("source_ended_before_postroll",
+                                [j["event"]["event_id"] for j in pending_clips.pending if j.get("event")])
+                        pending_clips=PendingClips()
                     time.sleep(args.poll)
                     continue
 

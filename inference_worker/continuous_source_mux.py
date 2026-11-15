@@ -77,10 +77,15 @@ class SourceMux:
         return result
 
     @locked
-    def check_stall(self,*,now,max_lag_seconds):
+    def check_stall(self,*,now,max_lag_seconds,waiting_for_first=()):
         if not math.isfinite(now) or not math.isfinite(max_lag_seconds) or max_lag_seconds<=0:
             raise ValueError('stall policy')
-        if any(c not in self.latest or now-self.latest[c]>max_lag_seconds for c in self.cameras if c not in self.ended):
+        waiting=set(waiting_for_first)
+        if self.primary in waiting or not waiting.issubset(self.cameras):
+            raise ValueError("first-frame grace can only cover configured references")
+        if any((c not in self.latest and c not in waiting) or
+               (c in self.latest and now-self.latest[c]>max_lag_seconds)
+               for c in self.cameras if c not in self.ended):
             self.failure='camera_missing_or_stalled';raise SourceMuxError(self.failure)
 
     @locked

@@ -78,11 +78,12 @@ class ContinuousDispatcher:
                 (json.dumps(receipt,sort_keys=True,separators=(',',':')),row['segment']))
         self.outbox.request_cleanup(row['segment'],reason='verified_upload_receipt')
 
-    def upload_once(self, *, max_items=None):
+    def upload_once(self, *, max_items=None, event_id=None):
         if max_items is not None and (type(max_items) is not int or max_items<=0):raise ValueError('upload step limit')
         self.outbox.reconcile()
         results=[]
         for row in self.db.execute("SELECT * FROM uploads WHERE state!='manual' ORDER BY last_probe,segment").fetchall():
+            if event_id is not None and row['event']!=event_id:continue
             if max_items is not None and len(results)>=max_items:break
             self.outbox.reconcile()
             plan=UploadPlan(**json.loads(row['plan']))
@@ -130,12 +131,13 @@ class ContinuousDispatcher:
                 results.append((row['segment'],'blocked'))
         return results
 
-    def metadata_once(self, *, max_items=None):
+    def metadata_once(self, *, max_items=None, event_id=None):
         """One persisted head per event; exact bytes remain unchanged on failure."""
         import re,time
         if max_items is not None and (type(max_items) is not int or max_items<=0):raise ValueError('metadata step limit')
         results=[]
         rows=self.outbox.pending()
+        if event_id is not None:rows=[r for r in rows if r['event']==event_id]
         if max_items is not None:
             if self._metadata_cursor is not None:
                 rows=[r for r in rows if r['event']>self._metadata_cursor]+[r for r in rows if r['event']<=self._metadata_cursor]

@@ -42,7 +42,11 @@ class TransportTests(TestCase):
         self.assertEqual(self.seen,[])
 
     def test_symlink_rejected(self):
-        (self.root/'link.mp4').symlink_to(self.root/'clip.mp4')
+        try:(self.root/'link.mp4').symlink_to(self.root/'clip.mp4')
+        except OSError as error:
+            if getattr(error,"winerror",None)==1314:
+                self.skipTest("Windows symlink privilege unavailable; Linux CI must exercise this case")
+            raise
         with self.assertRaisesRegex(ValueError,'symlink'):
             self.client().upload(replace(self.plan,relative_path='link.mp4'))
 
@@ -105,7 +109,7 @@ class TransportTests(TestCase):
         client=self.client(lambda r:httpx.Response(404))
         self.assertIsNone(client.recover_receipt(self.plan,session_id='a'*32,role='clip'))
         client=self.client(lambda r:httpx.Response(403))
-        with self.assertRaises(RuntimeError):client.recover_receipt(self.plan,session_id='a'*32,role='clip')
+        with self.assertRaises(httpx.HTTPStatusError):client.recover_receipt(self.plan,session_id='a'*32,role='clip')
         self.assertTrue((self.root/'clip.mp4').exists())
 
     def test_epoch_float_rounding_uses_same_wire_timestamp(self):

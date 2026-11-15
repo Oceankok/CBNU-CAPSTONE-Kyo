@@ -136,3 +136,60 @@ class RecoveryFixture(TestCase):
                                             max_delivery_records=20,max_delivery_db_bytes=2000000)
         self.recover();self.immutable()
 
+
+    def test_endpoint_mismatch_with_open_pending_start_blocks_all_remote_io(self):
+        with self.box.transaction():
+            self.box.db.execute("UPDATE requests SET ack=NULL WHERE kind='start'")
+            self.box.db.execute("UPDATE events SET state='interrupted'")
+        with self.assertRaisesRegex(RecoveryRequired,"original_endpoint_mismatch"):
+            SessionRecovery(self.box,self.dispatcher,endpoint="https://different.test").run()
+        self.assertEqual(self.seen,[])
+        self.assertEqual(self.box.db.execute("SELECT count(*) FROM requests WHERE ack IS NULL").fetchone()[0],2)
+    def test_missing_original_binding_blocks_before_any_receipt_or_flush(self):
+        with self.box.transaction():self.box.db.execute("DELETE FROM runtime_bindings")
+        with self.assertRaisesRegex(RecoveryRequired,"original_endpoint_binding_missing"):
+            self.recover()
+        self.assertEqual(self.seen,[])
+
+    def add_second_old_event(self, *, endpoint="https://test"):
+        current=self.box.session
+        session="b"*32;event="EVT_"+"2"*32
+        self.box.session=session
+        try:
+            self.box.bind_runtime({"endpoint":endpoint,"primary":"main",
+                "clocks":{"main":{"offset":0,"error_bound":0}}})
+            self.box.create_event(event,camera_snapshot=["main"])
+            start={**self.start,"event_id":event,"session_id":session}
+            self.box.enqueue(event,seq=0,kind="start",idempotency_key="second-start",body=start)
+            self.box.acknowledge(event,0,receipt={"event_id":event})
+            self.box.enqueue(event,seq=1,kind="close",idempotency_key="second-close",
+                             body={**self.close,"session_id":session})
+        finally:self.box.session=current
+        return event,session
+
+    def test_second_event_invalid_binding_blocks_all_events_before_first_network_call(self):
+        event,session=self.add_second_old_event(endpoint="https://different.test")
+        for reason in ("original_endpoint_mismatch","original_endpoint_binding_missing"):
+            with self.subTest(reason=reason):
+                if reason.endswith("missing"):
+                    with self.box.transaction():
+                        self.box.db.execute("DELETE FROM runtime_bindings WHERE session=?",(session,))
+                with self.assertRaisesRegex(RecoveryRequired,reason):self.recover()
+                self.assertEqual(self.seen,[])
+                self.assertEqual(self.box.unacknowledged_count(),2)
+
+    def test_first_event_flush_never_submits_second_protected_event(self):
+        event,session=self.add_second_old_event()
+        read=self.transport.metadata_read
+        def protected(method,path,**kwargs):
+            if event in path:
+                self.assertTrue(path.endswith("/operation-receipt"))
+                return {"event_id":event,"session_id":session,"sequence":1,
+                        "receipt_status":"not_committed","recovery_blockers":["already_reviewed"]}
+            return read(method,path,**kwargs)
+        with patch.object(self.transport,"metadata_read",side_effect=protected):
+            with self.assertRaisesRegex(RecoveryRequired,"protected_or_conflicting_operation"):
+                self.recover()
+        self.assertTrue(any(path.endswith("/updates") for _,path,_ in self.seen))
+        self.assertFalse(any(event in path for _,path,_ in self.seen))
+        self.assertEqual(self.box.unacknowledged_count(),1)

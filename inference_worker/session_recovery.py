@@ -98,9 +98,9 @@ class SessionRecovery:
                 self.box.enqueue(event,seq=self.box.event_status(event)["next_seq"],kind="incomplete",
                     idempotency_key=f"restart-disposition:{event}:{body['sequence']}",body=disposition)
 
-    def _flush(self):
+    def _flush(self,event):
         for _ in range(self.max_steps):
-            result=self.dispatcher.metadata_once(max_items=1)
+            result=self.dispatcher.metadata_once(max_items=1,event_id=event)
             if not result or not any(state=="acknowledged" for _,state in result):break
 
     def _incomplete_open(self,event,session,remote):
@@ -125,19 +125,62 @@ class SessionRecovery:
                              idempotency_key=f"restart-close:{event}",body=body)
             self.box.db.execute("UPDATE pending_closes SET state='finalized' WHERE event=?",(event,))
 
+    def _available_ranges(self,event,camera):
+        self.box.reconcile()
+        from datetime import datetime,timezone
+        parse=lambda value:datetime.fromisoformat(value.replace("Z","+00:00")).timestamp()
+        start,end=parse(camera["required_start_at"]),parse(camera["required_end_at"])
+        result=[]
+        for row in self.box.db.execute("SELECT * FROM segments WHERE event=? AND camera=? AND state='present' ORDER BY start",
+                                       (event,camera["camera_id"])):
+            if start-1e-6<=row["start"]<row["end"]<=end+1e-6:
+                result.append({"start_at":_time(row["start"]),"end_at":_time(row["end"])})
+        cursor=start
+        for row in result:
+            if abs(parse(row["start_at"])-cursor)>1e-6:return result,False
+            cursor=parse(row["end_at"])
+        return result,bool(result) and abs(cursor-end)<=1e-6
+
+    def _recover_uploads(self,event,session,remote):
+        from datetime import datetime
+        from inference_worker.continuous_transport import UploadPlan
+        parse=lambda value:datetime.fromisoformat(value.replace("Z","+00:00")).timestamp()
+        status=self.box.event_status(event)
+        if status["state"]!="closed" or remote["lifecycle"]["phase"]!="closed":return
+        for row in self.box.db.execute("SELECT * FROM segments WHERE event=? AND state='present'",(event,)).fetchall():
+            matches=[s for s in remote["segments"] if s["camera_id"]==row["camera"]
+                     and abs(parse(s["capture_start_at"])-row["start"])<1e-6
+                     and abs(parse(s["capture_end_at"])-row["end"])<1e-6]
+            if len(matches)!=1:raise RecoveryRequired("restart_segment_binding")
+            segment=matches[0]
+            camera=next(c for c in remote["cameras"] if c["camera_id"]==row["camera"])
+            path=self.box._path(row["path"])
+            with path.open("rb") as stream:digest=hashlib.file_digest(stream,"sha256").hexdigest()
+            plan=UploadPlan(event,segment["request_id"],row["camera"],row["path"],row["bytes"],digest,
+                row["start"],row["end"],parse(camera["required_start_at"]),parse(camera["required_end_at"]),True)
+            self.dispatcher.register_upload(row["id"],plan,session_id=session,role=segment["role"])
+        for _ in range(self.max_steps):
+            result=self.dispatcher.upload_once(max_items=1,event_id=event)
+            if not result or any(state!="accepted_private" for _,state in result):break
+        if self.dispatcher.db.execute("SELECT 1 FROM uploads WHERE event=? AND state!='accepted'",(event,)).fetchone():
+            raise RecoveryRequired("restart_upload_pending")
+
     def _reports(self,event,session,remote):
         binding=self.box.db.execute("SELECT metadata FROM runtime_bindings WHERE session=?",(session,)).fetchone()
         if binding is None:raise RecoveryRequired("original_clock_binding_missing")
         provenance=json.loads(binding[0])
         if provenance["endpoint"].rstrip("/")!=self.endpoint:
             raise RecoveryRequired("original_endpoint_mismatch")
+        available={c["camera_id"]:self._available_ranges(event,c) for c in remote["cameras"]}
+        complete=(self.box.event_status(event)["state"]=="closed" and remote["lifecycle"]["phase"]=="closed"
+                  and all(value[1] for value in available.values()))
         for camera in remote["cameras"]:
             name=camera["camera_id"];old=camera.get("capture_report")
             segments=[s for s in remote["segments"] if s["camera_id"]==name]
             if old and old["state"]=="incomplete":continue
             if old and old["state"]=="complete" and segments and all(s["status"]=="received" for s in segments):
                 continue  # Existing server custody is never downgraded for local cleanup.
-            pending=self.box.db.execute("SELECT 1 FROM requests WHERE event=? AND idem LIKE ?",
+            pending=self.box.db.execute("SELECT 1 FROM requests WHERE event=? AND ack IS NULL AND idem LIKE ?",
                                        (event,name+":"+event+":restart-report%")).fetchone()
             if pending:continue
             clock=provenance["clocks"][name]
@@ -145,40 +188,59 @@ class SessionRecovery:
             missing=list(old.get("missing_ranges",[])) if old else []
             gap={"start_at":camera["required_start_at"],"end_at":camera["required_end_at"],
                  "reason":"process_restart_evidence_unavailable"}
-            if gap not in missing:missing.append(gap)
-            body=dict(session_id=session,sequence=sequence,state="incomplete",
-                captured_ranges=old.get("captured_ranges",[]) if old else [],missing_ranges=missing,
-                earliest_available_at=old.get("earliest_available_at") if old else None,
+            if not complete and gap not in missing:missing.append(gap)
+            body=dict(session_id=session,sequence=sequence,state="complete" if complete else "incomplete",
+                captured_ranges=old.get("captured_ranges",[]) if old else available[name][0],missing_ranges=missing,
+                earliest_available_at=old.get("earliest_available_at") if old else (available[name][0][0]["start_at"] if available[name][0] else None),
                 time_basis=old.get("time_basis","source_utc_corrected") if old else "source_utc_corrected",
                 clock_offset_seconds=old.get("clock_offset_seconds",clock["offset"]) if old else clock["offset"],
                 clock_uncertainty_seconds=old.get("clock_uncertainty_seconds",clock["error_bound"]) if old else clock["error_bound"],
-                reason="process_restart_evidence_unavailable")
+                reason=None if complete else "process_restart_evidence_unavailable")
             self.box.enqueue(event,seq=self.box.event_status(event)["next_seq"],kind="capture_report",
                 idempotency_key=f"{name}:{event}:restart-report:{sequence}",body=body)
 
     def run(self):
         """Bounded recovery passes. Unknown/protected state blocks new frames."""
         old=self.box.db.execute("SELECT * FROM events WHERE session!=?",(self.box.session,)).fetchall()
+        # Validate ALL old-session destinations before any global dispatcher
+        # flush or authenticated read can send even one queued body.
+        for row in old:
+            saved=self.box.db.execute("SELECT metadata FROM runtime_bindings WHERE session=?",(row["session"],)).fetchone()
+            if saved is None:
+                self.box.recovery_state(row["id"],"required","original_endpoint_binding_missing")
+                raise RecoveryRequired("original_endpoint_binding_missing")
+            provenance=json.loads(saved[0])
+            if (not isinstance(provenance.get("endpoint"),str)
+                    or provenance["endpoint"].rstrip("/")!=self.endpoint):
+                self.box.recovery_state(row["id"],"required","original_endpoint_mismatch")
+                raise RecoveryRequired("original_endpoint_mismatch")
         for eventrow in old:
             event,session=eventrow["id"],eventrow["session"]
             # Fully acknowledged finalized sessions need no new event mutation.
             known=self.box.db.execute("SELECT state FROM recovery_states WHERE event=?",(event,)).fetchone()
-            if known and known[0]=="reconciled":continue
+            if (known and known[0]=="reconciled" and eventrow["state"]=="closed"
+                    and not self.box.db.execute("SELECT 1 FROM segments WHERE event=? AND (state='present' OR cleanup=1)",(event,)).fetchone()
+                    and not self.dispatcher.db.execute("SELECT 1 FROM uploads WHERE event=? AND state!='accepted'",(event,)).fetchone()):
+                continue
             try:
+                historical=self.box.db.execute("SELECT * FROM requests WHERE event=? AND kind IN ('close','incomplete') AND ack IS NOT NULL ORDER BY seq DESC LIMIT 1",(event,)).fetchone()
+                if historical and self._receipt(event,_decoded(historical))["recovery_blockers"]:
+                    raise RecoveryRequired("protected_historical_event")
                 for _ in range(3):
                     self._terminal_ambiguities(event,session)
-                    self._flush()
+                    self._flush(event)
                     remote=self._read(event,session)
                     self._incomplete_open(event,session,remote)
-                    self._flush()
+                    self._flush(event)
                     remote=self._read(event,session)
                     if remote["lifecycle"]["phase"]=="open":continue
                     self._reports(event,session,remote)
-                    self._flush()
+                    self._flush(event)
                     outstanding=self.box.db.execute("""SELECT 1 FROM requests r WHERE event=? AND ack IS NULL
                         AND NOT EXISTS(SELECT 1 FROM retired_requests t WHERE t.event=r.event AND t.seq=r.seq)""",
                         (event,)).fetchone()
                     if outstanding:continue
+                    self._recover_uploads(event,session,self._read(event,session))
                     with self.box.transaction():
                         self.box.db.execute("UPDATE pending_closes SET state='finalized' WHERE event=?",(event,))
                         self.box.recovery_state(event,"reconciled","previous_session_not_resumed")
@@ -190,7 +252,7 @@ class SessionRecovery:
         return [row["id"] for row in old]
 
 
-def dispose_previous_sources(box, *, spool_config):
+def dispose_previous_sources(box, *, spool_config, verified_receipt=lambda _:False):
     """Disposition only ledger-owned old spools; never extend their lifetime."""
     from inference_worker.segment_spool import SegmentSpool
     from inference_worker.cleanup_supervisor import CleanupSupervisor
@@ -211,7 +273,7 @@ def dispose_previous_sources(box, *, spool_config):
                 if segment["state"]=="present":
                     box.request_cleanup(segment["id"],reason="restart_incomplete_capture")
             result=CleanupSupervisor(box,spools={owner["spool"]:spool},
-                                     verified_receipt=lambda _:False).run_once()
+                                     verified_receipt=verified_receipt).run_once()
             if spool.entries or spool.active_segment_id or result["recovery_required"]:
                 raise RecoveryRequired("old_source_disposition_pending")
             if spool.discard_receipts()["items"]:

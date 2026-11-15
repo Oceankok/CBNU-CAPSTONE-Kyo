@@ -5,6 +5,7 @@ before constructing a new reader. No track identities survive reconnects.
 """
 import math
 import re
+import httpx
 from inference_worker.time_utils import frame_timestamp,is_continuous_chunk
 from inference_worker.video_decoder import decode_mp4
 from inference_worker.continuous_source_mux import SourceMuxError
@@ -44,7 +45,7 @@ class ContinuousSourceReader:
         if set(offsets)!=set(mux.cameras) or any(not math.isfinite(v) for v in offsets.values()):raise ValueError('camera clock mappings')
         if not math.isfinite(max_chunk_gap_seconds) or max_chunk_gap_seconds<0:raise ValueError('chunk gap policy')
         if type(degrade_references) is not bool:raise ValueError('reference failure mode')
-        self.degrade_references=degrade_references;self.reference_failures={}
+        self.degrade_references=degrade_references;self.reference_failures={};self.reference_wait_since={}
         self.gap=max_chunk_gap_seconds
         if type(max_chunk_bytes) is not int or max_chunk_bytes<=0:raise ValueError('chunk byte cap')
         self.client,self.mux,self.offsets=client,mux,dict(offsets)
@@ -71,7 +72,7 @@ class ContinuousSourceReader:
                         raise SourceUnavailableError('source_stream_unavailable',camera=camera,
                             stream=stream,expected_sequence=self.sequence[camera]+1)
                     active.append(row)
-            except SourceMuxError as error:
+            except (SourceMuxError,httpx.HTTPError,ValueError) as error:
                 if not self._degrade(camera,error):raise
         # Primary EOS freezes finite local reference drain boundaries. These are
         # not backend stop acknowledgments and must never authorize zone changes.
@@ -131,7 +132,7 @@ class ContinuousSourceReader:
                     if self.sequence[camera]==final:
                         self._end(camera,'reference_drain_cutoff');continue
                 selected[camera]=(row,stream,context,final)
-            except SourceMuxError as error:
+            except (SourceMuxError,httpx.HTTPError,ValueError) as error:
                 if not self._degrade(camera,error):raise
         for camera in self.mux.cameras:
             if camera not in selected:continue
@@ -189,11 +190,13 @@ class ContinuousSourceReader:
                 self.previous[camera]=dict(chunk);self.sequence[camera]=chunk['sequence']
                 if final is not None and chunk['sequence']==final:
                     self._end(camera,'reference_drain_cutoff' if camera in self.cutoffs else 'source_ended')
-            except (SourceMuxError, ValueError, RuntimeError, OSError) as error:
+            except (SourceMuxError, ValueError, RuntimeError, OSError, httpx.HTTPError) as error:
                 if not self._degrade(camera,error):raise
         return self.mux.pop_ready()
 
     def _degrade(self,camera,error):
+        if isinstance(error,httpx.HTTPStatusError) and error.response.status_code in (401,403):
+            return False
         if (not self.degrade_references or camera==self.mux.primary
                 or str(error) in ("mux_budget_exhausted","chunk_http_401","chunk_http_403")):
             return False
@@ -212,8 +215,17 @@ class ContinuousSourceReader:
         for camera in self.mux.cameras:
             if camera==self.mux.primary or camera in self.mux.ended:continue
             last=self.mux.latest.get(camera)
-            if last is not None and now-last>max_lag_seconds:
+            if last is None:
+                since=self.reference_wait_since.setdefault(camera,now)
+                if now-since>=max_lag_seconds:
+                    self._degrade(camera,SourceMuxError("reference_initial_frame_timeout"))
+            elif now-last>max_lag_seconds:
                 self._degrade(camera,SourceMuxError("reference_stalled"))
+
+    def waiting_first_references(self):
+        return tuple(c for c in self.mux.cameras if c!=self.mux.primary
+                     and c not in self.mux.ended and c not in self.mux.latest)
+
 
     def _availability(self,camera):
         lookup=getattr(self.client,'stream_availability',None)

@@ -26,10 +26,20 @@ from inference_worker.cleanup_supervisor import CleanupSupervisor
 from inference_worker.private_chunk_decoder import PrivateChunkDecoder
 
 
-def check_source_progress(mux,*,now,elapsed,max_lag_seconds):
+def check_source_progress(mux,*,now,elapsed,max_lag_seconds,waiting_for_first=()):
     """Bound initial no-frame waiting too; timeout is never an EOS signal."""
-    if mux.latest:mux.check_stall(now=now,max_lag_seconds=max_lag_seconds)
+    if mux.latest:mux.check_stall(now=now,max_lag_seconds=max_lag_seconds,waiting_for_first=waiting_for_first)
     elif elapsed>=max_lag_seconds:raise SourceMuxError('source_initial_frame_timeout')
+
+
+def poll_source(reader,mux,*,now,elapsed,max_lag_seconds):
+    """Runner ordering: expire reference grace before checking the mux."""
+    reader.expire_reference_stalls(now=now,max_lag_seconds=max_lag_seconds)
+    batch=reader.poll()
+    if not batch:
+        check_source_progress(mux,now=now,elapsed=elapsed,max_lag_seconds=max_lag_seconds,
+                              waiting_for_first=reader.waiting_first_references())
+    return batch
 
 
 def policy_assessments(rows,policy,shape,*,review_only):
@@ -120,7 +130,8 @@ def run(args):
             'assessment_mode':'review' if review else 'verified_helmet',
             'detector_contract':getattr(detector,'contract_manifest',None)})
         SessionRecovery(box,dispatcher,endpoint=client.server_url).run()
-        dispose_previous_sources(box,spool_config=config['capture']['spool_config'])
+        dispose_previous_sources(box,spool_config=config['capture']['spool_config'],
+                                 verified_receipt=dispatcher.cleanup_receipt_verified)
         capture=MultiCameraCapture(state/'raw',cameras={c:CameraClock(r['offset'],r['error_bound'],True) for c,r in clocks.items()},**config['capture'])
         lifecycle_config={
             'rewear_seconds':getattr(args,'rewear_seconds',0.5),
@@ -147,8 +158,8 @@ def run(args):
                 raise ValueError('policy changed; fresh capture session required')
             policy_signature=signature
             try:
-                reader.expire_reference_stalls(now=now,max_lag_seconds=config['max_lag_seconds'])
-                batch=reader.poll()
+                batch=poll_source(reader,mux,now=now,elapsed=time.monotonic()-source_started,
+                                  max_lag_seconds=config['max_lag_seconds'])
                 for metadata in reader.reference_failures.values():box.record_reference_failure(metadata)
             except SourceMuxError as error:
                 if (str(error) not in ('session_stopped','primary_source_ended')
@@ -191,8 +202,6 @@ def run(args):
                 if primary_sequence is not None:processed+=1
                 primary_sequence=current
             if not had_frames:
-                check_source_progress(mux,now=now,elapsed=time.monotonic()-source_started,
-                                      max_lag_seconds=config['max_lag_seconds'])
                 time.sleep(args.poll)
         stop_reason='operator_stop' if args.stop_file and args.stop_file.exists() else 'chunk_limit_reached'
     except SourceMuxError as error:

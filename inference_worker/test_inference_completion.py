@@ -287,3 +287,92 @@ class ProfileTests(unittest.TestCase):
             profile=self.profile(root);profile["clocks"]["ref"]={**profile["clocks"]["main"],"epoch":"other"}
             path.write_text(json.dumps(profile))
             with self.assertRaisesRegex(ValueError,"shared declared epoch"):read_config(path,"main",now=1)
+
+class ReferenceStartupOrderingTests(unittest.TestCase):
+    def test_bound_empty_reference_waits_grace_then_primary_queue_is_processed(self):
+        from inference_worker.run_continuous import poll_source
+        from datetime import datetime,timezone
+        c,r=source_fixture.ReaderTests().make();r.degrade_references=True
+        original=c.list_chunks
+        c.list_chunks=lambda stream,after: [] if stream=="b" else original(stream,after)
+        epoch=datetime(2026,1,1,tzinfo=timezone.utc).timestamp()
+        self.assertEqual(poll_source(r,r.mux,now=epoch,elapsed=0,max_lag_seconds=1),[])
+        self.assertNotIn("ref",r.reference_failures)
+        c.seq=1
+        self.assertEqual(poll_source(r,r.mux,now=epoch+.4,elapsed=.4,max_lag_seconds=1),[])
+        self.assertNotIn("ref",r.reference_failures)
+        c.seq=2
+        frames=poll_source(r,r.mux,now=epoch+1.1,elapsed=1.1,max_lag_seconds=1)
+        self.assertEqual([row[0] for row in frames],["main"]*6)
+        self.assertEqual(r.reference_failures["ref"]["failure_code"],"reference_initial_frame_timeout")
+        self.assertEqual(r.end_reasons["ref"],"source_failed")
+        self.assertEqual(r.streams["main"],"a")
+        self.assertEqual(r.mux.cameras,("main","ref"))
+
+class LegacyEndedSourceTests(unittest.TestCase):
+    def test_stopped_source_terminalizes_missing_postroll_before_runner_stop(self):
+        from inference_worker import test_runner_resilience as fixtures
+        from inference_worker.test_roi_runner_end_to_end import ReviewDetector
+        class Finished(Exception):pass
+        client=server_fixture.FakeVideoClient(8)
+        original=client.list_chunks
+        def streams():
+            ended=len(client.downloads)>=4
+            return [{"stream_id":"TEST_STREAM","camera_id":"CAM_001","last_sequence":3 if ended else -1,
+                     "capture_stopped":ended,"final_sequence":3 if ended else None}]
+        def chunks(stream,after_sequence=-1):
+            if client.clip_failures:raise Finished()
+            return [row for row in original(stream,after_sequence) if row["sequence"]<4]
+        client.list_streams=streams;client.list_chunks=chunks
+        with self.assertRaises(Finished):
+            fixtures.RunnerResilienceTests().run_runner(client,review=True,
+                detector=ReviewDetector(warmup_frames=0))
+        self.assertEqual(len(client.submitted_events),1)
+        self.assertEqual(client.clip_failures[0][2],"source_ended_before_postroll")
+
+class CLIStatusTests(unittest.TestCase):
+    def test_continuous_integer_failure_status_survives_module_entrypoint(self):
+        import runpy,sys
+        for result,code in ((17,17),({"state":"drained"},0)):
+            with patch.object(sys,"argv",["run_server","--camera-id","main","--continuous-config","unused","--submit-review-candidates"]), \
+                 patch("inference_worker.run_continuous.run",return_value=result):
+                with self.assertRaises(SystemExit) as ended:
+                    runpy.run_module("inference_worker.run_server",run_name="__main__")
+                self.assertEqual(ended.exception.code,code)
+
+class ReferenceHTTPBoundaryTests(unittest.TestCase):
+    def make(self):
+        c,r=source_fixture.ReaderTests().make();r.degrade_references=True
+        return c,r
+    def error(self,status):
+        httpx.Response(status,request=httpx.Request("GET","http://test/reference")).raise_for_status()
+    def test_camera_specific_timeout_and_5xx_leave_primary_running(self):
+        for failure in (httpx.ReadTimeout("reference timeout"),503):
+            for location in ("list","download","availability"):
+                with self.subTest(failure=type(failure).__name__,location=location):
+                    c,r=self.make()
+                    def fail():
+                        if isinstance(failure,int):self.error(failure)
+                        raise failure
+                    if location=="availability":
+                        r.poll();c.seq=1;c.streams=c.streams[:1]
+                        c.stream_availability=lambda *_:fail()
+                    elif location=="list":
+                        original=c.list_chunks
+                        c.list_chunks=lambda stream,after: fail() if stream=="b" else original(stream,after)
+                    else:
+                        original=r.downloader
+                        r.downloader=lambda name: fail() if name.startswith("b") else original(name)
+                    frames=r.poll()
+                    self.assertEqual([row[0] for row in frames],["main","main"])
+                    self.assertEqual(r.end_reasons["ref"],"source_failed")
+    def test_auth_on_reference_and_global_stream_listing_remain_fatal(self):
+        for status in (401,403):
+            c,r=self.make();original=c.list_chunks
+            c.list_chunks=lambda stream,after:self.error(status) if stream=="b" else original(stream,after)
+            with self.assertRaises(httpx.HTTPStatusError):r.poll()
+            self.assertNotIn("ref",r.reference_failures)
+        c,r=self.make()
+        c.list_streams=lambda:(_ for _ in ()).throw(httpx.ReadTimeout("global"))
+        with self.assertRaises(httpx.ReadTimeout):r.poll()
+        self.assertEqual(r.reference_failures,{})
