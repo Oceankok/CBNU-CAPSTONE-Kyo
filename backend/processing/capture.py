@@ -60,7 +60,7 @@ def cameras(conn,event_id):
         payload=json.loads(report['payload']) if report else None
         if payload: payload.pop('session_id',None)
         rows.append({**dict(camera),'required_start_at':lc.stamp(lc.dt(event['timestamp_start'])-timedelta(seconds=2)),
-            'required_end_at':lc.stamp(lc.dt(event['timestamp_end'])+timedelta(seconds=2)),
+            'required_end_at':lc.stamp(lc.capture_end(conn,event_id,event['timestamp_start'],event['timestamp_end'])),
             'capture_report':payload})
     return rows
 
@@ -129,7 +129,7 @@ def _record_report(event_id,camera_id,body,node_id):
                 raise HTTPException(409,'capture_recovery_policy_required')
         event=conn.execute('SELECT timestamp_start,timestamp_end FROM candidate_event WHERE event_id=?',(event_id,)).fetchone()
         start=lc.dt(event['timestamp_start'])-timedelta(seconds=2)
-        end=lc.dt(event['timestamp_end'])+timedelta(seconds=2)
+        end=lc.capture_end(conn,event_id,event['timestamp_start'],event['timestamp_end'])
         if any(r.start_at<start-lc.WIRE_TIME_EPSILON or r.end_at>end+lc.WIRE_TIME_EPSILON for r in [*body.captured_ranges,*body.missing_ranges]):
             raise HTTPException(422,'capture_range_outside_event')
         if body.state=='complete':

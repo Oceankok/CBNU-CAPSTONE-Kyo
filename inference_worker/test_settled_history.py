@@ -16,10 +16,12 @@ from inference_worker.lifecycle_journal import LifecycleJournal
 from inference_worker.segment_spool import Segment
 from inference_worker.session_recovery import SessionRecovery,RecoveryRequired
 from inference_worker.test_continuous_dispatcher import FakeTransport
+from backend.capture_grid import required_capture_end
+from datetime import datetime, timezone
 
 
 class SettledHistoryTests(TestCase):
-    def make(self, *, incomplete=False,discard=False,no_sources=False):
+    def make(self, *, incomplete=False,discard=False,no_sources=False,capture_output_fps=None,tail_jitter=0):
         temp=TemporaryDirectory();self.addCleanup(temp.cleanup)
         f=SimpleNamespace(root=Path(temp.name),transport=FakeTransport(),now=1767225610.1234567)
         def open_box():
@@ -33,13 +35,15 @@ class SettledHistoryTests(TestCase):
         f.session=f.box.session
         f.box.bind_runtime({'endpoint':'https://test','primary':'main'})
         journal=LifecycleJournal(f.box,camera_id='main',camera_snapshot=['main','ref'],model_version='fixture',
-            missing_grace_seconds=1,threshold_seconds=3,max_sample_gap_seconds=.5,progress_emit_interval_seconds=1)
+            missing_grace_seconds=1,threshold_seconds=3,max_sample_gap_seconds=.5,progress_emit_interval_seconds=1,
+            capture_output_fps=capture_output_fps)
         epoch=f.now-10
         absent={'tracking_id':'t','ppe_type':'helmet','status':'suspected_no_helmet',
                 'verified_ppe_confidence':None,'policy_scope_key':'fixture'}
         for step in range(13):
             transitions=journal.update([absent],epoch+step*.25)
         f.event=next(t['event_id'] for t in transitions if t['kind']=='start')
+        if tail_jitter:journal.update([absent],epoch+3+tail_jitter)
         def ack(row,*,segments=()):
             body=json.loads(row['body']);kind='close' if row['kind']=='incomplete' else row['kind']
             camera=row['idem'].split(':')[0] if kind=='capture_report' else None
@@ -48,7 +52,9 @@ class SettledHistoryTests(TestCase):
                 'lifecycle':{'phase':'interrupted' if incomplete else 'closed'},'segments':list(segments)}
             f.box.acknowledge(f.event,row['seq'],receipt=receipt)
         ack(f.box.db.execute('SELECT * FROM requests').fetchone())
-        f.sources={};left,right=epoch-2,epoch+5
+        f.sources={};left=epoch-2
+        right=required_capture_end(datetime.fromtimestamp(epoch,tz=timezone.utc),
+            datetime.fromtimestamp(epoch+3+tail_jitter,tz=timezone.utc),capture_output_fps).timestamp()
         for camera in (() if no_sources else ('main','ref') if discard or not incomplete else ('main',)):
             directory,sid=uuid4().hex,uuid4().hex
             f.box.begin_capture(f.event,camera=camera,spool_directory=directory)
@@ -57,6 +63,8 @@ class SettledHistoryTests(TestCase):
             f.box.bind_segment(f.event,camera=camera,segment=segment,relative_path=directory+'/'+sid+'.mp4')
             f.sources[camera]=(segment,path)
         journal.update([{**absent,'status':'helmet'}],epoch+3.25)
+        for pending in f.box.db.execute("SELECT * FROM requests WHERE ack IS NULL ORDER BY seq").fetchall():
+            ack(pending)
         if incomplete:f.box.mark_incomplete(f.event,reason='camera_capture_incomplete')
         remote=[]
         if not no_sources:
@@ -118,6 +126,12 @@ class SettledHistoryTests(TestCase):
     def test_normal_complete_without_recovery_marker_is_a_local_noop(self):
         f=self.make()
         self.assertEqual(f.box.db.execute('SELECT count(*) FROM recovery_states').fetchone()[0],0)
+        self.assert_noop(f)
+
+    def test_opted_in_offgrid_end_is_settled_after_restart_without_mutation(self):
+        f=self.make(capture_output_fps=15,tail_jitter=.008)
+        start=json.loads(f.box.db.execute("SELECT body FROM requests WHERE kind='start'").fetchone()[0])
+        self.assertEqual(start['capture_output_fps'],15)
         self.assert_noop(f)
 
     def test_settled_incomplete_missing_discarded_or_zero_sources_is_a_local_noop(self):

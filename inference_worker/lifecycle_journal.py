@@ -8,13 +8,14 @@ from copy import deepcopy
 from math import isfinite
 from inference_worker.event_lifecycle import EventLifecycle
 from inference_worker.continuous_payloads import start_payload, update_payload
+from backend.capture_grid import validate_output_fps
 
 
 class LifecycleJournal:
     def __init__(self, outbox, *, camera_id, camera_snapshot, model_version,
                  missing_grace_seconds, threshold_seconds, max_sample_gap_seconds, progress_emit_interval_seconds,
                  rewear_seconds=0.0, qualification_grace_seconds=0.0,
-                 qualification_window_seconds=6.0):
+                 qualification_window_seconds=6.0, capture_output_fps=None):
         if not isinstance(model_version,str) or not model_version:
             raise ValueError('explicit model version required')
         if (isinstance(progress_emit_interval_seconds,bool) or not isinstance(progress_emit_interval_seconds,(int,float))
@@ -29,6 +30,8 @@ class LifecycleJournal:
         self.outbox=outbox
         self.snapshot=snapshot
         self.model_version=model_version
+        self.capture_output_fps = (validate_output_fps(capture_output_fps)
+                                   if capture_output_fps is not None else None)
         self.lifecycle=EventLifecycle(camera_id,missing_grace_seconds=missing_grace_seconds,
             threshold_seconds=threshold_seconds,max_sample_gap_seconds=max_sample_gap_seconds,
             rewear_seconds=rewear_seconds,qualification_grace_seconds=qualification_grace_seconds,
@@ -62,7 +65,7 @@ class LifecycleJournal:
             event=transition['event_id'];kind=transition['kind']
             if kind=='start':
                 body=start_payload(transition,session_id=self.outbox.session,model_version=self.model_version,
-                    capture_context_id=self.capture_context_id)
+                    capture_context_id=self.capture_context_id,capture_output_fps=self.capture_output_fps)
                 operations.append(dict(kind='start',event_id=event,camera_snapshot=deepcopy(self.snapshot),
                     idempotency_key=event+':start',body=body))
                 sequences[event]=0

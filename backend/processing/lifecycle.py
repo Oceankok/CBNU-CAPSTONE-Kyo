@@ -3,7 +3,7 @@
 Legacy immutable submissions remain unchanged. Producers must durably journal
 start/update/segment operations before sending them; process memory is not an outbox.
 """
-from datetime import timezone, timedelta
+from datetime import datetime, timezone, timedelta
 import json
 import os
 import time
@@ -18,6 +18,7 @@ from backend.db.event_repository import get_connection, insert_candidate_event
 from backend.event_time import parse
 from backend.processing.events import EventSubmission
 from backend.field.service import enqueue_event_broadcast
+from backend.capture_grid import MAX_CAPTURE_OUTPUT_FPS, required_capture_end
 
 
 # Match the producer's qualification tolerance and microsecond wire precision.
@@ -45,6 +46,7 @@ def canonical(body):
     payload=body.model_dump(mode='json')
     # Preserve the pre-context serialized form for legacy start retries.
     if payload.get('capture_context_id') is None:payload.pop('capture_context_id',None)
+    if payload.get('capture_output_fps') is None:payload.pop('capture_output_fps',None)
     return json.dumps(payload, sort_keys=True, separators=(',', ':'))
 
 
@@ -58,6 +60,7 @@ class Observation(BaseModel):
 class Start(EventSubmission, Observation):
     session_id: str = Field(pattern=r'^[0-9a-f]{32}$')
     policy_key: str = Field(min_length=1, max_length=200)
+    capture_output_fps: int | None = Field(default=None, strict=True, ge=1, le=MAX_CAPTURE_OUTPUT_FPS)
 
     @model_validator(mode='after')
     def observation_span(self):
@@ -113,6 +116,14 @@ def _owner(conn, event_id, node_id, session_id):
     if row['owner_node_id'] != node_id or row['session_id'] != session_id:
         raise HTTPException(403, 'continuous_event_owner_required')
     return row
+
+
+def capture_end(conn, event_id, timestamp_start, timestamp_end):
+    row = conn.execute('SELECT start_payload FROM processing_event_lifecycle WHERE event_id=?', (event_id,)).fetchone()
+    fps = json.loads(row['start_payload']).get('capture_output_fps') if row else None
+    start = timestamp_start if isinstance(timestamp_start,datetime) else dt(timestamp_start)
+    end = timestamp_end if isinstance(timestamp_end,datetime) else dt(timestamp_end)
+    return required_capture_end(start, end, fps)
 
 
 def _mutable(conn, event_id):
@@ -279,7 +290,7 @@ def update(event_id, body, node_id):
                 bounds=conn.execute('SELECT MIN(capture_start_at) AS first,MAX(capture_end_at) AS last FROM processing_event_segment WHERE event_id=?',(event_id,)).fetchone()
                 if (count==0
                         or dt(bounds['first'])>dt(event['timestamp_start'])-timedelta(seconds=2)+WIRE_TIME_EPSILON
-                        or dt(bounds['last'])<body.timestamp_end+timedelta(seconds=2)-WIRE_TIME_EPSILON):
+                        or dt(bounds['last'])<capture_end(conn,event_id,event['timestamp_start'],body.timestamp_end)-WIRE_TIME_EPSILON):
                     raise HTTPException(409,'segment_coverage_incomplete')
             phase='closed' if body.complete else 'interrupted'
         conn.execute('''UPDATE candidate_event SET timestamp_end=?,duration_sec=?,frame_sample_count=?,ai_confidence=? WHERE event_id=?''',
@@ -311,7 +322,7 @@ def segment(event_id, body, node_id):
         event=conn.execute('SELECT timestamp_start,timestamp_end FROM candidate_event WHERE event_id=?',(event_id,)).fetchone()
         from datetime import timedelta
         if (body.capture_start_at<dt(event['timestamp_start'])-timedelta(seconds=2)-WIRE_TIME_EPSILON
-                or body.capture_end_at>dt(event['timestamp_end'])+timedelta(seconds=2)+WIRE_TIME_EPSILON):
+                or body.capture_end_at>capture_end(conn,event_id,event['timestamp_start'],event['timestamp_end'])+WIRE_TIME_EPSILON):
             raise HTTPException(422,'segment_outside_observation')
         previous=conn.execute('SELECT sequence,capture_end_at FROM processing_event_segment WHERE event_id=? ORDER BY sequence DESC LIMIT 1',(event_id,)).fetchone()
         if (previous is None and body.sequence!=0) or (previous is not None and (body.sequence!=previous['sequence']+1 or body.capture_start_at!=dt(previous['capture_end_at']))):

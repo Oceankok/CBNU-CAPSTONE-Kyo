@@ -2,8 +2,10 @@
 import hashlib
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from inference_worker.continuous_payloads import _time
+from backend.capture_grid import required_capture_end
 
 
 class RecoveryRequired(RuntimeError):
@@ -270,7 +272,9 @@ class SessionRecovery:
             if complete and any(r["state"]!="complete" for r in reports.values()):return False
             if not complete and not any(r["state"]=="incomplete" for r in reports.values()):return False
             required_start=stamp(start["timestamp_start"])-2
-            required_end=stamp(close["timestamp_end"])+2
+            required_end=required_capture_end(datetime.fromisoformat(start['timestamp_start'].replace('Z','+00:00')),
+                datetime.fromisoformat(close['timestamp_end'].replace('Z','+00:00')),
+                start.get('capture_output_fps')).timestamp()
             captured={};missing={}
             for camera,report in reports.items():
                 captured[camera]=[(stamp(r["start_at"]),stamp(r["end_at"])) for r in report["captured_ranges"]]

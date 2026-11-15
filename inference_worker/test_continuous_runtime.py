@@ -31,11 +31,13 @@ class RuntimeTests(TestCase):
         self.transport.client=httpx.Client(base_url='https://test',transport=httpx.MockTransport(handler))
         self.dispatcher=ContinuousDispatcher(self.box,self.transport,enabled=True,max_delivery_records=30,max_delivery_db_bytes=2000000)
         self.capture=MultiCameraCapture(self.root/'raw',cameras={c:CameraClock(0,0,True) for c in getattr(self,'camera_ids',('main','ref'))},
+            capture_output_fps=getattr(self,'capture_output_fps',None),
             max_clock_error=0,pre_seconds=2,post_seconds=2,discovery_delay_limit=3.5,prebuffer_seconds=6,
             prebuffer_bytes=100000,max_buffer_frames=50,max_events=2,global_spool_bytes=4000000,
             spool_config=dict(max_bytes=1000000,max_segments=20,max_age_seconds=100,max_attempts=3,clock=lambda:self.now),
             writer_config=dict(segment_seconds=2,output_fps=2,max_frame_pixels=256,max_input_gap_seconds=.6,encoder_timeout_seconds=5))
         journal=LifecycleJournal(self.box,camera_id='main',camera_snapshot=list(self.capture.cameras),model_version='test',
+            capture_output_fps=getattr(self,'capture_output_fps',None),
             missing_grace_seconds=.6,threshold_seconds=3,max_sample_gap_seconds=.6,progress_emit_interval_seconds=1)
         self.runtime=ContinuousFrameRuntime(journal=journal,capture=self.capture,dispatcher=self.dispatcher,metadata_steps_per_pump=30)
         self.frame=np.zeros((16,16,3),np.uint8)

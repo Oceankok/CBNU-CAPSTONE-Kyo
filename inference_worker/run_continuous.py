@@ -24,6 +24,7 @@ from inference_worker.continuous_dispatcher import ContinuousDispatcher
 from inference_worker.continuous_transport import PrivateClipTransport
 from inference_worker.cleanup_supervisor import CleanupSupervisor
 from inference_worker.private_chunk_decoder import PrivateChunkDecoder
+from backend.capture_grid import validate_output_fps
 
 
 def check_source_progress(mux,*,now,elapsed,max_lag_seconds,waiting_for_first=()):
@@ -100,12 +101,13 @@ def read_config(path,primary,*,now):
             (SegmentSpool,dict(root=None),config['capture'].get('spool_config',{})),
             (TimestampSegmentWriter,dict(spool=None),config['capture'].get('writer_config',{}))]
     for cls,fixed,values in checks:
-        if not isinstance(values,dict) or set(values)&({'clock','transport','decoder','downloader','before_spool_create'}|set(fixed)):
+        if not isinstance(values,dict) or set(values)&({'clock','transport','decoder','downloader','before_spool_create','capture_output_fps'}|set(fixed)):
             raise ValueError('configuration cannot override dependencies')
         try:inspect.signature(cls).bind(**fixed,**values)
         except TypeError as exc:raise ValueError('incomplete or unknown configuration fields') from exc
     if config['lifecycle']['threshold_seconds']!=3 or config['capture']['pre_seconds']!=2 or config['capture']['post_seconds']!=2:
         raise ValueError('continuous API threshold/roll contract')
+    validate_output_fps(config['capture']['writer_config']['output_fps'])
     return config
 
 
@@ -135,13 +137,15 @@ def run(args):
         SessionRecovery(box,dispatcher,endpoint=client.server_url).run()
         dispose_previous_sources(box,spool_config=config['capture']['spool_config'],
                                  verified_receipt=dispatcher.cleanup_receipt_verified)
-        capture=MultiCameraCapture(state/'raw',cameras={c:CameraClock(r['offset'],r['error_bound'],True) for c,r in clocks.items()},**config['capture'])
+        output_fps=config['capture']['writer_config']['output_fps']
+        capture=MultiCameraCapture(state/'raw',cameras={c:CameraClock(r['offset'],r['error_bound'],True) for c,r in clocks.items()},
+            capture_output_fps=output_fps,**config['capture'])
         lifecycle_config={
             'rewear_seconds':getattr(args,'rewear_seconds',0.5),
             'qualification_grace_seconds':getattr(args,'qualification_grace_seconds',0.5),
             **config['lifecycle']}
         journal=LifecycleJournal(box,camera_id=args.camera_id,camera_snapshot=ids,
-            model_version=detector.model_version,**lifecycle_config)
+            model_version=detector.model_version,capture_output_fps=output_fps,**lifecycle_config)
         runtime=ContinuousFrameRuntime(journal=journal,capture=capture,dispatcher=dispatcher,
             metadata_steps_per_pump=config['metadata_steps_per_pump'])
         mux=SourceMux(camera_ids=ids,primary_camera=args.camera_id,

@@ -12,6 +12,8 @@ from uuid import uuid4
 from types import MappingProxyType
 
 import numpy as np
+from datetime import datetime, timezone
+from backend.capture_grid import required_capture_end, validate_output_fps
 from inference_worker.segment_spool import SegmentSpool, TimestampSegmentWriter
 
 
@@ -37,7 +39,8 @@ class MultiCameraCapture:
     def __init__(self, root, *, cameras, max_clock_error, pre_seconds,
                  post_seconds, discovery_delay_limit, prebuffer_seconds,
                  prebuffer_bytes, max_buffer_frames, max_events,
-                 global_spool_bytes, spool_config, writer_config, before_spool_create=None):
+                 global_spool_bytes, spool_config, writer_config, before_spool_create=None,
+                 capture_output_fps=None):
         numeric = dict(max_clock_error=max_clock_error, pre_seconds=pre_seconds,
                        post_seconds=post_seconds, discovery_delay_limit=discovery_delay_limit,
                        prebuffer_seconds=prebuffer_seconds)
@@ -62,6 +65,11 @@ class MultiCameraCapture:
         self.max_frames, self.max_events = max_buffer_frames, max_events
         self.global_bytes = global_spool_bytes
         self.sc, self.wc = dict(spool_config), dict(writer_config)
+        self.capture_output_fps = (validate_output_fps(capture_output_fps)
+                                   if capture_output_fps is not None else None)
+        if self.capture_output_fps is not None and (self.pre != 2 or self.post != 2
+                or self.capture_output_fps != self.wc['output_fps']):
+            raise ValueError('capture output grid contract mismatch')
         self.reserved = 0
         self.buffers = {c: deque() for c in cameras}
         self.last = {}
@@ -87,7 +95,8 @@ class MultiCameraCapture:
         try:
             boundary = event['end']
             if boundary is not None and timestamp >= boundary:
-                if boundary-cap.last_source_at > self.wc['max_input_gap_seconds']:
+                if (boundary-cap.last_source_at > self.wc['max_input_gap_seconds']
+                        or timestamp-cap.last_source_at > self.wc['max_input_gap_seconds']):
                     raise ValueError('source_end_gap')
                 cap.segments.extend(cap.writer.finish(boundary))
                 cap.done = True
@@ -197,6 +206,15 @@ class MultiCameraCapture:
     def end(self, event_id, *, violation_end):
         event = self.events[event_id]
         boundary = self._time(violation_end) + self.post
+        if self.capture_output_fps is not None:
+            wire_boundary = required_capture_end(
+                datetime.fromtimestamp(event['start'] + self.pre, tz=timezone.utc),
+                datetime.fromtimestamp(violation_end, tz=timezone.utc),
+                self.capture_output_fps).timestamp()
+            # Keep the encoder on its original grid. Only serialization rounds
+            # this actual boundary to the shared microsecond wire obligation.
+            frames = round((wire_boundary-event['start']) * self.capture_output_fps)
+            boundary = event['start'] + frames / self.capture_output_fps
         if event['end'] is not None or violation_end < event['start'] + self.pre:
             raise ValueError('invalid or repeated end')
         event['end'] = boundary
