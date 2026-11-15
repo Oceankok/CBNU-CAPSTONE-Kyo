@@ -173,4 +173,3 @@ python -X utf8 -B -m inference_worker.replay_episode_comparison --video 'C:/User
 교육 프론트 브랜치 통합 뒤 별도로 Playwright Chromium 설치와 test:education:browser를 추가해야 합니다.
 Windows 디코더 8개 기존 실패, 실제 다인/재착용 장면, Camera01 잘림 지연·조끼 미생성,
 실서비스 clip 연결/표시, 장기 중단·재시작 사건 연속성은 확인 대기입니다.
-

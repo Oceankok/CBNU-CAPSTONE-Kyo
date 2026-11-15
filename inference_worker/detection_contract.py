@@ -53,4 +53,3 @@ def unknown_people(rows):
                                        "reason": "invalid_detector_observation"}
                                    for p in ("helmet", "vest")}})
     return people
-

@@ -70,4 +70,3 @@ def replay_frames(detector,frames,*,mode="review",required_ppe=("helmet","vest")
             "model_version":detector.model_version,"source_time":"provided_source_seconds",
             "automatic_confirmation_enabled":False,"collection_complete":False,
             "media_delivery_tested":False,"frames":output,"transitions":transitions}
-

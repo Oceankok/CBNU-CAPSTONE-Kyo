@@ -151,4 +151,3 @@ class EventOutboxPostgresTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM candidate_event WHERE event_id=?",(body["event_id"],)).fetchone()[0],1)
             self.assertEqual(conn.execute("SELECT review_only FROM processing_review_only_event WHERE event_id=?",(body["event_id"],)).fetchone()[0],1)
             self.assertEqual(conn.execute("SELECT event_status FROM candidate_event WHERE event_id=?",(body["event_id"],)).fetchone()[0],"pending")
-

@@ -271,4 +271,3 @@ class AssociationTests(unittest.TestCase):
         result=detector.detect(np.zeros((64,64,3),dtype=np.uint8))
         self.assertEqual([r["class_name"] for r in result],["person","helmet"])
         self.assertEqual(detector.model.predict.call_args.kwargs["conf"],.1)
-

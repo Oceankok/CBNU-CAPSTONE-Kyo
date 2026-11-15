@@ -36,4 +36,3 @@ def primary_ownership(server, primaries, directory=None):
     finally:
         for fd in reversed(handles):
             os.close(fd)
-

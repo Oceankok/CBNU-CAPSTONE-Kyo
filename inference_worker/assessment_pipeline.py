@@ -24,4 +24,3 @@ def detect_assess(detector, frame, *, mode="review"):
         return []
     return assess_detection_frame(detections, frame.shape,
         supported_ppe=getattr(detector, "supported_ppe", ("helmet", "vest")), mode=mode)
-
