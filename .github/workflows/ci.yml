@@ -153,6 +153,9 @@ jobs:
       - name: Automatic rule UI browser checks (isolated HTTP mocks)
         timeout-minutes: 5
         run: npm run test:auto-rules:browser
+      - name: Terminal evidence display checks (saved API fixtures)
+        timeout-minutes: 5
+        run: npx playwright test --config playwright.terminal-evidence.config.ts
       - name: Zone rule locks and revision recovery (isolated HTTP mocks)
         timeout-minutes: 5
         run: |
