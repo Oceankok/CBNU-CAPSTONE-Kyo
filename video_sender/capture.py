@@ -4,17 +4,18 @@ import os
 import subprocess
 from pathlib import Path
 import time
-from datetime import datetime,timezone
 from uuid import uuid4
 
 if __package__:
     from .backpressure import Policy
     from .chunks import next_sequence, publish_completed_segments
     from .capture_control import run_id_from_env, stop_requested, publish_result
+    from .frame_reader import LatestFrameReader
 else:
     from backpressure import Policy
     from chunks import next_sequence, publish_completed_segments
     from capture_control import run_id_from_env, stop_requested, publish_result
+    from frame_reader import LatestFrameReader
 
 CAMERA_INDEX = int(os.getenv("VIDEO_CAMERA_INDEX", "0"))
 FPS = 15
@@ -72,6 +73,7 @@ command = [
 ]
 
 process = subprocess.Popen(command, stdin=subprocess.PIPE)
+reader = LatestFrameReader(cap)
 
 
 
@@ -82,6 +84,7 @@ try:
     next_frame_time = time.perf_counter()
 
     frame_count = 0
+    reader.start()
 
     while True:
         if SPOOL_POLICY is not None:
@@ -94,16 +97,14 @@ try:
             stopped_by_request = True
             break
         publish_completed_segments(OUTPUT_DIR, SEGMENT_LIST)
-        success, frame = cap.read()
-
-        if not success:
+        result = reader.next_frame(next_frame_time, lambda: stop_requested(OUTPUT_DIR, CONTROL_RUN_ID))
+        if result.status == 'stopped':
+            stopped_by_request = True
+            break
+        if result.status == 'ended':
             print("카메라 프레임 읽기 실패")
             break
-
-        now = time.perf_counter()
-
-        if now < next_frame_time:
-            continue
+        frame = result.sample.frame
 
         if frame.shape[1] != width or frame.shape[0] != height:
             frame = cv2.resize(frame, (width, height))
@@ -112,7 +113,7 @@ try:
             if frame_count % (FPS * SEGMENT_SECONDS) == 0:
                 sequence = START_SEQUENCE + frame_count // (FPS *SEGMENT_SECONDS)
 
-                capture_start = datetime.now(timezone.utc)
+                capture_start = result.sample.observed_utc
                 timestamp_file = OUTPUT_DIR / f"chunk_{sequence:05d}.txt"
 
                 timestamp_file.write_text(
@@ -141,7 +142,11 @@ except KeyboardInterrupt:
 
 
 finally:
-    cap.release()
+    reader_failure = None
+    try:
+        reader.close()
+    except BaseException as error:
+        reader_failure = error
 
     if process.stdin:
         process.stdin.close()
@@ -149,6 +154,11 @@ finally:
     ffmpeg_exit = process.wait()
     publish_completed_segments(OUTPUT_DIR, SEGMENT_LIST)
     SEGMENT_LIST.unlink(missing_ok=True)
+    if reader_failure is not None:
+        # Encoding can finish while a camera read is still blocked. That is not
+        # successful capture-stop proof; keep context recovery fail-closed.
+        raise reader_failure
+    print(f'[CAPTURE] read={reader.frames_read} superseded={reader.superseded} submitted={frame_count}')
     publish_result(OUTPUT_DIR, CONTROL_RUN_ID, stopped_by_request=stopped_by_request,
                    ffmpeg_exit=ffmpeg_exit, start_sequence=START_SEQUENCE, frame_count=frame_count, fps=FPS, protective_stop_reason=protective_stop_reason)
     print("프로그램 종료")
