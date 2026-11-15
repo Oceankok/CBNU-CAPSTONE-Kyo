@@ -1,5 +1,9 @@
 """Separate, disabled-by-default continuous event protocol."""
 from fastapi import APIRouter, Depends, Response, Query
+from fastapi.routing import APIRoute
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from backend.processing.routes import processor
 from backend.processing import lifecycle, capture, receipts
 
@@ -37,6 +41,33 @@ def read(event_id: str,session_id: str,node: dict=Depends(processor)):
 @router.post('/{event_id}/updates')
 def update(event_id: str,body: lifecycle.Update,node: dict=Depends(processor)):
     return acknowledged(lifecycle.update(event_id,body,node['node_id']),body,body.kind)
+
+
+def operation_receipt(event_id: str, body: lifecycle.Update, response: Response,
+                      node: dict=Depends(processor)):
+    # POST carries the original body for server-side canonical comparison only.
+    response.headers['Cache-Control']='private, no-store'
+    return lifecycle.operation_receipt(event_id,node['node_id'],body)
+
+
+class _PrivateReceiptRoute(APIRoute):
+    """Only this read-only receipt route: no caching, including rejected queries."""
+    def get_route_handler(self):
+        handler=super().get_route_handler()
+        async def private(request):
+            try:
+                result=await handler(request)
+            except StarletteHTTPException as exc:
+                result=await http_exception_handler(request,exc)
+            except RequestValidationError as exc:
+                result=await request_validation_exception_handler(request,exc)
+            result.headers['Cache-Control']='private, no-store'
+            return result
+        return private
+
+
+router.add_api_route('/{event_id}/operation-receipt',operation_receipt,methods=['POST'],
+                     route_class_override=_PrivateReceiptRoute)
 
 @router.post('/{event_id}/segments')
 def segment(event_id: str,body: lifecycle.Segment,node: dict=Depends(processor)):
