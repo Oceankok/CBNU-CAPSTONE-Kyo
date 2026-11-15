@@ -14,7 +14,7 @@ class ViolationTracker:
     def __init__(self, threshold_seconds=3.0, *, missing_grace_seconds=1.0,
                  rewear_seconds=0.5, qualification_grace_seconds=0.5,
                  max_sample_gap_seconds=0.5, qualification_window_seconds=6.0,
-                 camera_id="local"):
+                 camera_id="local", on_close=None):
         self.lifecycle = EventLifecycle(
             camera_id, threshold_seconds=threshold_seconds,
             missing_grace_seconds=missing_grace_seconds,
@@ -23,6 +23,7 @@ class ViolationTracker:
             max_sample_gap_seconds=max_sample_gap_seconds,
             qualification_window_seconds=qualification_window_seconds)
         self._flat = set()
+        self._on_close = on_close
 
     @property
     def states(self):
@@ -30,7 +31,12 @@ class ViolationTracker:
                 for key, state in self.lifecycle.states.items()}
 
     def update(self, assessments, timestamp):
-        return [row for row in self.update_transitions(assessments,timestamp) if row['kind']=='start']
+        transitions = self.update_transitions(assessments, timestamp)
+        if self._on_close is not None:
+            for row in transitions:
+                if row['kind'] == 'close':
+                    self._on_close(row, timestamp)
+        return [row for row in transitions if row['kind'] == 'start']
 
     def update_transitions(self, assessments, timestamp):
         if not isfinite(timestamp):
