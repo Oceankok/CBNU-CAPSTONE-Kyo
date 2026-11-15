@@ -41,7 +41,7 @@ def create_stream(body: StreamInput, node: dict = Depends(current_node)):
 async def upload_chunk(stream_id: str, request: Request,
                        sequence: int = Query(ge=0, le=2147483647),
                        x_capture_start: str = Header(max_length=50),
-                       x_duration_ms: int = Header(ge=250, le=3000),
+                       x_duration_ms: int = Header(ge=1, le=3000),
                        node: dict = Depends(current_node)):
     if request.headers.get('content-type', '').split(';')[0].strip() != 'video/mp4':
         raise HTTPException(415, 'video_mp4_required')
