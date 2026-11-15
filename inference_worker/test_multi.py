@@ -9,13 +9,14 @@ from inference_worker.run_multi import commands, supervise, main, child_main, ru
 
 
 class MultiCameraTests(unittest.TestCase):
-    def test_independent_camera_commands_and_single_reference_collector(self):
+    def test_review_camera_commands_each_own_their_incident_references(self):
         result = commands(['CAM_A', 'CAM_B'], Path('model.pt'), Path('stop'),
                           mode='--submit-review-candidates')
-        self.assertEqual(len(result), 3)
+        self.assertEqual(len(result), 2)
         self.assertEqual([args[args.index('--camera-id')+1] for args in result[:2]], ['CAM_A','CAM_B'])
         self.assertTrue(all('--submit-review-candidates' in args for args in result[:2]))
-        self.assertIn('inference_worker.reference_collector', result[2])
+        self.assertEqual(result[0][result[0].index('--reference-camera-id')+1],'CAM_B')
+        self.assertEqual(result[1][result[1].index('--reference-camera-id')+1],'CAM_A')
         self.assertFalse(any('token' in arg.lower() for args in result for arg in args))
 
     def test_child_failure_stops_all_peers_using_shared_stop_signal(self):
@@ -198,7 +199,7 @@ class MultiCameraTests(unittest.TestCase):
             self.assertEqual(supervisor.call_args.kwargs['failure_policy'], 'isolate')
             self.assertEqual(supervisor.call_args.kwargs['restart_limit'], 3)
             self.assertEqual(supervisor.call_args.kwargs['restart_delay'], 5)
-            self.assertEqual(supervisor.call_args.kwargs['reference_restart_limit'], 3)
+            self.assertEqual(supervisor.call_args.kwargs['reference_restart_limit'], 0)
             with patch('inference_worker.run_multi.run_preflight'), \
                  patch('inference_worker.run_multi.supervise') as supervisor:
                 main([*args, '--failure-policy', 'fail-fast', '--camera-restart-limit', '0',
@@ -255,6 +256,7 @@ class MultiCameraTests(unittest.TestCase):
         from types import SimpleNamespace
         # Keep these tests dependency-free: model, HTTP and tracker are explicit doubles.
         client, model, tracker = Mock(), Mock(supports_no_helmet=False), Mock()
+        client.client.get.return_value.json.return_value={'items':[],'next_after':None}
         factory = Mock(return_value=model)
         assessment = Mock(return_value=[])
         modules = {'inference_worker.video_client': SimpleNamespace(VideoClient=lambda: client),

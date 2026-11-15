@@ -70,6 +70,10 @@ def read_config(path,primary,*,now):
     required={'state_directory','clocks','capture','mux','outbox','delivery','transport',
               'lifecycle','source','decoder','metadata_steps_per_pump','max_lag_seconds'}
     if not isinstance(config,dict) or set(config)!=required:raise ValueError('continuous config keys must be explicit')
+    if (config['capture'].get('manual_review') or config['mux'].get('manual_review') or config['source'].get('tolerate_source_gaps')
+            or config['lifecycle'].get('review_episode_continuity')
+            or config['lifecycle'].get('evidence_mode','verified_continuous')!='verified_continuous'):
+        raise ValueError('manual review semantics require the manual review runner')
     clocks=config['clocks']
     if not isinstance(clocks,dict) or primary not in clocks or len(clocks)<1:
         raise ValueError('primary clock snapshot required')
@@ -114,7 +118,12 @@ def read_config(path,primary,*,now):
 def run(args):
     if not (args.submit_events or args.submit_review_candidates) or args.replay_buffer:
         raise ValueError('continuous mode requires explicit submission and forbids replay')
-    config=read_config(args.continuous_config,args.camera_id,now=time.time())
+    manual=args.continuous_config is None and args.submit_review_candidates
+    if manual:
+        from inference_worker.manual_review_config import configuration
+        config=configuration(args)
+    else:
+        config=read_config(args.continuous_config,args.camera_id,now=time.time())
     from inference_worker.run_server import create_detector
     detector=create_detector(args.model_path) if args.model_path is not None else create_detector()
     review=args.submit_review_candidates
@@ -138,7 +147,7 @@ def run(args):
         dispose_previous_sources(box,spool_config=config['capture']['spool_config'],
                                  verified_receipt=dispatcher.cleanup_receipt_verified)
         output_fps=config['capture']['writer_config']['output_fps']
-        capture=MultiCameraCapture(state/'raw',cameras={c:CameraClock(r['offset'],r['error_bound'],True) for c,r in clocks.items()},
+        capture=MultiCameraCapture(state/'raw',cameras={c:CameraClock(r['offset'],r['error_bound'],not manual) for c,r in clocks.items()},
             capture_output_fps=output_fps,**config['capture'])
         lifecycle_config={
             'rewear_seconds':getattr(args,'rewear_seconds',0.5),
@@ -155,9 +164,11 @@ def run(args):
             **{**config['source'],'degrade_references':True})
         tracker=PersonTracker(max_missing_seconds=max(lifecycle_config['missing_grace_seconds'],0.1));policy_signature=None;processed=0;primary_sequence=None
         source_started=time.monotonic()
+        primary_arrival=source_started
+        last_arrival_sequence=None
         while processed<args.max_chunks and not(args.stop_file and args.stop_file.exists()):
             now=time.time()
-            if any(parse_capture_time(r['valid_until']).timestamp()<=now for r in clocks.values()):
+            if not manual and any(parse_capture_time(r['valid_until']).timestamp()<=now for r in clocks.values()):
                 raise ValueError('camera calibration expired')
             policy=client.get_ppe_policy(args.camera_id)
             signature=json.dumps(policy,sort_keys=True,allow_nan=False)
@@ -165,8 +176,20 @@ def run(args):
                 raise ValueError('policy changed; fresh capture session required')
             policy_signature=signature
             try:
-                batch=poll_source(reader,mux,now=now,elapsed=time.monotonic()-source_started,
-                                  max_lag_seconds=config['max_lag_seconds'])
+                if manual:
+                    # Unverified source UTC must never be compared to host UTC
+                    # to infer capture lag or a trustworthy clock bound.
+                    batch=reader.poll()
+                    reader.expire_reference_stalls(now=now,max_lag_seconds=config['max_lag_seconds'])
+                    batch+=mux.pop_ready()
+                    current_sequence=reader.sequence.get(args.camera_id)
+                    if current_sequence!=last_arrival_sequence:
+                        primary_arrival=time.monotonic();last_arrival_sequence=current_sequence
+                    elif last_arrival_sequence is not None and time.monotonic()-primary_arrival>config['max_lag_seconds']:
+                        raise SourceMuxError('primary_arrival_timeout')
+                else:
+                    batch=poll_source(reader,mux,now=now,elapsed=time.monotonic()-source_started,
+                                      max_lag_seconds=config['max_lag_seconds'])
                 for metadata in reader.reference_failures.values():box.record_reference_failure(metadata)
             except SourceMuxError as error:
                 if (str(error) not in ('session_stopped','primary_source_ended')

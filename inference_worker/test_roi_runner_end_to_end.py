@@ -87,7 +87,7 @@ class ROIRunnerEndToEndTests(unittest.TestCase):
                 return path
 
             args = ["run_server", "--camera-id", "CAM_001",
-                    "--max-chunks", str(count), "--submit-review-candidates",
+                    "--max-chunks", str(count), "--submit-review-candidates", "--qualification-clips",
                     "--event-outbox-directory", temp]
             with (
                 patch.object(runner, "VideoClient", return_value=client),

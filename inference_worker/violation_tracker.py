@@ -70,6 +70,17 @@ class ViolationTracker:
             self.lifecycle.close_all("invalid_timestamp")
             self._flat.clear()
             return []
+        rows = self.prepare_assessments(assessments)
+        transitions = self.lifecycle.update(rows, timestamp)
+        self._flat.intersection_update(self.lifecycle.states)
+        return transitions
+
+    def prepare_assessments(self, assessments):
+        """Normalize observations without consuming lifecycle transitions.
+
+        The durable journal can reuse review episode semantics while retaining
+        ownership of its transactional start/progress/close state changes.
+        """
         rows = []
         for person in assessments:
             row = {**person, "tracking_id": str(person["tracking_id"])}
@@ -94,6 +105,4 @@ class ViolationTracker:
                         self._episode_scope(person.get('policy_scope_key'), old, ppe, state)})
             if not self._preserve_required_episodes or not ppes:
                 rows.append(row)
-        transitions = self.lifecycle.update(rows, timestamp)
-        self._flat.intersection_update(self.lifecycle.states)
-        return transitions
+        return rows

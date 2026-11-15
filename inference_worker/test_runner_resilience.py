@@ -51,7 +51,7 @@ class RunnerResilienceTests(unittest.TestCase):
         if submit:
             args.append('--submit-events')
         if review:
-            args.append('--submit-review-candidates')
+            args += ['--submit-review-candidates','--qualification-clips']
         candidates = patch.object(runner, 'ViolationTracker', side_effect=lambda **kwargs: QualifiedCandidates(client.start)) if qualified else nullcontext()
         with (
             patch.object(runner, 'VideoClient', return_value=client),

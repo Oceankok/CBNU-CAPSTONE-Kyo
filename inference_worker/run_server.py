@@ -209,6 +209,9 @@ def main():
     parser.add_argument("--camera-id", required=True)
     parser.add_argument("--continuous-config", type=Path,
                         help="Opt-in continuous two-camera runner; requires explicit calibrated resource configuration")
+    parser.add_argument('--reference-camera-id',action='append',default=[])
+    parser.add_argument('--qualification-clips',action='store_true',
+                        help='Explicit compatibility mode: first qualification clips only')
     parser.add_argument("--stop-file", type=Path,
                         help="Exit cleanly when the supervisor creates this file")
     parser.add_argument("--model-path", type=Path,
@@ -244,7 +247,7 @@ def main():
         if not math.isfinite(value) or value < 0:
             parser.error("episode observation budgets must be finite and nonnegative")
 
-    if args.continuous_config is not None:
+    if args.continuous_config is not None or (args.submit_review_candidates and not args.qualification_clips):
         from inference_worker.run_continuous import run
         return run(args)
 

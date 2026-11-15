@@ -5,6 +5,7 @@ before constructing a new reader. No track identities survive reconnects.
 """
 import math
 import re
+import time
 import httpx
 from inference_worker.time_utils import frame_timestamp,is_continuous_chunk
 from inference_worker.video_decoder import decode_mp4
@@ -41,12 +42,14 @@ def bounded_chunk(client,chunk_id,maximum):
 
 
 class ContinuousSourceReader:
-    def __init__(self,client,mux,*,offsets,decoder=decode_mp4,max_chunk_bytes,max_chunk_gap_seconds,downloader=None,require_capture_context=False,degrade_references=False):
+    def __init__(self,client,mux,*,offsets,decoder=decode_mp4,max_chunk_bytes,max_chunk_gap_seconds,downloader=None,require_capture_context=False,degrade_references=False,tolerate_source_gaps=False):
         if set(offsets)!=set(mux.cameras) or any(not math.isfinite(v) for v in offsets.values()):raise ValueError('camera clock mappings')
         if not math.isfinite(max_chunk_gap_seconds) or max_chunk_gap_seconds<0:raise ValueError('chunk gap policy')
         if type(degrade_references) is not bool:raise ValueError('reference failure mode')
         self.degrade_references=degrade_references;self.reference_failures={};self.reference_wait_since={}
         self.gap=max_chunk_gap_seconds
+        self.tolerate_source_gaps=tolerate_source_gaps
+        self.arrival_by_camera={}
         if type(max_chunk_bytes) is not int or max_chunk_bytes<=0:raise ValueError('chunk byte cap')
         self.client,self.mux,self.offsets=client,mux,dict(offsets)
         self.decoder,self.maximum=decoder,max_chunk_bytes
@@ -104,6 +107,8 @@ class ContinuousSourceReader:
                     if available is not None:matches=[available]
                     else:raise SourceUnavailableError('source_stream_unavailable',camera=camera,
                         stream=self.streams[camera],expected_sequence=self.sequence[camera]+1)
+                if not matches and camera not in self.streams and self.tolerate_source_gaps:
+                    continue
                 if len(matches)!=1:raise SourceMuxError('camera_missing_or_ambiguous')
                 row=matches[0]
                 stream=row['stream_id']
@@ -155,11 +160,11 @@ class ContinuousSourceReader:
                         raise SourceUnavailableError('source_chunk_unavailable',camera=camera,
                             stream=stream,expected_sequence=expected)
                     continue
-                if type(chunks[0]['sequence']) is int and chunks[0]['sequence']>expected:
+                if not self.tolerate_source_gaps and type(chunks[0]['sequence']) is int and chunks[0]['sequence']>expected:
                     raise SourceUnavailableError('source_chunk_unavailable',camera=camera,
                         stream=stream,expected_sequence=expected)
                 chunk=chunks[0]
-                if type(chunk['sequence']) is not int or chunk['sequence']!=self.sequence[camera]+1:
+                if type(chunk['sequence']) is not int or (chunk['sequence']!=self.sequence[camera]+1 and not self.tolerate_source_gaps):
                     raise SourceMuxError('camera_chunk_discontinuity')
                 if final is not None and chunk['sequence']>final:
                     raise SourceMuxError('chunk_beyond_capture_final_sequence')
@@ -167,7 +172,7 @@ class ContinuousSourceReader:
                     raise SourceMuxError('chunk_capture_context_mismatch')
                 if camera in self.previous:
                     previous=self.previous[camera]
-                    if (chunk['sequence']!=self.sequence[camera]+1 or not is_continuous_chunk(
+                    if not self.tolerate_source_gaps and (chunk['sequence']!=self.sequence[camera]+1 or not is_continuous_chunk(
                             previous['capture_start_at'],previous['duration_ms'],chunk['capture_start_at'],
                             max_gap_seconds=self.gap)):
                         raise SourceMuxError('camera_chunk_discontinuity')
@@ -188,6 +193,7 @@ class ContinuousSourceReader:
                     if hasattr(frames,'close'):frames.close()
                 if not count:raise SourceMuxError('empty_video_chunk')
                 self.previous[camera]=dict(chunk);self.sequence[camera]=chunk['sequence']
+                self.arrival_by_camera[camera]=time.monotonic()
                 if final is not None and chunk['sequence']==final:
                     self._end(camera,'reference_drain_cutoff' if camera in self.cutoffs else 'source_ended')
             except (SourceMuxError, ValueError, RuntimeError, OSError, httpx.HTTPError) as error:
@@ -212,6 +218,14 @@ class ContinuousSourceReader:
 
     def expire_reference_stalls(self,*,now,max_lag_seconds):
         if not self.degrade_references:return
+        if self.tolerate_source_gaps:
+            if self.mux.primary not in self.streams:return
+            now=time.monotonic()
+            for camera in self.mux.cameras:
+                if camera==self.mux.primary or camera in self.mux.ended:continue
+                since=self.arrival_by_camera.get(camera,self.reference_wait_since.setdefault(camera,now))
+                if now-since>=max_lag_seconds:self._degrade(camera,SourceMuxError('reference_arrival_timeout'))
+            return
         for camera in self.mux.cameras:
             if camera==self.mux.primary or camera in self.mux.ended:continue
             last=self.mux.latest.get(camera)

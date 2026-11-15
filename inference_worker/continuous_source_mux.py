@@ -25,7 +25,8 @@ def locked(method):
 
 class SourceMux:
     def __init__(self, *, camera_ids, primary_camera, max_bytes, max_frames,
-                 max_frame_pixels, max_clock_error, clock_error_by_camera):
+                 max_frame_pixels, max_clock_error, clock_error_by_camera, manual_review=False):
+        self.manual_review=manual_review
         self.lock=threading.RLock()
         self.cameras=tuple(camera_ids)
         if not self.cameras or len(set(self.cameras))!=len(self.cameras) or primary_camera not in self.cameras:
@@ -65,15 +66,16 @@ class SourceMux:
     def pop_ready(self):
         if self.failure:raise SourceMuxError(self.failure)
         remaining=[c for c in self.cameras if c not in self.ended]
-        if any(c not in self.latest for c in remaining):return []
-        watermark=min((self.latest[c] for c in remaining),default=math.inf)
+        if not self.manual_review and any(c not in self.latest for c in remaining):return []
+        watermark=math.inf if self.manual_review else min((self.latest[c] for c in remaining),default=math.inf)
         result=[]
         while self.queue and self.queue[0][0]<=watermark:
             timestamp,_,_,camera,frame=heapq.heappop(self.queue)
             self.bytes-=frame.nbytes
-            if self.last_emitted is not None and timestamp<self.last_emitted:
+            if not self.manual_review and self.last_emitted is not None and timestamp<self.last_emitted:
                 self.failure='mux_timestamp_regression';raise SourceMuxError(self.failure)
-            self.last_emitted=timestamp;result.append((camera,timestamp,frame))
+            self.last_emitted=max(timestamp,self.last_emitted) if self.last_emitted is not None else timestamp
+            result.append((camera,timestamp,frame))
         return result
 
     @locked

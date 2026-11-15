@@ -117,7 +117,7 @@ def preflight(cameras, model, mode, *, continuous=False):
     from inference_worker.ppe_rules import assess_ppe
     client = VideoClient()
     try:
-        if continuous:
+        if continuous or mode=='--submit-review-candidates':
             probe_continuous_protocol(client)
         for camera in cameras:
             client.get_ppe_policy(camera)
@@ -188,7 +188,11 @@ def commands(cameras, model, stop_file, *, mode=None, buffer_mib=256,
                    '--stop-file', str(stop_file)]
         if mode:
             command.append(mode)
+        if mode=='--submit-review-candidates':
+            for reference in cameras:
+                if reference!=camera:command+=['--reference-camera-id',reference]
         result.append(command)
+    if mode=='--submit-review-candidates':return result
     result.append([sys.executable, '-m', 'inference_worker.run_multi',
                    '--child-module', 'inference_worker.reference_collector',
                    '--stop-file', str(stop_file)])
@@ -389,14 +393,14 @@ def main(argv=None):
                     path=args.continuous_config, primary=args.primary_camera_id, validate=False) if continuous else None)
         print(f'[SUPERVISOR] runner={args.runner} policy={args.failure_policy} '
               f'camera_retries={0 if continuous else args.camera_restart_limit} '
-              f'reference_retries={0 if continuous else args.reference_restart_limit}', flush=True)
+              f'reference_retries={0 if continuous or mode=="--submit-review-candidates" else args.reference_restart_limit}', flush=True)
         supervise(commands(args.camera_id, args.model_path.resolve(), stop,
                             mode=mode, buffer_mib=args.buffer_mib,
                             profiles=profiles), stop,
                   camera_count=len(args.camera_id),
                   restart_limit=0 if continuous else args.camera_restart_limit,
                   restart_delay=args.camera_restart_delay or 0,
-                  reference_restart_limit=0 if continuous else args.reference_restart_limit,
+                  reference_restart_limit=0 if continuous or mode=='--submit-review-candidates' else args.reference_restart_limit,
                   reference_restart_delay=args.reference_restart_delay or 0,
                   failure_policy=args.failure_policy, process_trees=True, temporary_root=Path(folder))
 
