@@ -186,6 +186,41 @@ class SegmentSpoolTests(unittest.TestCase):
                 writer.finish(.15)
             writer.abort()
 
+    def test_native_epoch_wire_end_encodes_exactly_173_frames(self):
+        origin = 1794737406.712333
+        with self.spool() as spool:
+            writer = self.writer(spool, segment_seconds=60, output_fps=15)
+            for i in range(173):
+                self.assertEqual(writer.push(origin + i / 15, self.frame), [])
+            rows = writer.finish(1794737418.245667)
+            self.assertEqual([row.frame_count for row in rows], [173])
+            self.assertEqual(rows[0].capture_end, origin + 173 / 15)
+            self.assert_mp4(spool, rows[0])
+
+    def test_epoch_end_rounding_both_directions_never_adds_a_frame(self):
+        origin = 1794737406.712333
+        for offset in [-0.0000007, 0.0000007]:
+            with self.subTest(offset=offset), self.spool() as spool:
+                writer = self.writer(spool, segment_seconds=60, output_fps=15)
+                for i in range(3):
+                    writer.push(origin + i / 15, self.frame)
+                rows = writer.finish(origin + 3 / 15 + offset)
+                self.assertEqual([row.frame_count for row in rows], [3])
+                self.assert_mp4(spool, rows[0])
+                spool.acknowledge(rows[0].segment_id)
+
+    def test_epoch_real_off_grid_and_max_gap_are_still_rejected(self):
+        origin = 1794737406.712333
+        with self.spool() as spool:
+            writer = self.writer(spool, output_fps=15)
+            writer.push(origin, self.frame)
+            for delta in [2e-6, -2e-6, 1 / 30]:
+                with self.subTest(delta=delta), self.assertRaisesRegex(ValueError, 'frame grid'):
+                    writer.finish(origin + 1 / 15 + delta)
+            with self.assertRaisesRegex(ValueError, 'exclusive end'):
+                writer.finish(origin + 1)
+            writer.abort()
+
     def test_last_attempt_not_removed_by_new_segment_while_inflight(self):
         with self.spool(max_attempts=1) as spool:
             first=self.create(spool)[0]

@@ -691,10 +691,14 @@ class TimestampSegmentWriter:
                 or not self.last_timestamp < end_time <= self.last_timestamp + self.max_gap):
             raise ValueError('invalid exclusive end boundary')
         sample_count = (end_time - self.origin) * self.fps
-        if abs(sample_count - round(sample_count)) > 1e-5:
+        grid_end = self.origin + round(sample_count) / self.fps
+        # Epoch floats and microsecond wire timestamps can move an otherwise
+        # exact boundary by a microsecond. Preserve the old frame tolerance,
+        # but emit to the validated grid point so that error cannot add a frame.
+        if abs(end_time - grid_end) > max(1e-5 / self.fps, 1e-6):
             raise ValueError('end boundary must align to output frame grid')
         try:
-            rows = self._emit_before(end_time)
+            rows = self._emit_before(grid_end)
             if self.segment_frames:
                 rows.append(self.spool.finalize(self.segment_frames))
                 self.encoder = None
