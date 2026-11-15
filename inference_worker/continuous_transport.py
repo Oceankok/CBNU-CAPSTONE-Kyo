@@ -22,6 +22,7 @@ import time
 from urllib.parse import urlsplit
 
 import httpx
+from inference_worker.continuous_payloads import WIRE_TIME_EPSILON
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,7 @@ class PrivateClipTransport:
                 raise ValueError('invalid binding identifier')
         if (not plan.final_range_verified or not all(math.isfinite(v) for v in (
                 plan.capture_start, plan.capture_end, plan.required_start, plan.required_end))
-                or not datetime.fromtimestamp(plan.required_start,tz=timezone.utc) <= datetime.fromtimestamp(plan.capture_start,tz=timezone.utc) < datetime.fromtimestamp(plan.capture_end,tz=timezone.utc) <= datetime.fromtimestamp(plan.required_end,tz=timezone.utc)
+                or not datetime.fromtimestamp(plan.required_start,tz=timezone.utc)-WIRE_TIME_EPSILON <= datetime.fromtimestamp(plan.capture_start,tz=timezone.utc) < datetime.fromtimestamp(plan.capture_end,tz=timezone.utc) <= datetime.fromtimestamp(plan.required_end,tz=timezone.utc)+WIRE_TIME_EPSILON
                 or plan.capture_end-plan.capture_start > 60):
             raise ValueError('unverified or out-of-range capture')
         if (type(plan.byte_count) is not int or not 0 < plan.byte_count <= self.maximum

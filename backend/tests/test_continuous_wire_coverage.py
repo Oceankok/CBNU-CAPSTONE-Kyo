@@ -96,6 +96,25 @@ class WireCoverageTests(TestCase):
         self.prepare(start_deficit_us=2)
         self.assertEqual(self.close().json()['detail'], 'segment_coverage_incomplete')
 
+    def test_actual_producer_payload_is_accepted_without_changing_captured_range(self):
+        from types import SimpleNamespace
+        from inference_worker.continuous_payloads import capture_payload
+        self.prepare()
+        self.close().raise_for_status()
+        segments=[SimpleNamespace(
+            capture_start=datetime.fromisoformat(s['capture_start_at']).timestamp(),
+            capture_end=datetime.fromisoformat(s['capture_end_at']).timestamp()) for s in NATIVE[0]['segments']]
+        status={'start':self.start_at.timestamp(),'end':self.required_end.timestamp(),
+                'cameras':{'CAM_001':{'done':True,'reasons':[],'segments':segments}}}
+        body=capture_payload(status,camera_id='CAM_001',clock=SimpleNamespace(
+            offset=0,error_bound=0,verified=True),session_id=self.session,sequence=1,
+            time_basis='source_utc_corrected',required_end=self.required_end.timestamp())
+        self.assertEqual(body['captured_ranges'][-1]['end_at'], self.end_at.isoformat())
+        with patch.dict(os.environ, {'PPE_CONTINUOUS_MAX_CLOCK_UNCERTAINTY_SECONDS':'0'}):
+            response=self.client.post(self.base+'/'+self.ident+'/cameras/CAM_001/capture-reports',
+                                      headers=self.nodes[0],json=body)
+        self.assertEqual(response.status_code,200,response.text)
+
     def test_outer_one_microsecond_overshoot_does_not_allow_inexact_adjacency(self):
         self.prepare(deficit_us=-1, start_deficit_us=-1)
         response = self.client.post(self.base+'/'+self.ident+'/segments', headers=self.nodes[0], json={

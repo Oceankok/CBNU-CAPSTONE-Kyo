@@ -3,10 +3,12 @@
 No networking, credentials, persistence or sequencing is performed here.
 The future adapter must durably store each exact body before sending it.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import hashlib
 import json
 import re
+
+WIRE_TIME_EPSILON = timedelta(microseconds=1)
 
 
 def _session(value):
@@ -102,15 +104,16 @@ def capture_payload(status, *, camera_id, clock, session_id, sequence,
         raise ValueError('clock or required range')
     # Wire timestamps have microsecond resolution. Compare at that same
     # resolution, not raw epoch-float arithmetic (one ULP is ~0.24 us).
-    canonical=lambda t:datetime.fromtimestamp(t,tz=timezone.utc).timestamp()
+    canonical=lambda t:datetime.fromtimestamp(t,tz=timezone.utc)
     required_end=canonical(required_end)
     required_start=canonical(status['start'])
     cap = status['cameras'][camera_id]
     ranges = []
     cursor = required_start
-    for segment in cap['segments']:
+    for index,segment in enumerate(cap['segments']):
         a,b=canonical(segment.capture_start),canonical(segment.capture_end)
-        if (a < cursor or b <= a or b > required_end):
+        lower_bound = required_start-WIRE_TIME_EPSILON if index==0 else cursor
+        if (a < lower_bound or b <= a or b > required_end+WIRE_TIME_EPSILON):
             raise ValueError('provisional segment outside reportable range')
         ranges.append({'start_at': _time(segment.capture_start),
                        'end_at': _time(segment.capture_end)})
@@ -123,11 +126,14 @@ def capture_payload(status, *, camera_id, clock, session_id, sequence,
         if status['end'] is None or canonical(status['end']) != required_end:
             raise ValueError('final required range mismatch')
         cursor = required_start
-        for segment in cap['segments']:
-            if abs(canonical(segment.capture_start) - cursor) > 1e-8:
+        for index,segment in enumerate(cap['segments']):
+            # Only outer wire endpoints have a precision allowance. Internal
+            # adjacency remains exact, including a one-microsecond gap.
+            epsilon = WIRE_TIME_EPSILON if index==0 else timedelta(0)
+            if abs(canonical(segment.capture_start) - cursor) > epsilon:
                 raise ValueError('completed capture gap')
             cursor = canonical(segment.capture_end)
-        if abs(cursor-required_end) > 1e-8:
+        if abs(cursor-required_end) > WIRE_TIME_EPSILON:
             raise ValueError('completed capture gap')
         state = 'complete'
     missing = [dict(row) for row in previous_missing_ranges]
@@ -137,11 +143,11 @@ def capture_payload(status, *, camera_id, clock, session_id, sequence,
         cursor = required_start
         for segment in cap['segments']:
             if canonical(segment.capture_start) > cursor:
-                missing.append({'start_at': _time(cursor), 'end_at': _time(segment.capture_start),
+                missing.append({'start_at': cursor.isoformat(timespec='microseconds'), 'end_at': _time(segment.capture_start),
                                 'reason': reasons[0][:100]})
             cursor = canonical(segment.capture_end)
         if cursor < required_end:
-            missing.append({'start_at': _time(cursor), 'end_at': _time(required_end),
+            missing.append({'start_at': cursor.isoformat(timespec='microseconds'), 'end_at': required_end.isoformat(timespec='microseconds'),
                             'reason': reasons[0][:100]})
     missing = [row for i, row in enumerate(missing) if row not in missing[:i]]
     return {'session_id': _session(session_id), 'sequence': sequence, 'state': state,
