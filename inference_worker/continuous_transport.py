@@ -139,6 +139,7 @@ class PrivateClipTransport:
                     headers={'Content-Type':'video/mp4','Content-Length':str(plan.byte_count)},
                     content=chunks()) as response:
                 check_deadline()
+                if response.status_code in (401,403):response.raise_for_status()
                 if response.status_code not in (200,201):
                     # Do not include server bodies, credentials or private paths in errors.
                     raise RuntimeError('private_upload_http_'+str(response.status_code))
@@ -179,6 +180,7 @@ class PrivateClipTransport:
         with self.client.stream('GET',
                 f'/api/processing/continuous-events/{plan.event_id}/receipts/{plan.request_id}',
                 params={'session_id':session_id}) as response:
+            if response.status_code in (401,403):response.raise_for_status()
             if response.status_code==404:return None
             if response.status_code!=200:
                 raise RuntimeError('private_receipt_http_'+str(response.status_code))
@@ -204,6 +206,23 @@ class PrivateClipTransport:
                         'retention_expired','deleted','unavailable')):
                 raise ValueError('historical receipt binding invalid')
             return body
+
+    def metadata_read(self,method,path,*,body=None,params=None):
+        """Bounded authenticated read, including read-only operation POST."""
+        deadline=time.monotonic()+self.total_seconds
+        with self.client.stream(method,path,json=body,params=params) as response:
+            response.raise_for_status()
+            if response.headers.get("content-encoding","identity").lower()!="identity":
+                raise ValueError("compressed recovery response")
+            raw=bytearray()
+            for part in response.iter_bytes(chunk_size=min(65536,self.response_max+1)):
+                if time.monotonic()>deadline or len(raw)+len(part)>self.response_max:
+                    raise ValueError("recovery response budget")
+                raw.extend(part)
+            import json
+            value=json.loads(raw)
+            if not isinstance(value,dict):raise ValueError("recovery response object")
+            return value
 
     def close(self):
         self.client.close()

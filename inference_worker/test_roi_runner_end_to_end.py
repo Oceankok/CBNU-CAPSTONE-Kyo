@@ -87,7 +87,8 @@ class ROIRunnerEndToEndTests(unittest.TestCase):
                 return path
 
             args = ["run_server", "--camera-id", "CAM_001",
-                    "--max-chunks", str(count), "--submit-review-candidates"]
+                    "--max-chunks", str(count), "--submit-review-candidates",
+                    "--event-outbox-directory", temp]
             with (
                 patch.object(runner, "VideoClient", return_value=client),
                 patch.object(runner, "create_detector", return_value=ReviewDetector(
@@ -126,22 +127,20 @@ class ROIRunnerEndToEndTests(unittest.TestCase):
         self.assertEqual(event["ppe_type"], "helmet")
         self.assertIn("[REVIEW CANDIDATE DELIVERED]", output)
 
-    def test_person_present_at_start_rearms_after_preroll(self):
-        from datetime import datetime, timedelta
+    def test_startup_without_preroll_still_saves_event_and_reports_missing_clip(self):
+        from datetime import datetime
         for roi in (True, False):
             with self.subTest(roi=roi):
                 output, delivery = self.run_case(present_from_start=True, roi=roi)
-                delivery.assert_called_once()
-                event = delivery.call_args.args[1]
-                first_frame = FakeVideoClient().start
-                start = datetime.fromisoformat(event["timestamp_start"])
-                end = datetime.fromisoformat(event["timestamp_end"])
-                self.assertGreaterEqual(start, first_frame + timedelta(seconds=2))
-                self.assertGreaterEqual((end - start).total_seconds(), 3)
+                delivery.assert_not_called()
+                self.assertEqual(len(self.last_client.submitted_events), 1)
+                event = self.last_client.submitted_events[0]
+                self.assertEqual(datetime.fromisoformat(event["timestamp_start"]), self.last_client.start)
                 self.assertEqual(event["frame_sample_count"], 13)
                 self.assertTrue(event["review_only"])
                 self.assertIsNone(event["confidence"])
-                self.assertNotIn("[REVIEW BLOCKED] pre-roll unavailable", output)
+                self.assertEqual(self.last_client.clip_failures,
+                                 [(event['event_id'], 'test-request', 'observation_clip_incomplete', 'unavailable')])
 
     def test_person_present_at_start_still_requires_postroll(self):
         output, delivery = self.run_case(present_from_start=True, count=6)

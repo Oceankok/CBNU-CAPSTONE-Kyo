@@ -18,16 +18,16 @@ class ROIIntegrationTests(unittest.TestCase):
                 "policy_scope_key": ("policy-v1", (area,)),
             }
 
-        for second in range(3):
+        for second in (i * .25 for i in range(12)):
             self.assertEqual(tracker.update([person("A")], float(second)), [])
 
-        for second in range(3, 6):
+        for second in (3 + i * .25 for i in range(12)):
             self.assertEqual(tracker.update([person("B")], float(second)), [])
 
         events = tracker.update([person("B")], 6.0)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["duration_seconds"], 3.0)
-        self.assertEqual(tracker.update([person("B")], 7.0), [])
+        self.assertEqual(tracker.update([person("B")], 6.25), [])
 
     def test_helmet_not_required_outside_roi(self):
         policy = {

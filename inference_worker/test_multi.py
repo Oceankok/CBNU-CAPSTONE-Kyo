@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from unittest.mock import Mock, patch
 
-from inference_worker.run_multi import commands, supervise
+from inference_worker.run_multi import commands, supervise, main, child_main, run_preflight, preflight, FATAL_EXIT
 
 
 class MultiCameraTests(unittest.TestCase):
@@ -53,7 +53,7 @@ class MultiCameraTests(unittest.TestCase):
             child.terminate.assert_called_once()
             child.kill.assert_called_once()
 
-    def run_recovery(self, children, *, limit=2, cycles=5, reference_limit=0):
+    def run_recovery(self, children, *, limit=2, cycles=5, reference_limit=0, policy='fail-fast'):
         with TemporaryDirectory() as folder:
             stop = Path(folder)/'stop'
             clock = [0.0]
@@ -66,7 +66,8 @@ class MultiCameraTests(unittest.TestCase):
                  patch('inference_worker.run_multi.time.sleep', side_effect=sleep):
                 supervise([['camera-a'], ['camera-b'], ['reference']], stop,
                           camera_count=2, restart_limit=limit, restart_delay=2,
-                          reference_restart_limit=reference_limit, reference_restart_delay=2)
+                          reference_restart_limit=reference_limit, reference_restart_delay=2,
+                          failure_policy=policy)
                 return spawn.call_args_list
 
     @staticmethod
@@ -145,3 +146,154 @@ class MultiCameraTests(unittest.TestCase):
                 with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                     supervise([['reference']], Path(folder)/'stop', **kwargs)
             spawn.assert_not_called()
+
+    def test_isolate_exhaustion_keeps_healthy_peers(self):
+        for failed_slot in (0, 2):
+            for relaunch in (self.child(1), OSError('failed')):
+                with self.subTest(slot=failed_slot, relaunch=relaunch):
+                    children = [self.child(), self.child(), self.child()]
+                    children[failed_slot] = self.child(1)
+                    calls = self.run_recovery([*children, relaunch], limit=1,
+                                              reference_limit=1, cycles=8, policy='isolate')
+                    self.assertEqual(len(calls), 4)
+
+    def test_isolate_normal_exit_is_not_restarted(self):
+        calls = self.run_recovery([self.child(0), self.child(), self.child()], policy='isolate')
+        self.assertEqual(len(calls), 3)
+
+    def test_isolate_all_cameras_unavailable_stops_reference(self):
+        reference = self.child()
+        with self.assertRaisesRegex(RuntimeError, 'No active camera'):
+            self.run_recovery([self.child(1), self.child(1), reference], limit=0, policy='isolate')
+        reference.wait.assert_called()
+
+    def test_fatal_errors_stop_every_policy_without_retry(self):
+        for code in (2, FATAL_EXIT):
+            for policy in ('isolate', 'fail-fast'):
+                with self.subTest(code=code, policy=policy), self.assertRaisesRegex(RuntimeError, 'configuration/auth'):
+                    self.run_recovery([self.child(code), self.child(), self.child()], policy=policy)
+
+    def test_isolate_stop_during_backoff_does_not_restart(self):
+        calls = self.run_recovery([self.child(1), self.child(), self.child()], cycles=1, policy='isolate')
+        self.assertEqual(len(calls), 3)
+
+    def test_existing_stop_does_not_launch_anything(self):
+        with TemporaryDirectory() as folder, patch('inference_worker.run_multi.subprocess.Popen') as spawn:
+            stop = Path(folder)/'stop'
+            stop.touch()
+            supervise([['a']], stop, camera_count=1, failure_policy='isolate')
+            spawn.assert_not_called()
+
+    def test_default_launcher_arguments_select_isolation_and_preflight(self):
+        # Exact argument shape emitted by the host inference_entry.arguments.
+        with TemporaryDirectory() as folder:
+            model = Path(folder)/'model.pt'
+            model.touch()
+            args = ['--model-path', str(model), '--buffer-mib', '256',
+                    '--camera-id', 'CAM_A', '--camera-id', 'CAM_B', '--submit-review-candidates']
+            with patch('inference_worker.run_multi.run_preflight') as pre, \
+                 patch('inference_worker.run_multi.supervise') as supervisor:
+                main(args)
+            self.assertIn('--preflight-only', pre.call_args.args[0])
+            self.assertEqual(supervisor.call_args.kwargs['failure_policy'], 'isolate')
+            self.assertEqual(supervisor.call_args.kwargs['restart_limit'], 3)
+            self.assertEqual(supervisor.call_args.kwargs['restart_delay'], 5)
+            self.assertEqual(supervisor.call_args.kwargs['reference_restart_limit'], 3)
+            with patch('inference_worker.run_multi.run_preflight'), \
+                 patch('inference_worker.run_multi.supervise') as supervisor:
+                main([*args, '--failure-policy', 'fail-fast', '--camera-restart-limit', '0',
+                      '--reference-restart-limit', '0'])
+            self.assertEqual(supervisor.call_args.kwargs['failure_policy'], 'fail-fast')
+            self.assertEqual(supervisor.call_args.kwargs['restart_limit'], 0)
+
+    def test_preflight_failure_prevents_peers(self):
+        with TemporaryDirectory() as folder:
+            model = Path(folder)/'model.pt'
+            model.touch()
+            with patch('inference_worker.run_multi.run_preflight', side_effect=RuntimeError('preflight')), \
+                 patch('inference_worker.run_multi.supervise') as supervisor:
+                with self.assertRaises(RuntimeError):
+                    main(['--model-path', str(model), '--camera-id', 'CAM_A'])
+            supervisor.assert_not_called()
+
+    def test_preflight_interrupt_reaps_child(self):
+        child = self.child()
+        child.wait.side_effect = [KeyboardInterrupt(), 0]
+        with patch('inference_worker.run_multi.subprocess.Popen', return_value=child):
+            with self.assertRaises(KeyboardInterrupt):
+                run_preflight(['preflight'])
+        child.terminate.assert_called_once()
+        self.assertEqual(child.wait.call_count, 2)
+
+    def test_child_error_classification_does_not_expose_exception_text(self):
+        from io import StringIO
+        for status, code in ((401, FATAL_EXIT), (403, FATAL_EXIT), (422, FATAL_EXIT), (503, 1)):
+            error = RuntimeError('sensitive token')
+            error.response = Mock(status_code=status)
+            with patch('inference_worker.run_multi.runpy.run_module', side_effect=error), \
+                 patch('sys.stdout', new_callable=StringIO) as output:
+                self.assertEqual(child_main('inference_worker.run_server'), code)
+            self.assertNotIn('sensitive token', output.getvalue())
+
+    def test_preflight_checks_auth_model_mode_and_tracker_before_children(self):
+        from types import SimpleNamespace
+        # Keep these tests dependency-free: model, HTTP and tracker are explicit doubles.
+        client, model, tracker = Mock(), Mock(supports_no_helmet=False), Mock()
+        factory = Mock(return_value=model)
+        assessment = Mock(return_value=[])
+        modules = {'inference_worker.video_client': SimpleNamespace(VideoClient=lambda: client),
+                   'inference_worker.run_server': SimpleNamespace(create_detector=factory),
+                   'inference_worker.person_tracker': SimpleNamespace(PersonTracker=tracker),
+                   'inference_worker.ppe_rules': SimpleNamespace(assess_ppe=assessment)}
+        with patch.dict('sys.modules', modules):
+            preflight(['A', 'B'], Path('model.pt'), '--submit-review-candidates')
+            self.assertEqual(client.get_ppe_policy.call_count, 2)
+            client.close.assert_called_once()
+            tracker.assert_called_once()
+            assessment.assert_called_once_with([], (64, 64, 3))
+            with self.assertRaises(ValueError):
+                preflight(['A'], Path('model.pt'), '--submit-events')
+            factory.side_effect = RuntimeError('corrupt model')
+            with self.assertRaisesRegex(RuntimeError, 'corrupt model'):
+                preflight(['A'], Path('model.pt'), None)
+            factory.reset_mock(side_effect=True)
+            client.get_ppe_policy.side_effect = RuntimeError('auth denied')
+            with self.assertRaisesRegex(RuntimeError, 'auth denied'):
+                preflight(['A'], Path('model.pt'), None)
+            factory.assert_not_called()
+            self.assertEqual(client.close.call_count, 4)
+
+    def test_preflight_tracker_dependency_failure_is_not_retried(self):
+        from types import SimpleNamespace
+        tracker = Mock(side_effect=RuntimeError('tracker dependency missing'))
+        modules = {'inference_worker.video_client': SimpleNamespace(VideoClient=Mock),
+                   'inference_worker.run_server': SimpleNamespace(create_detector=Mock),
+                   'inference_worker.person_tracker': SimpleNamespace(PersonTracker=tracker)}
+        with patch.dict('sys.modules', modules):
+            with self.assertRaisesRegex(RuntimeError, 'tracker dependency missing'):
+                preflight(['A'], Path('model.pt'), None)
+        tracker.assert_called_once()
+
+    def test_preflight_assignment_dependency_failure_stops_initialization(self):
+        from types import SimpleNamespace
+        assessment = Mock(side_effect=ModuleNotFoundError('scipy'))
+        modules = {'inference_worker.video_client': SimpleNamespace(VideoClient=Mock),
+                   'inference_worker.run_server': SimpleNamespace(create_detector=Mock),
+                   'inference_worker.person_tracker': SimpleNamespace(PersonTracker=Mock),
+                   'inference_worker.ppe_rules': SimpleNamespace(assess_ppe=assessment)}
+        with patch.dict('sys.modules', modules):
+            with self.assertRaisesRegex(ModuleNotFoundError, 'scipy'):
+                preflight(['A'], Path('model.pt'), None)
+        assessment.assert_called_once_with([], (64, 64, 3))
+
+    def test_preflight_fatal_exit_is_sanitized(self):
+        from io import StringIO
+        with TemporaryDirectory() as folder:
+            model = Path(folder)/'model.pt'
+            model.touch()
+            with patch('inference_worker.run_multi.preflight', side_effect=RuntimeError('secret')), \
+                 patch('sys.stderr', new_callable=StringIO) as output:
+                with self.assertRaises(SystemExit) as raised:
+                    main(['--model-path', str(model), '--camera-id', 'A', '--preflight-only'])
+            self.assertEqual(raised.exception.code, FATAL_EXIT)
+            self.assertNotIn('secret', output.getvalue())

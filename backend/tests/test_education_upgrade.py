@@ -1,4 +1,4 @@
-"""Synthetic v31/v32/v33 upgrades to v34 and repeated initialization."""
+"""Synthetic older-schema upgrades and repeated initialization."""
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -10,6 +10,33 @@ from backend.tests.support import database_environment
 
 
 class EducationUpgradeTests(unittest.TestCase):
+    def test_v34_to_v35_preserves_populated_zone_membership_events_translation_and_settings(self):
+        tables = ('app_user', 'candidate_event', 'user_zone', 'education_material', 'education_bundle',
+                  'education_translation', 'auto_decision_settings', 'auto_decision_settings_history')
+        with get_connection() as conn:
+            conn.execute("""INSERT INTO education_translation(translation_id,material_id,language,source_version,
+                title,body,checklist_json,status,created_by,created_at,updated_by,updated_at)
+                VALUES('ZONE_UPGRADE_TRANSLATION','UPGRADE_MATERIAL','en',7,'Preserve title','Preserve body',
+                '["Check"]','published','UPGRADE_USER','2026-01-01','UPGRADE_USER','2026-01-01')""")
+            policy = '{"mode":"off","synthetic":"preserve-zone-upgrade"}'
+            conn.execute("INSERT INTO auto_decision_settings VALUES(1,7,?,'UPGRADE_USER','2026-01-01')", (policy,))
+            conn.execute("INSERT INTO auto_decision_settings_history VALUES(7,?,'UPGRADE_USER','2026-01-01','preserve')", (policy,))
+            conn.execute("UPDATE zone_rule SET rules='[\"Preserve zone\"]',risk_level=4 WHERE zone_name=(SELECT MIN(zone_name) FROM zone_rule)")
+            name = conn.execute('SELECT MIN(zone_name) FROM zone_rule').fetchone()[0]
+            conn.execute('INSERT INTO user_zone(user_id,zone_name) VALUES(?,?)', ('UPGRADE_USER', name))
+            conn.execute('ALTER TABLE zone_rule DROP COLUMN revision_nonce')
+            self._version(conn, 34)
+            before = self._snapshot(conn, tables)
+            zones = self._snapshot(conn, ('zone_rule',))['zone_rule']
+        for _ in range(2):
+            init_database()
+            with get_connection() as conn:
+                self.assertEqual(schema_version(conn), LATEST_VERSION)
+                self.assertEqual(self._snapshot(conn, tables), before)
+                migrated = self._snapshot(conn, ('zone_rule',))['zone_rule']
+                self.assertTrue(all(z.pop('revision_nonce') == '' for z in migrated))
+                self.assertEqual(migrated, zones)
+
     def setUp(self):
         directory = self.enterContext(TemporaryDirectory(prefix="education-upgrade-"))
         self.enterContext(database_environment(directory))

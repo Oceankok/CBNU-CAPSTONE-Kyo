@@ -62,7 +62,7 @@ def main():
 
         # 사람별 안전모 판정 및 Tracking
         assessments = tracker.update(
-            assess_ppe(detections, frame.shape, detector.supported_ppe)
+            assess_ppe(detections, frame.shape, detector.supported_ppe), timestamp
         )
 
         # 3초 이상 연속 의심 상태인지 확인

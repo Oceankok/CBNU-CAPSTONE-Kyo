@@ -2,7 +2,7 @@ fastapi
 uvicorn
 pydantic
 opencv-python
-ultralytics
+-r inference_worker/requirements-tracking.txt
 imageio-ffmpeg
 pyttsx3
 PyJWT>=2.10,<3

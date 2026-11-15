@@ -76,17 +76,19 @@ def _covers(ranges,start,end):
 
 def report(event_id,camera_id,body,node_id):
     result = _record_report(event_id,camera_id,body,node_id)
-    if body.state == 'complete':
+    if body.state in {'complete', 'incomplete'}:
         # Capture has committed, including on an identical retry. Secondary
-        # shadow diagnostics must never reject an accepted evidence report.
+        # policy evaluation must never reject an accepted evidence report.
         try:
             _refresh_capture_shadow(event_id)
         except Exception as exc:
-            logger.warning('Capture shadow refresh failed after report commit (%s)', type(exc).__name__)
+            logger.warning('Capture decision refresh failed after report commit (%s)', type(exc).__name__)
     return result
 
 
 def _refresh_capture_shadow(event_id):
+    # Keep the historical helper name. Model dispatch remains shadow-only;
+    # explicitly selected continuous rules can also finalize at this last hook.
     from backend.auto_decision.settings import process_ready
 
     with lc.get_connection() as conn:

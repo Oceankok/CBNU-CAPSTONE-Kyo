@@ -8,6 +8,11 @@ import {
 } from '../api/events';
 import { mediaUrl } from '../api/client';
 import type {
+  EventClipRequest,
+  EventMediaCollection,
+  EvidenceRange,
+} from '../api/events';
+import type {
   EventMedia,
   EventRetention,
   RedactionMode,
@@ -126,6 +131,107 @@ function cameraMedia(items: EventMedia[], camera: string, pickedId?: string) {
   return { image, video, pending, choices, picked };
 }
 
+type RequestMedia = Awaited<ReturnType<typeof fetchEventMedia>>['items'];
+
+function captureReason(reason?: string | null): string {
+  const reasons: Record<string, string> = {
+    source_failed: '원본 수집 실패',
+    source_unavailable: '원본 영상 없음',
+    source_missing: '원본 영상 없음',
+    event_capture_incomplete: '사건 전체 증거 미완료',
+    frame_gap: '영상 구간 공백',
+  };
+  return reason ? (reasons[reason] ?? reason) : '수집 미완료';
+}
+
+function missingRequest(
+  request: EventClipRequest,
+  collection?: EventMediaCollection | null,
+) {
+  const segment = collection?.segments.find(
+    (part) =>
+      part.request_id === request.request_id &&
+      part.camera_id === request.camera_id,
+  );
+  const report = collection?.cameras.find(
+    (row) => row.camera_id === request.camera_id,
+  )?.capture_report;
+  if (!segment || report?.state !== 'incomplete') return null;
+  const start = Date.parse(segment.capture_start_at),
+    end = Date.parse(segment.capture_end_at);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
+    return null;
+  const overlap = (range: EvidenceRange) =>
+    Date.parse(range.start_at) < end && Date.parse(range.end_at) > start;
+  const ranges = report.missing_ranges
+    .filter(overlap)
+    .sort((a, b) => Date.parse(a.start_at) - Date.parse(b.start_at));
+  if (!ranges.length) return null;
+  let cursor = start;
+  for (const range of ranges) {
+    if (Date.parse(range.start_at) > cursor) break;
+    cursor = Math.max(cursor, Date.parse(range.end_at));
+  }
+  return {
+    full: cursor >= end,
+    captured: report.captured_ranges.some(overlap),
+    reason: captureReason(ranges[0].reason),
+  };
+}
+
+function terminalMissingRequest(
+  request: EventClipRequest,
+  items: RequestMedia,
+  collection?: EventMediaCollection | null,
+) {
+  return (
+    request.status === 'pending' &&
+    missingRequest(request, collection)?.full === true &&
+    !items.some((item) => item.clip_request_id === request.request_id)
+  );
+}
+
+function clipRequestStatus(
+  request: EventClipRequest,
+  items: RequestMedia,
+  collection?: EventMediaCollection | null,
+): string {
+  const media = items.filter(
+    (item) => item.clip_request_id === request.request_id,
+  );
+  if (media.some((item) => item.url)) return '영상 확인 가능';
+  if (request.status === 'unavailable') {
+    return request.error_code === 'clip_delivery_timeout'
+      ? '영상 확보 불가 · 수신 시간 초과'
+      : '영상 확보 불가';
+  }
+  if (request.status === 'failed') return '영상 수집 실패 · 복구 확인 필요';
+  if (
+    media.some(
+      (item) => item.status === 'processing' || item.status === 'registered',
+    )
+  ) {
+    return '영상 수신 · 얼굴 가림 처리 중';
+  }
+  if (media.some((item) => item.status === 'failed'))
+    return '영상 처리 실패 · 복구 확인 필요';
+  if (request.status === 'pending') {
+    const missing = missingRequest(request, collection);
+    if (!media.length && missing) {
+      if (missing.full) return '영상 확보 불가 · ' + missing.reason;
+      return (
+        '일부 영상 확보 불가 · ' +
+        missing.reason +
+        (missing.captured
+          ? ' · 확보된 구간은 수신 대기'
+          : ' · 나머지 구간 상태 확인 필요')
+      );
+    }
+    return '영상 수신 대기';
+  }
+  return '수신 기록은 있으나 확인 가능한 영상 없음';
+}
+
 /**
  * Event media for reviewers: redacted image/clip first, retention decision below,
  * processing details and dev tools collapsed. Parent should key this by event id.
@@ -146,7 +252,11 @@ export default function EventMediaPanel({
   onAvailability?: (a: ReviewAvailability | null) => void;
   onChange: () => Promise<void>;
 }) {
-  const [items, setItems] = useState<EventMedia[]>([]);
+  const [items, setItems] = useState<RequestMedia>([]);
+  const [clipRequests, setClipRequests] = useState<EventClipRequest[]>([]);
+  const [collection, setCollection] = useState<EventMediaCollection | null>(
+    null,
+  );
   const [retention, setRetention] = useState<EventRetention | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -169,6 +279,8 @@ export default function EventMediaPanel({
   const apply = useCallback(
     (data: Awaited<ReturnType<typeof fetchEventMedia>>) => {
       setItems(data.items);
+      setClipRequests(data.clip_requests ?? []);
+      setCollection(data.collection ?? null);
       setRetention(data.retention);
       setLoaded(true);
       onAvailability?.(data.review_availability ?? null);
@@ -194,10 +306,20 @@ export default function EventMediaPanel({
       .catch(() => {});
   }, [finalReview, unreviewable]);
 
-  // Poll while the server is still redacting or deleting
-  const processing = items.some(
-    (m) => m.status === 'processing' || m.status === 'delete_pending',
-  );
+  // Pending requests can time out even when no media row was ever created.
+  const processing =
+    items.some(
+      (m) => m.status === 'processing' || m.status === 'delete_pending',
+    ) ||
+    clipRequests.some(
+      (request) =>
+        request.status === 'pending' &&
+        !terminalMissingRequest(request, items, collection),
+    ) ||
+    collection?.phase === 'open' ||
+    collection?.cameras.some(
+      (row) => row.capture_report?.state === 'collecting',
+    );
   useEffect(() => {
     if (!processing) return;
     const timer = window.setInterval(
@@ -246,7 +368,14 @@ export default function EventMediaPanel({
     );
   }
 
-  const cameras = [...new Set([cameraId, ...items.map((m) => m.camera_id)])];
+  const cameras = [
+    ...new Set([
+      cameraId,
+      ...items.map((m) => m.camera_id),
+      ...clipRequests.map((request) => request.camera_id),
+      ...(collection?.cameras.map((row) => row.camera_id) ?? []),
+    ]),
+  ];
   const { image, video, pending, choices, picked } = cameraMedia(
     items,
     camera,
@@ -337,6 +466,61 @@ export default function EventMediaPanel({
         <p className={styles.notice}>
           얼굴 가림이 일부 누락될 수 있습니다. 화면 전체를 확인해 주세요.
         </p>
+      )}
+      {(clipRequests.length > 0 || !!collection?.cameras.length) && (
+        <section className={styles.card} aria-label="카메라별 영상 확보 상태">
+          <h4 className={styles.cardTitle}>카메라별 영상 확보 상태</h4>
+          <p className={styles.text}>
+            재생 가능한 영상이 있어도 다른 카메라의 영상은 누락될 수 있습니다.
+          </p>
+          {collection?.cameras
+            .filter((row) => row.capture_report?.state === 'incomplete')
+            .map((row) => (
+              <div
+                key={row.camera_id}
+                data-testid={'capture-report-' + row.camera_id}
+              >
+                <p>
+                  <strong>{row.camera_id}</strong>: 수집 보고 종료 ·{' '}
+                  {row.capture_report!.missing_ranges.length > 0
+                    ? row.capture_report!.captured_ranges.length > 0
+                      ? '일부 영상 확보 불가'
+                      : '영상 확보 불가'
+                    : '수집 미완료'}{' '}
+                  · {captureReason(row.capture_report!.reason)}
+                </p>
+                {row.capture_report!.missing_ranges.length > 0 && (
+                  <ul aria-label={row.camera_id + ' 누락 구간'}>
+                    {row.capture_report!.missing_ranges.map((range, index) => (
+                      <li key={index}>
+                        {formatSeoul(range.start_at)} ~{' '}
+                        {formatSeoul(range.end_at)} ·{' '}
+                        {captureReason(range.reason)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          <ul aria-live="polite">
+            {clipRequests.map((request) => (
+              <li
+                key={request.request_id}
+                data-testid={'clip-request-' + request.request_id}
+              >
+                <strong>{request.camera_id}</strong>:{' '}
+                {clipRequestStatus(request, items, collection)}
+              </li>
+            ))}
+          </ul>
+          <button
+            className={styles.btn}
+            type="button"
+            onClick={() => reload().catch((e: Error) => setError(e.message))}
+          >
+            영상 상태 새로고침
+          </button>
+        </section>
       )}
       {error && (
         <p role="alert" className={styles.error}>

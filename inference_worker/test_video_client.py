@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import httpx
 
-from backend.tests.support import isolated_api, login
+from backend.tests.support import isolated_api, login, zone_precondition
 from backend.db.event_repository import get_connection
 from inference_worker.video_client import VideoClient
 from inference_worker.event_builder import build_event
@@ -126,7 +126,8 @@ class VideoClientContractTests(unittest.TestCase):
 
         root = "/api/cameras/CAM_001"
         self.api.put("/api/zones/프레스 구역", headers=self.admin,
-                     json={"required_ppe": [], "rules": []}).raise_for_status()
+                     json={"required_ppe": [], "rules": [],
+                           **zone_precondition(self.api, self.admin, '프레스 구역')}).raise_for_status()
         equipment = self.api.post("/api/equipment", headers=self.admin,
             json={"name": "ROI contract", "zone_name": "프레스 구역",
                   "required_ppe": ["helmet"]})

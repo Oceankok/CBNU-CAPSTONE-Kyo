@@ -1,0 +1,49 @@
+{
+  "base_sha": "562b2dffdab6f22cf18aff16185499f2f418e55f",
+  "method": "Real React/DOM/API client in headless Edge; HTTP routes mocked; no backend/DB/provider calls",
+  "browser": "Microsoft Edge headless",
+  "runs": [
+    {
+      "command": "npm run test:translations:browser",
+      "passed": 27,
+      "failed": 0,
+      "duration_seconds": 23.2,
+      "note": "After concurrency/source recovery/freshness corrections"
+    },
+    {
+      "command": "npm run test:translations:browser -- --grep \"native names\"",
+      "passed": 1,
+      "failed": 0,
+      "duration_seconds": 1.8,
+      "note": "Native language/status labels added afterward; no other behavior changed"
+    },
+    {
+      "command": "npm run test:education:browser",
+      "passed": 25,
+      "failed": 0,
+      "duration_seconds": 11.3
+    },
+    {
+      "command": "npm run test:translations:browser -- --grep \"verified request|missing→pending|transport failure\"",
+      "passed": 4,
+      "failed": 0,
+      "note": "request_language wire correction; includes two previously passing pending paths"
+    }
+  ],
+  "lint": "passed,0 errors,0 warnings",
+  "build": "passed before final label-only change; final CI rebuild pending",
+  "sha256": {
+    "frontend/src/components/EducationTranslationEditor.tsx": "bd9c2fd20cc2e9aa16114f5ef73b5f912422825b4924199700c75c709eb9832d",
+    "frontend/src/components/WorkerTranslationNote.tsx": "d8a2d4803cd509615a6b990f07e7b6b4b5ad5a8559105b9ea45b83b7b4622b18",
+    "frontend/src/pages/WorkerHomePage.tsx": "b8b67670d9f3d8d946ee9366212761aa41cf7b02c411016295a47f282f2dc24a",
+    "frontend/src/api/educationTranslations.ts": "6111634137e66c97eaf54e310700854a7a00b627201e3d75fc66e2d34da3f0ca",
+    "frontend/src/api/workerTranslation.ts": "76178e025d17fddf684bcb657f29cc2facfd652ff5bbcc457af2f37f1eea30c5",
+    "frontend/scripts/education-browser/translations.spec.ts": "e4fdc08a3f9d752160b2863d63d36b979af9b86ec6e657fe2b538023043ad52b"
+  },
+  "limitations": [
+    "Backend async schema36 integration pending",
+    "No live provider calls or catalog approvals",
+    "No remote main merge or deployment"
+  ],
+  "final_translation_scenarios": 29
+}

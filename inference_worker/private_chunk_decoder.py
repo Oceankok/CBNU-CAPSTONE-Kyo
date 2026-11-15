@@ -162,7 +162,7 @@ class PrivateChunkDecoder:
                 (identifier,len(data),hashlib.sha256(data).hexdigest(),created))
         self.active=identifier;outcome='decode_failed'
         try:
-            fd=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY|getattr(os,'O_NOFOLLOW',0),0o600)
+            fd=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_BINARY',0),0o600)
             try:
                 info=os.fstat(fd)
                 with self.db:self.db.execute("UPDATE files SET device=?,inode=?,state='writing' WHERE id=?",(info.st_dev,info.st_ino,identifier))

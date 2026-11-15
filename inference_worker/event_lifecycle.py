@@ -1,7 +1,7 @@
-"""Opt-in continuous-event state machine, independent of detection and HTTP.
+"""Shared episode state machine, independent of detection and HTTP.
 
-Not wired into the live runner. The caller must choose a missing-observation
-budget explicitly; this module establishes no operational grace default.
+Shared by candidate-only and continuous runners. The caller chooses observation
+budgets; only observed absence qualifies.
 Call update/close_all from one decoder-owner thread; transport workers consume
 immutable transition bodies rather than sharing this mutable state machine.
 """
@@ -27,11 +27,16 @@ def _scope_value(value):
 
 class EventLifecycle:
     def __init__(self, camera_id, *, missing_grace_seconds,
-                 threshold_seconds=3.0, max_sample_gap_seconds=0.5):
+                 threshold_seconds=3.0, max_sample_gap_seconds=0.5,
+                 rewear_seconds=0.0, qualification_grace_seconds=0.0,
+                 qualification_window_seconds=6.0):
         for name, value, allow_zero in (
             ('missing_grace_seconds', missing_grace_seconds, True),
             ('threshold_seconds', threshold_seconds, False),
             ('max_sample_gap_seconds', max_sample_gap_seconds, False),
+            ('rewear_seconds', rewear_seconds, True),
+            ('qualification_grace_seconds', qualification_grace_seconds, True),
+            ('qualification_window_seconds', qualification_window_seconds, False),
         ):
             if (isinstance(value, bool) or not isinstance(value, (int, float))
                     or not isfinite(value) or value < 0 or (not allow_zero and value == 0)):
@@ -42,6 +47,11 @@ class EventLifecycle:
         self.grace = missing_grace_seconds
         self.threshold = threshold_seconds
         self.sample_gap = max_sample_gap_seconds
+        if qualification_window_seconds < threshold_seconds:
+            raise ValueError('qualification_window_seconds')
+        self.rewear = rewear_seconds
+        self.qualification_grace = qualification_grace_seconds
+        self.qualification_window = qualification_window_seconds
         self.states = {}
         self.last_timestamp = None
 
@@ -55,6 +65,8 @@ class EventLifecycle:
             'frame_sample_count': state['samples'],
             'verified_ppe_confidence': state['minimum_confidence'],
             'review_only': not state['verified'],
+            'person_confidence': state.get('person_confidence'),
+            'trailing_unknown': state['unresolved_gap'],
             # Span is not claimed to be continuously observed across a gap.
             'observed_seconds': state['observed_seconds'],
             'observation_gap_count': state['gap_count'],
@@ -67,6 +79,8 @@ class EventLifecycle:
     def _close(self, key, reason, output):
         state = self.states.pop(key)
         if state['event_id'] is not None:
+            if state['unresolved_gap'] and reason in ('ppe_present', 'track_departed', 'primary_source_ended'):
+                reason += '_after_unknown'
             output.append(self._snapshot(key, state, 'close', reason))
 
     def close_all(self, reason):
@@ -134,10 +148,32 @@ class EventLifecycle:
             if state is not None and state['scope'] != scope:
                 self._close(key, 'policy_scope_changed', output)
                 state = None
+            if state is not None and state['event_id'] is not None:
+                person_delta = timestamp - state['last_seen']
+                if person_delta > self.sample_gap:
+                    state['unresolved_gap'] = True
+                if ((state['person_gap_open'] or person_delta > self.sample_gap)
+                        and person_delta > self.grace):
+                    self._close(key, 'observation_gap', output)
+                    state = None
+                else:
+                    state['last_seen'] = timestamp
+                    state['person_gap_open'] = False
             if status == key[1]:
                 if state is not None:
-                    self._close(key, 'ppe_present', output)
+                    if state['event_id'] is None:
+                        self._close(key, 'ppe_present', output)
+                    else:
+                        if (state['present_last'] is None
+                                or timestamp - state['present_last'] > self.sample_gap):
+                            state['present_since'] = timestamp
+                        state['present_last'] = timestamp
+                        state['gap_open'] = True
+                        if timestamp - state['present_since'] + 1e-6 >= self.rewear:
+                            self._close(key, 'ppe_present', output)
                 continue
+            if state is not None:
+                state['present_since'] = state['present_last'] = None
             if status != 'suspected_no_' + key[1]:
                 continue  # Unknown is handled as a missing observation below.
 
@@ -149,7 +185,10 @@ class EventLifecycle:
             if state is not None:
                 delta = timestamp - state['last_positive']
                 gap = state['gap_open'] or delta > self.sample_gap
-                if gap and (state['event_id'] is None or delta > self.grace):
+                budget = self.grace if state['event_id'] is not None else self.qualification_grace
+                expired = (state['event_id'] is None
+                           and timestamp - state['start'] > self.qualification_window)
+                if expired or (state['event_id'] is None and gap and delta > budget):
                     self._close(key, 'observation_gap', output)
                     state = None
                 elif gap:
@@ -165,15 +204,21 @@ class EventLifecycle:
                     'minimum_confidence': score if verified else None,
                     'event_id': None, 'samples': 0, 'gap_open': False,
                     'observed_seconds': 0.0, 'gap_count': 0, 'gap_seconds': 0.0,
+                    'present_since': None, 'present_last': None,
+                    'last_seen': timestamp, 'person_gap_open': False, 'unresolved_gap': False,
+                    'person_confidence': observation.get('person_confidence'),
                 }
                 self.states[key] = state
+            state['unresolved_gap'] = False
+            state['last_seen'] = timestamp
             state['last_positive'] = timestamp
             state['gap_open'] = False
             state['samples'] += 1
+            state['person_confidence'] = observation.get('person_confidence')
             if verified:
                 state['minimum_confidence'] = min(state['minimum_confidence'], score)
             if state['event_id'] is None:
-                if timestamp - state['start'] >= self.threshold:
+                if state['observed_seconds'] + 1e-6 >= self.threshold:
                     state['event_id'] = 'EVT_' + uuid4().hex
                     output.append(self._snapshot(key, state, 'start'))
             else:
@@ -184,7 +229,23 @@ class EventLifecycle:
             if observation and observation['status'] == 'suspected_no_' + key[1]:
                 continue
             state = self.states[key]
+            if observation and observation['status'] == key[1]:
+                continue
             state['gap_open'] = True
-            if state['event_id'] is None or timestamp - state['last_positive'] > self.grace:
+            state['unresolved_gap'] = True
+            state['present_since'] = state['present_last'] = None
+            if state['event_id'] is not None:
+                # A visible tracked person with unknown PPE is still the same
+                # episode. Only missing person observations expire identity.
+                if observation:
+                    continue
+                state['person_gap_open'] = True
+                if timestamp - state['last_seen'] > self.grace:
+                    self._close(key, 'observation_gap', output)
+                continue
+            budget = self.qualification_grace
+            if (timestamp - state['last_positive'] > budget
+                    or (state['event_id'] is None
+                        and timestamp - state['start'] > self.qualification_window)):
                 self._close(key, 'observation_gap', output)
         return output

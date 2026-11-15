@@ -45,6 +45,11 @@ def init_database() -> None:
         ).fetchone():
             raise RuntimeError('Incompatible schema33 lineage: explicit reconciliation required')
 
+        if cursor.execute('PRAGMA user_version').fetchone()[0] >= 35 and 'revision_nonce' not in {
+            row[1] for row in cursor.execute('PRAGMA table_info(zone_rule)')
+        }:
+            raise RuntimeError('Incompatible schema35 lineage: zone revision column missing; explicit migration required')
+
         # 외래키 제약 조건 활성화
         cursor.execute("PRAGMA foreign_keys = ON;")
 

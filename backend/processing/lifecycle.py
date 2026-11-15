@@ -125,7 +125,10 @@ def public(conn, event_id):
         FROM processing_event_segment s JOIN event_clip_request r ON r.request_id=s.request_id
         WHERE s.event_id=? ORDER BY s.sequence,s.camera_id''', (event_id,))]
     from backend.processing.capture import cameras
-    return {'event_id': event_id, 'lifecycle': row, 'segments': segments, 'cameras': cameras(conn,event_id), 'auto_decision_enabled': False}
+    from backend.auto_decision.settings import enabled_for_event
+    event=conn.execute('SELECT * FROM candidate_event WHERE event_id=?',(event_id,)).fetchone()
+    return {'event_id': event_id, 'lifecycle': row, 'segments': segments, 'cameras': cameras(conn,event_id),
+            'auto_decision_enabled': enabled_for_event(conn,event)}
 
 
 def read(event_id, node_id, session_id):
@@ -133,6 +136,55 @@ def read(event_id, node_id, session_id):
     with get_connection() as conn:
         _owner(conn,event_id,node_id,session_id)
         return public(conn,event_id)
+
+
+def operation_receipt(event_id, node_id, body):
+    """Compare an original saved Update without replaying any mutation/hook.
+
+    Historical acceptance and current recovery protections are separate facts.
+    The shared read snapshot is not a lease or permission to rewrite a journal.
+    """
+    import hashlib
+    from backend.db.connection import run_stats_transaction
+    from backend.media.retention_access import expired
+
+    enabled()
+    supplied=canonical(body)
+    supplied_digest=hashlib.sha256(supplied.encode('utf-8')).hexdigest()
+    def inspect(conn):
+        owner=_owner(conn,event_id,node_id,body.session_id)
+        operation=conn.execute('SELECT payload FROM processing_event_operation WHERE event_id=? AND sequence=?',
+                               (event_id,body.sequence)).fetchone()
+        event=conn.execute('SELECT event_status FROM candidate_event WHERE event_id=?',(event_id,)).fetchone()
+        blockers=[]
+        if conn.execute('SELECT 1 FROM event_merge WHERE source_event_id=? OR target_event_id=?',(event_id,event_id)).fetchone():
+            blockers.append('event_merged')
+        if conn.execute('SELECT 1 FROM event_review WHERE event_id=?',(event_id,)).fetchone():
+            blockers.append('already_reviewed')
+        retention=conn.execute('SELECT decision FROM event_retention WHERE event_id=?',(event_id,)).fetchone()
+        if retention and retention['decision']=='delete':blockers.append('event_media_deleted')
+        if expired(conn,event_id):blockers.append('event_media_expired')
+        accepted=None
+        status='not_committed'
+        if operation:
+            stored=operation['payload']
+            try:
+                accepted_body=Update.model_validate_json(stored)
+            except ValueError:
+                raise HTTPException(409,'continuous_operation_receipt_invalid') from None
+            if accepted_body.session_id!=body.session_id or accepted_body.sequence!=body.sequence:
+                raise HTTPException(409,'continuous_operation_receipt_invalid')
+            accepted={'sha256':hashlib.sha256(stored.encode('utf-8')).hexdigest(),
+                      'body':accepted_body.model_dump(mode='json')}
+            status='committed_exact' if stored==supplied else 'committed_different'
+        return {'event_id':event_id,'session_id':body.session_id,'sequence':body.sequence,
+                'submitted_sha256':supplied_digest,'receipt_status':status,
+                'accepted_operation':accepted,
+                'lifecycle':{key:owner[key] for key in ('phase','revision','evidence_revision')},
+                'event_status':event['event_status'],'recovery_blockers':sorted(blockers),
+                'may_attempt_new_update':status=='not_committed' and not blockers
+                    and owner['phase']=='open' and owner['revision']==body.sequence-1}
+    return run_stats_transaction(inspect)
 
 
 def start(body, node_id):
@@ -227,7 +279,7 @@ def update(event_id, body, node_id):
         conn.execute('INSERT INTO processing_event_operation(event_id,sequence,payload) VALUES(?,?,?)',(event_id,body.sequence,raw))
         if phase == 'closed':
             from backend.auto_decision.writer import on_event_ready
-            on_event_ready(conn,event_id)  # Dormant until a trusted validator is integrated.
+            on_event_ready(conn,event_id)
         return public(conn,event_id)
 
 

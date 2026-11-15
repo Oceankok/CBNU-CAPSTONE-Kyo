@@ -8,6 +8,7 @@ import hashlib
 import json
 import sqlite3
 import os
+import httpx
 from inference_worker.continuous_transport import UploadPlan
 
 
@@ -77,11 +78,12 @@ class ContinuousDispatcher:
                 (json.dumps(receipt,sort_keys=True,separators=(',',':')),row['segment']))
         self.outbox.request_cleanup(row['segment'],reason='verified_upload_receipt')
 
-    def upload_once(self, *, max_items=None):
+    def upload_once(self, *, max_items=None, event_id=None):
         if max_items is not None and (type(max_items) is not int or max_items<=0):raise ValueError('upload step limit')
         self.outbox.reconcile()
         results=[]
         for row in self.db.execute("SELECT * FROM uploads WHERE state!='manual' ORDER BY last_probe,segment").fetchall():
+            if event_id is not None and row['event']!=event_id:continue
             if max_items is not None and len(results)>=max_items:break
             self.outbox.reconcile()
             plan=UploadPlan(**json.loads(row['plan']))
@@ -120,18 +122,22 @@ class ContinuousDispatcher:
                     results.append((row['segment'],'unknown'));continue
                 self._accept(row,receipt)
                 results.append((row['segment'],'accepted_private'))
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code in (401,403):raise
+                results.append((row['segment'],'blocked'))
             except Exception:
                 # Never persist credentials, source paths or remote response bodies.
                 with self.db:self.db.execute("UPDATE uploads SET error='delivery_or_recovery_failed' WHERE segment=?",(row['segment'],))
                 results.append((row['segment'],'blocked'))
         return results
 
-    def metadata_once(self, *, max_items=None):
+    def metadata_once(self, *, max_items=None, event_id=None):
         """One persisted head per event; exact bytes remain unchanged on failure."""
         import re,time
         if max_items is not None and (type(max_items) is not int or max_items<=0):raise ValueError('metadata step limit')
         results=[]
         rows=self.outbox.pending()
+        if event_id is not None:rows=[r for r in rows if r['event']==event_id]
         if max_items is not None:
             if self._metadata_cursor is not None:
                 rows=[r for r in rows if r['event']>self._metadata_cursor]+[r for r in rows if r['event']<=self._metadata_cursor]
@@ -176,6 +182,7 @@ class ContinuousDispatcher:
             try:
                 deadline=time.monotonic()+self.transport.total_seconds
                 with self.transport.client.stream('POST',route,headers={'Content-Type':'application/json'},content=payload) as response:
+                    if response.status_code in (401,403):response.raise_for_status()
                     if response.status_code not in (200,201):raise ValueError('metadata refused')
                     if response.headers.get('content-encoding','identity').lower()!='identity':raise ValueError('encoded metadata')
                     raw=bytearray()
@@ -200,6 +207,9 @@ class ContinuousDispatcher:
                         raise MetadataBindingError('camera_snapshot_mismatch')
                 self.outbox.acknowledge(event,row['seq'],receipt=receipt)
                 results.append((event,'acknowledged'))
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code in (401,403):raise
+                results.append((event,'blocked'))
             except MetadataBindingError as error:results.append((event,str(error)))
             except Exception:results.append((event,'blocked'))
         return results

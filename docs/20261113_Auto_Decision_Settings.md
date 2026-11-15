@@ -1,5 +1,10 @@
 # Automatic decision settings and completion-hook shadow
 
+> Historical model-score boundary. The separately selected continuous rule path
+> is documented in [20261115_Continuous_Rule_Auto_Confirmation.md](20261115_Continuous_Rule_Auto_Confirmation.md).
+> Default/operating mode remains OFF. The model adapter described below remains
+> diagnostic-only; rule conditions are not calibrated model probabilities.
+
 Candidate, not deployed. Based on #248 schema32; schema33 here is automatic-policy
 storage, not deferred #246 translation schema33. Do not combine both migrations
 under version33. A database from that divergent lineage is rejected before seed

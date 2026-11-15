@@ -5,6 +5,7 @@ before constructing a new reader. No track identities survive reconnects.
 """
 import math
 import re
+import httpx
 from inference_worker.time_utils import frame_timestamp,is_continuous_chunk
 from inference_worker.video_decoder import decode_mp4
 from inference_worker.continuous_source_mux import SourceMuxError
@@ -25,6 +26,7 @@ def bounded_chunk(client,chunk_id,maximum):
         raise SourceMuxError('invalid_chunk_identity')
     with client.client.stream('GET',f'/api/processing/video/chunks/{chunk_id}',
             headers={'Accept-Encoding':'identity'}) as response:
+        if response.status_code in (401,403):response.raise_for_status()
         if response.status_code!=200:raise SourceMuxError('chunk_http_'+str(response.status_code))
         if response.headers.get('content-encoding','identity').lower()!='identity':
             raise SourceMuxError('compressed_chunk_forbidden')
@@ -39,9 +41,11 @@ def bounded_chunk(client,chunk_id,maximum):
 
 
 class ContinuousSourceReader:
-    def __init__(self,client,mux,*,offsets,decoder=decode_mp4,max_chunk_bytes,max_chunk_gap_seconds,downloader=None,require_capture_context=False):
+    def __init__(self,client,mux,*,offsets,decoder=decode_mp4,max_chunk_bytes,max_chunk_gap_seconds,downloader=None,require_capture_context=False,degrade_references=False):
         if set(offsets)!=set(mux.cameras) or any(not math.isfinite(v) for v in offsets.values()):raise ValueError('camera clock mappings')
         if not math.isfinite(max_chunk_gap_seconds) or max_chunk_gap_seconds<0:raise ValueError('chunk gap policy')
+        if type(degrade_references) is not bool:raise ValueError('reference failure mode')
+        self.degrade_references=degrade_references;self.reference_failures={};self.reference_wait_since={}
         self.gap=max_chunk_gap_seconds
         if type(max_chunk_bytes) is not int or max_chunk_bytes<=0:raise ValueError('chunk byte cap')
         self.client,self.mux,self.offsets=client,mux,dict(offsets)
@@ -61,12 +65,15 @@ class ContinuousSourceReader:
         # choosing a newer stream for the same camera.
         for camera,stream in self.streams.items():
             if camera in self.mux.ended:continue
-            if not any(row['camera_id']==camera and row['stream_id']==stream for row in active):
-                row=self._availability(camera)
-                if row is None:
-                    raise SourceUnavailableError('source_stream_unavailable',camera=camera,
-                        stream=stream,expected_sequence=self.sequence[camera]+1)
-                active.append(row)
+            try:
+                if not any(row['camera_id']==camera and row['stream_id']==stream for row in active):
+                    row=self._availability(camera)
+                    if row is None:
+                        raise SourceUnavailableError('source_stream_unavailable',camera=camera,
+                            stream=stream,expected_sequence=self.sequence[camera]+1)
+                    active.append(row)
+            except (SourceMuxError,httpx.HTTPError,ValueError) as error:
+                if not self._degrade(camera,error):raise
         # Primary EOS freezes finite local reference drain boundaries. These are
         # not backend stop acknowledgments and must never authorize zone changes.
         primary_rows=[row for row in active if row['camera_id']==self.mux.primary
@@ -86,100 +93,139 @@ class ContinuousSourceReader:
         # frames already decoded for another camera in this same poll.
         for camera in self.mux.cameras:
             if camera in self.mux.ended:continue
-            matches=[s for s in active if s['camera_id']==camera]
-            if camera in self.streams:
-                matches=[s for s in matches if s['stream_id']==self.streams[camera]]
-            else:
-                matches=[s for s in matches if not s.get('capture_stopped',False)]
-            if not matches and camera in self.streams:
-                available=self._availability(camera)
-                if available is not None:matches=[available]
-                else:raise SourceUnavailableError('source_stream_unavailable',camera=camera,
-                    stream=self.streams[camera],expected_sequence=self.sequence[camera]+1)
-            if len(matches)!=1:raise SourceMuxError('camera_missing_or_ambiguous')
-            row=matches[0]
-            stream=row['stream_id']
-            context=self._context(row)
-            if camera in self.contexts and self.contexts[camera]!=context:
-                raise SourceMuxError('camera_capture_context_changed')
-            stopped=row.get('capture_stopped',False)
-            if type(stopped) is not bool:raise SourceMuxError('invalid_capture_stop')
-            final=None
-            if camera in self.finals and not stopped:
-                raise SourceMuxError('capture_stop_reverted')
-            if stopped:
-                final=row.get('final_sequence')
-                if (type(final) is not int or final < -1 or
-                        type(row.get('last_sequence')) is not int or row['last_sequence']!=final):
-                    raise SourceMuxError('invalid_capture_final_sequence')
-                if camera in self.finals and self.finals[camera]!=final:
-                    raise SourceMuxError('capture_final_sequence_changed')
-                self.finals[camera]=final
-                if self.sequence[camera]>=final:
-                    if self.sequence[camera]!=final:raise SourceMuxError('capture_final_sequence_regressed')
-                    self._end(camera,'source_ended')
-                    continue
-            if camera in self.cutoffs:
-                final=self.cutoffs[camera] if final is None else min(final,self.cutoffs[camera])
-                if self.sequence[camera]==final:
-                    self._end(camera,'reference_drain_cutoff');continue
-            selected[camera]=(row,stream,context,final)
+            try:
+                matches=[s for s in active if s['camera_id']==camera]
+                if camera in self.streams:
+                    matches=[s for s in matches if s['stream_id']==self.streams[camera]]
+                else:
+                    matches=[s for s in matches if not s.get('capture_stopped',False)]
+                if not matches and camera in self.streams:
+                    available=self._availability(camera)
+                    if available is not None:matches=[available]
+                    else:raise SourceUnavailableError('source_stream_unavailable',camera=camera,
+                        stream=self.streams[camera],expected_sequence=self.sequence[camera]+1)
+                if len(matches)!=1:raise SourceMuxError('camera_missing_or_ambiguous')
+                row=matches[0]
+                stream=row['stream_id']
+                context=self._context(row)
+                if camera in self.contexts and self.contexts[camera]!=context:
+                    raise SourceMuxError('camera_capture_context_changed')
+                stopped=row.get('capture_stopped',False)
+                if type(stopped) is not bool:raise SourceMuxError('invalid_capture_stop')
+                final=None
+                if camera in self.finals and not stopped:
+                    raise SourceMuxError('capture_stop_reverted')
+                if stopped:
+                    final=row.get('final_sequence')
+                    if (type(final) is not int or final < -1 or
+                            type(row.get('last_sequence')) is not int or row['last_sequence']!=final):
+                        raise SourceMuxError('invalid_capture_final_sequence')
+                    if camera in self.finals and self.finals[camera]!=final:
+                        raise SourceMuxError('capture_final_sequence_changed')
+                    self.finals[camera]=final
+                    if self.sequence[camera]>=final:
+                        if self.sequence[camera]!=final:raise SourceMuxError('capture_final_sequence_regressed')
+                        self._end(camera,'source_ended')
+                        continue
+                if camera in self.cutoffs:
+                    final=self.cutoffs[camera] if final is None else min(final,self.cutoffs[camera])
+                    if self.sequence[camera]==final:
+                        self._end(camera,'reference_drain_cutoff');continue
+                selected[camera]=(row,stream,context,final)
+            except (SourceMuxError,httpx.HTTPError,ValueError) as error:
+                if not self._degrade(camera,error):raise
         for camera in self.mux.cameras:
             if camera not in selected:continue
-            row,stream,context,final=selected[camera]
-            self.contexts[camera]=context
-            self.streams[camera]=stream
-            if camera not in self.sequence:
+            try:
+                row,stream,context,final=selected[camera]
+                self.contexts[camera]=context
+                self.streams[camera]=stream
+                if camera not in self.sequence:
+                    boundary=row.get('last_sequence')
+                    if type(boundary) is not int or boundary < -1:raise SourceMuxError('invalid_live_boundary')
+                    self.sequence[camera]=boundary
                 boundary=row.get('last_sequence')
-                if type(boundary) is not int or boundary < -1:raise SourceMuxError('invalid_live_boundary')
-                self.sequence[camera]=boundary
-            boundary=row.get('last_sequence')
-            if type(boundary) is not int or boundary < -1:
-                raise SourceMuxError('invalid_live_boundary')
-            expected=self.sequence[camera]+1
-            chunks=sorted(self.client.list_chunks(stream,self.sequence[camera]),key=lambda c:c['sequence'])
-            if not chunks:
-                if boundary>=expected:
-                    self._availability(camera)
+                if type(boundary) is not int or boundary < -1:
+                    raise SourceMuxError('invalid_live_boundary')
+                expected=self.sequence[camera]+1
+                chunks=sorted(self.client.list_chunks(stream,self.sequence[camera]),key=lambda c:c['sequence'])
+                if not chunks:
+                    if boundary>=expected:
+                        self._availability(camera)
+                        raise SourceUnavailableError('source_chunk_unavailable',camera=camera,
+                            stream=stream,expected_sequence=expected)
+                    continue
+                if type(chunks[0]['sequence']) is int and chunks[0]['sequence']>expected:
                     raise SourceUnavailableError('source_chunk_unavailable',camera=camera,
                         stream=stream,expected_sequence=expected)
-                continue
-            if type(chunks[0]['sequence']) is int and chunks[0]['sequence']>expected:
-                raise SourceUnavailableError('source_chunk_unavailable',camera=camera,
-                    stream=stream,expected_sequence=expected)
-            chunk=chunks[0]
-            if type(chunk['sequence']) is not int or chunk['sequence']!=self.sequence[camera]+1:
-                raise SourceMuxError('camera_chunk_discontinuity')
-            if final is not None and chunk['sequence']>final:
-                raise SourceMuxError('chunk_beyond_capture_final_sequence')
-            if self._context(chunk)!=context:
-                raise SourceMuxError('chunk_capture_context_mismatch')
-            if camera in self.previous:
-                previous=self.previous[camera]
-                if (chunk['sequence']!=self.sequence[camera]+1 or not is_continuous_chunk(
-                        previous['capture_start_at'],previous['duration_ms'],chunk['capture_start_at'],
-                        max_gap_seconds=self.gap)):
+                chunk=chunks[0]
+                if type(chunk['sequence']) is not int or chunk['sequence']!=self.sequence[camera]+1:
                     raise SourceMuxError('camera_chunk_discontinuity')
-            try:
-                raw=self.downloader(chunk['chunk_id'])
-            except SourceMuxError as error:
-                if str(error) not in ('chunk_http_404','chunk_http_410'):raise
-                raise SourceUnavailableError('source_chunk_unavailable',camera=camera,
-                    stream=stream,expected_sequence=expected) from error
-            if not raw or len(raw)>self.maximum:raise SourceMuxError('chunk_size_limit')
-            frames=self.decoder(raw,with_timing=True,duration_ms=chunk['duration_ms'])
-            count=0
-            try:
-                for index,fps,frame in frames:
-                    stamp=frame_timestamp(chunk['capture_start_at'],index,fps).timestamp()+self.offsets[camera]
-                    self.mux.push(camera,stamp,frame);count+=1
-            finally:
-                if hasattr(frames,'close'):frames.close()
-            if not count:raise SourceMuxError('empty_video_chunk')
-            self.previous[camera]=dict(chunk);self.sequence[camera]=chunk['sequence']
-            if final is not None and chunk['sequence']==final:
-                self._end(camera,'reference_drain_cutoff' if camera in self.cutoffs else 'source_ended')
+                if final is not None and chunk['sequence']>final:
+                    raise SourceMuxError('chunk_beyond_capture_final_sequence')
+                if self._context(chunk)!=context:
+                    raise SourceMuxError('chunk_capture_context_mismatch')
+                if camera in self.previous:
+                    previous=self.previous[camera]
+                    if (chunk['sequence']!=self.sequence[camera]+1 or not is_continuous_chunk(
+                            previous['capture_start_at'],previous['duration_ms'],chunk['capture_start_at'],
+                            max_gap_seconds=self.gap)):
+                        raise SourceMuxError('camera_chunk_discontinuity')
+                try:
+                    raw=self.downloader(chunk['chunk_id'])
+                except SourceMuxError as error:
+                    if str(error) not in ('chunk_http_404','chunk_http_410'):raise
+                    raise SourceUnavailableError('source_chunk_unavailable',camera=camera,
+                        stream=stream,expected_sequence=expected) from error
+                if not raw or len(raw)>self.maximum:raise SourceMuxError('chunk_size_limit')
+                frames=self.decoder(raw,with_timing=True,duration_ms=chunk['duration_ms'])
+                count=0
+                try:
+                    for index,fps,frame in frames:
+                        stamp=frame_timestamp(chunk['capture_start_at'],index,fps).timestamp()+self.offsets[camera]
+                        self.mux.push(camera,stamp,frame);count+=1
+                finally:
+                    if hasattr(frames,'close'):frames.close()
+                if not count:raise SourceMuxError('empty_video_chunk')
+                self.previous[camera]=dict(chunk);self.sequence[camera]=chunk['sequence']
+                if final is not None and chunk['sequence']==final:
+                    self._end(camera,'reference_drain_cutoff' if camera in self.cutoffs else 'source_ended')
+            except (SourceMuxError, ValueError, RuntimeError, OSError, httpx.HTTPError) as error:
+                if not self._degrade(camera,error):raise
         return self.mux.pop_ready()
+
+    def _degrade(self,camera,error):
+        if isinstance(error,httpx.HTTPStatusError) and error.response.status_code in (401,403):
+            return False
+        if (not self.degrade_references or camera==self.mux.primary
+                or str(error) in ("mux_budget_exhausted","chunk_http_401","chunk_http_403")):
+            return False
+        metadata=dict(reason="reference_source_failed",camera=camera,
+            stream=self.streams.get(camera,"unbound_"+camera),
+            expected_sequence=max(0,self.sequence.get(camera,-1)+1),
+            availability_reason=getattr(error,"availability_reason",None),
+            failure_code=str(error) if re.fullmatch("[a-z0-9_]{1,80}",str(error)) else type(error).__name__)
+        self.reference_failures[camera]=metadata
+        self.end_reasons[camera]="source_failed"
+        self.mux.fail_reference(camera,str(error))
+        return True
+
+    def expire_reference_stalls(self,*,now,max_lag_seconds):
+        if not self.degrade_references:return
+        for camera in self.mux.cameras:
+            if camera==self.mux.primary or camera in self.mux.ended:continue
+            last=self.mux.latest.get(camera)
+            if last is None:
+                since=self.reference_wait_since.setdefault(camera,now)
+                if now-since>=max_lag_seconds:
+                    self._degrade(camera,SourceMuxError("reference_initial_frame_timeout"))
+            elif now-last>max_lag_seconds:
+                self._degrade(camera,SourceMuxError("reference_stalled"))
+
+    def waiting_first_references(self):
+        return tuple(c for c in self.mux.cameras if c!=self.mux.primary
+                     and c not in self.mux.ended and c not in self.mux.latest)
+
 
     def _availability(self,camera):
         lookup=getattr(self.client,'stream_availability',None)

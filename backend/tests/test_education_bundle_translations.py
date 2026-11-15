@@ -100,6 +100,7 @@ class BundleTranslationTests(unittest.TestCase):
     def test_bundle32_to_translation34_preserves_published_bundle(self):
         from backend.db.connection import is_postgres, schema_version
         from backend.db.init_db import init_database
+        from backend.db.migrations import LATEST_VERSION
         if is_postgres():
             self.skipTest('SQLite version simulation; real PostgreSQL migration pending')
         with get_connection() as conn:
@@ -112,4 +113,4 @@ class BundleTranslationTests(unittest.TestCase):
         self.assertEqual(self.worker_items()[0]['language'],'en')
         self.assertEqual(self.client.get('/api/education/bundles/'+self.original['bundle_id'],headers=self.admin).json(),self.original)
         with get_connection() as conn:
-            self.assertEqual(schema_version(conn),34)
+            self.assertEqual(schema_version(conn),LATEST_VERSION)

@@ -1,6 +1,7 @@
 from backend.db.connection import begin_write
 import json
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from fastapi import Response, Header, Query, APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -9,6 +10,7 @@ from backend.auth.service import current_user, require_admin
 from backend.db.event_repository import get_connection
 from backend.zones.policy import validate_required_ppe
 from backend.zones.membership import zones_for, sync_legacy
+from backend.zones.revision import revision, snapshot_predicate
 from backend.education.service import published_for
 
 admin = APIRouter(prefix="/api/zones", tags=["zones"], dependencies=[Depends(require_admin)])
@@ -16,6 +18,8 @@ worker = APIRouter(prefix="/api/worker", tags=["worker"])
 
 
 class ZoneRuleRequest(BaseModel):
+    expected_revision: str | None = Field(default=None, strict=True, min_length=64, max_length=64,
+        pattern=r'^[0-9a-f]{64}$', description='Revision from the admin read; explicit null creates only. Missing precondition is rejected.')
     required_ppe: list[str] = Field(
         max_length=12, description="구역 전체의 기본 필수 PPE. 장비별 추가 PPE는 별도 설정에서 합산합니다.",
     )
@@ -40,7 +44,7 @@ def _serialize(row, *, include_risk=False) -> dict:
     result = {"zone_name": row["zone_name"], "required_ppe": required_ppe,
             "rules": rules, "updated_at": row["updated_at"]}
     if include_risk:
-        result.update(risk_level=row["risk_level"], risk_scoring_enabled=True)
+        result.update(risk_level=row["risk_level"], risk_scoring_enabled=True, revision=revision(row))
     return result
 
 
@@ -95,6 +99,8 @@ def replace_zone_members(zone_name: str, body: ZoneMembersRequest):
 
 @admin.put("/{zone_name}")
 def save_zone_rule(zone_name: str, body: ZoneRuleRequest, user: dict = Depends(require_admin)):
+    if 'expected_revision' not in body.model_fields_set:
+        raise HTTPException(428, 'zone_rule_precondition_required')
     zone_name = zone_name.strip()
     if not zone_name or len(zone_name) > 100:
         raise HTTPException(422, "zone_name must contain 1 to 100 characters")
@@ -109,25 +115,42 @@ def save_zone_rule(zone_name: str, body: ZoneRuleRequest, user: dict = Depends(r
         raise HTTPException(422, "rules must not contain duplicates")
     updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with get_connection() as conn:
-        # Omitted risk must not overwrite a concurrent explicit risk update.
-        # Only server-chosen SQL fragments are interpolated, never client data.
-        risk_update = ",risk_level=excluded.risk_level" if "risk_level" in body.model_fields_set else ""
-        conn.execute(f"""INSERT INTO zone_rule(zone_name,required_ppe,rules,updated_at,updated_by,risk_level)
-            VALUES(?,?,?,?,?,?) ON CONFLICT(zone_name) DO UPDATE SET
-            required_ppe=excluded.required_ppe,rules=excluded.rules,
-            updated_at=excluded.updated_at,updated_by=excluded.updated_by{risk_update}""",
-            (zone_name, json.dumps(required_ppe, ensure_ascii=False), json.dumps(rules, ensure_ascii=False),
-             updated_at, user["user_id"], body.risk_level))
+        begin_write(conn)
+        current = _find(conn, zone_name)
+        if body.expected_revision is None:
+            if current is not None:
+                raise HTTPException(409, 'zone_rule_changed')
+            cursor = conn.execute("""INSERT INTO zone_rule
+                (zone_name,required_ppe,rules,updated_at,updated_by,risk_level,revision_nonce)
+                VALUES(?,?,?,?,?,?,?) ON CONFLICT(zone_name) DO NOTHING""",
+                (zone_name, json.dumps(required_ppe, ensure_ascii=False), json.dumps(rules, ensure_ascii=False),
+                 updated_at, user['user_id'], body.risk_level, uuid4().hex))
+        else:
+            if current is None or revision(current) != body.expected_revision:
+                raise HTTPException(409, 'zone_rule_changed')
+            where, expected = snapshot_predicate(current)
+            # Omission preserves the current risk; only explicit edits replace it.
+            risk = body.risk_level if 'risk_level' in body.model_fields_set else current['risk_level']
+            cursor = conn.execute(f"""UPDATE zone_rule SET required_ppe=?,rules=?,updated_at=?,
+                updated_by=?,risk_level=?,revision_nonce=? WHERE {where}""",
+                (json.dumps(required_ppe, ensure_ascii=False), json.dumps(rules, ensure_ascii=False),
+                 updated_at, user['user_id'], risk, uuid4().hex, *expected))
+        if cursor.rowcount != 1:
+            raise HTTPException(409, 'zone_rule_changed')
         return _serialize(_find(conn, zone_name), include_risk=True)
 
 
 @admin.delete("/{zone_name}")
-def remove_zone_rule(zone_name: str):
+def remove_zone_rule(zone_name: str, expected_revision: str | None = Query(default=None,
+        min_length=64, max_length=64, pattern=r'^[0-9a-f]{64}$')):
+    if expected_revision is None:
+        raise HTTPException(428, 'zone_rule_precondition_required')
     zone_name = zone_name.strip()
     with get_connection() as conn:
         begin_write(conn)
-        if not _find(conn, zone_name):
-            raise HTTPException(404, "Zone rule not found")
+        current = _find(conn, zone_name)
+        if current is None or revision(current) != expected_revision:
+            raise HTTPException(409, 'zone_rule_changed')
         users = conn.execute("SELECT COUNT(*) FROM user_zone WHERE zone_name=?", (zone_name,)).fetchone()[0]
         cameras = conn.execute("SELECT COUNT(*) FROM camera_info WHERE zone_name=?", (zone_name,)).fetchone()[0]
         equipment = conn.execute("SELECT COUNT(*) FROM equipment WHERE zone_name=?", (zone_name,)).fetchone()[0]
@@ -135,7 +158,9 @@ def remove_zone_rule(zone_name: str):
             raise HTTPException(409, "Zone is assigned to users or cameras; reassign them before deleting")
         if equipment:
             raise HTTPException(409, "zone_has_equipment")
-        conn.execute("DELETE FROM zone_rule WHERE zone_name=?", (zone_name,))
+        where, expected = snapshot_predicate(current)
+        if conn.execute(f'DELETE FROM zone_rule WHERE {where}', expected).rowcount != 1:
+            raise HTTPException(409, 'zone_rule_changed')
     return {"status": "deleted", "zone_name": zone_name}
 
 
@@ -170,10 +195,11 @@ def get_my_education(language: str | None = Query(default=None, pattern=r"^[a-z]
     from backend.education.languages import preferences, requested
     language = preferences(language, accept_language)
     def content(conn, quarter, zone, row):
-        material, actual = published_for(conn, quarter, zone, row['ppe_type'], row['education_topic'], language, include_language=True)
+        material, actual, metadata, original = published_for(conn, quarter, zone, row['ppe_type'], row['education_topic'], language, include_translation=True)
         return {**dict(row), 'material': material, 'language': actual,
                 'requested_language': requested(language),
-                'translation_fallback': actual is not None and actual != requested(language)}
+                'translation_fallback': actual is not None and actual != requested(language),
+                'translation': metadata, 'original': original}
     with get_connection() as conn:
         # Membership, latest quarter, rankings and published content must all be
         # read from one snapshot while another transaction rebuilds rankings.

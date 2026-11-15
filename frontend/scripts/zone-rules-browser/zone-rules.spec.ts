@@ -3,6 +3,7 @@ import { test, expect, type Page, type Route } from '@playwright/test';
 const baseline = process.env.ZONE_RULES_BASELINE === '1';
 const zone = (name: string) => ({
   zone_name: name,
+  revision: '1'.padStart(64, '0'),
   required_ppe: ['helmet'],
   rules: ['Original'],
   risk_level: 2,

@@ -7,6 +7,10 @@ const server = await createServer({
   envFile: false,
   plugins: [react()],
   define: { 'import.meta.env.VITE_API_BASE_URL': JSON.stringify('') },
-  server: { host: '127.0.0.1', port: 5189, strictPort: true },
+  server: {
+    host: '127.0.0.1',
+    port: Number(process.env.ZONE_RULES_TEST_PORT || 5189),
+    strictPort: true,
+  },
 });
 await server.listen();

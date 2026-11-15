@@ -135,7 +135,7 @@ class MultiCameraCapture:
     def end_source(self, camera, reason='source_ended'):
         """Called only after all decoded final frames for this source are emitted."""
         if camera not in self.cameras:raise ValueError('unexpected camera')
-        if reason not in ('source_ended','reference_drain_cutoff'):raise ValueError('source end reason')
+        if reason not in ('source_ended','reference_drain_cutoff','source_failed'):raise ValueError('source end reason')
         self.ended_sources[camera]=reason
         for event in self.events.values():
             cap=event['captures'].get(camera)

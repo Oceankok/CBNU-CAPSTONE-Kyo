@@ -11,7 +11,7 @@ def delivery_snapshot(runtime):
     box, dispatcher = runtime.outbox, runtime.dispatcher
     count = lambda sql: box.db.execute(sql).fetchone()[0]
     return dict(
-        metadata=count('SELECT count(*) FROM requests WHERE ack IS NULL'),
+        metadata=box.unacknowledged_count(),
         close_intents=count("SELECT count(*) FROM pending_closes WHERE state!='finalized'"),
         uploads=sum(row['state'] != 'accepted' for row in dispatcher.status()),
         sources=count("SELECT count(*) FROM segments WHERE state='present' OR cleanup=1"),

@@ -38,9 +38,7 @@ class ContinuousFrameRuntime:
         transitions=[]
         if camera==self.journal.lifecycle.camera_id:
             if assessments is None:raise ValueError('primary assessments required')
-            warm=all(self.capture.buffers[c] and self.capture.buffers[c][0][0]<=timestamp-self.capture.pre
-                     for c in self.cameras if c not in self.capture.ended_sources)
-            transitions=self.journal.update(assessments if warm else [],timestamp)
+            transitions=self.journal.update(assessments,timestamp)
             for row in transitions:
                 if row['kind']=='start':
                     self.capture.discover(row['event_id'],start=row['start_time'],
@@ -222,12 +220,23 @@ class ContinuousFrameRuntime:
             released.append(event)
         return released
 
+    def prepare_stop(self,reason):
+        """Persist actual last observations and unavailable post-roll before tail."""
+        if self.closed:return
+        for row in self.journal.close_all(reason):
+            if row["kind"]=="close":
+                self.capture.end(row["event_id"],violation_end=row["end_time"])
+        for camera in self.cameras:
+            if camera not in self.capture.ended_sources:
+                self.capture.end_source(camera,"source_failed")
+        self._bind_sources()
+        for event in self.capture.events:
+            if self.outbox.event_status(event)["state"]=="active":
+                self.outbox.mark_incomplete(event,reason=reason)
+
     def stop(self,reason):
         if self.closed:return
         try:
-            self.journal.close_all(reason)
-            for event in self.capture.events:
-                if self.outbox.event_status(event)['state']=='active':
-                    self.outbox.mark_incomplete(event,reason=reason)
+            self.prepare_stop(reason)
         finally:
             self.capture.close();self.closed=True

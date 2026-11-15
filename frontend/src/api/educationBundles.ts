@@ -1,5 +1,6 @@
 import { apiFetch, ApiError } from './client';
 import { MOCK_AUTH } from './auth';
+import { languageQuery } from './workerTranslation';
 import type {
   EducationBundle,
   EducationBundleSource,
@@ -145,7 +146,7 @@ export function unpublishEducationBundle(
   );
 }
 
-export function fetchMyEducationBundles(): Promise<{ items: WorkerEducationBundle[] }> {
+export function fetchMyEducationBundles(language?: string): Promise<{ items: WorkerEducationBundle[] }> {
   if (MOCK_AUTH) return Promise.resolve({ items: [] });
-  return apiFetch('/api/worker/education-bundles');
+  return apiFetch('/api/worker/education-bundles' + languageQuery(language));
 }

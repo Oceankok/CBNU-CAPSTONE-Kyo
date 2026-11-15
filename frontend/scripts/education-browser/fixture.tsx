@@ -4,6 +4,19 @@ import EducationMaterialEditor, { type EducationMaterialDraft } from '../../src/
 import EducationBundleEditor from '../../src/components/EducationBundleEditor';
 import RecommendPage from '../../src/pages/RecommendPage';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
+import EducationTranslationEditor from '../../src/components/EducationTranslationEditor';
+import WorkerHomePage from '../../src/pages/WorkerHomePage';
+
+function TranslationFixture() {
+  const [version, setVersion] = useState(1);
+  const [published, setPublished] = useState(true);
+  const kind = new URLSearchParams(location.search).get('source') === 'bundle' ? 'bundle' : 'material';
+  return <>
+    <button onClick={() => setVersion(value => value + 1)}>원본 버전 변경</button>
+    <button onClick={() => setPublished(false)}>원본 게시 취소</button>
+    <EducationTranslationEditor kind={kind} sourceId="source1" sourceVersion={version} published={published} />
+  </>;
+}
 
 function QuarterLayout() {
   const [quarter, setQuarter] = useState('2026-Q4');
@@ -18,6 +31,8 @@ export default function Fixture() {
   const [mounted, setMounted] = useState(true);
   const [scopeConflicts, setScopeConflicts] = useState(0);
   const kind = new URLSearchParams(location.search).get('kind');
+  if (kind === 'translations') return <TranslationFixture />;
+  if (kind === 'worker') return <WorkerHomePage />;
   if (kind === 'recommend') return <MemoryRouter><Routes><Route element={<QuarterLayout />}>
     <Route path="/" element={<RecommendPage />} />
   </Route></Routes></MemoryRouter>;

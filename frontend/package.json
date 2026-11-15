@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:auto-rules:browser": "playwright test --config playwright.auto-rules.config.ts",
+    "test:translations:browser": "playwright test --config playwright.translations.config.ts",
     "dev": "vite",
     "dev:mobile": "vite --host --mode mobile",
     "build": "tsc -b && vite build",

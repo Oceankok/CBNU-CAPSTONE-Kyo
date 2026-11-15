@@ -52,6 +52,14 @@ def login(client, user="admin02"):
     return {"Authorization": "Bearer " + response.json()["access_token"]}
 
 
+def zone_precondition(client, headers, zone):
+    """Read a fresh revision for sequential fixture setup, never conflict tests."""
+    response = client.get('/api/zones', headers=headers)
+    response.raise_for_status()
+    current = next((z for z in response.json()['items'] if z['zone_name'] == zone), None)
+    return {'expected_revision': current['revision'] if current else None}
+
+
 @contextmanager
 def ready_media(event_id="EVT_0001"):
     """Authentication/review tests use a synthetic published fixture, not a GPU model."""

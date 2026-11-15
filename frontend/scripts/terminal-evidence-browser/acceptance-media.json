@@ -1,0 +1,645 @@
+{
+  "items": [
+    {
+      "media_id": "0b1cf537-6db3-4498-84e9-cf8711fe9ae8",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_A",
+      "kind": "video",
+      "role": "reference",
+      "source_expires_at": 1794818399.574807,
+      "source_deleted_at": null,
+      "status": "ready",
+      "redaction_status": "complete",
+      "capture_start_at": "2026-11-15T08:39:44.200000+00:00",
+      "capture_end_at": "2026-11-15T08:39:46.200000+00:00",
+      "created_at": "2026-11-15T08:39:59+00:00",
+      "deleted_at": null,
+      "error_code": null,
+      "faces_detected": 0,
+      "processed_frames": 10,
+      "redaction_mode": "scrfd",
+      "inference_backend": "explicit-synthetic-provider",
+      "processing_seconds": 0.01,
+      "processing_generation": 1,
+      "clip_request_id": "4da21145-dfde-4853-a0b3-c2abee3d777a",
+      "face_verification": {
+        "status": "not_run"
+      },
+      "url": "/storage/candidate_events/processed/0b1cf537-6db3-4498-84e9-cf8711fe9ae8.mp4",
+      "can_reprocess": true,
+      "reprocess_unavailable_reason": null,
+      "failure_category": null,
+      "job_id": "9a873e0d-7cd6-4639-a04d-106fa211fbbe",
+      "processing_state": "succeeded"
+    },
+    {
+      "media_id": "5a44427d-81ca-403d-a713-0c659c2faac1",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_B",
+      "kind": "video",
+      "role": "clip",
+      "source_expires_at": 1794818401.1652424,
+      "source_deleted_at": null,
+      "status": "ready",
+      "redaction_status": "complete",
+      "capture_start_at": "2026-11-15T08:39:44.200000+00:00",
+      "capture_end_at": "2026-11-15T08:39:46.200000+00:00",
+      "created_at": "2026-11-15T08:40:01+00:00",
+      "deleted_at": null,
+      "error_code": null,
+      "faces_detected": 0,
+      "processed_frames": 10,
+      "redaction_mode": "scrfd",
+      "inference_backend": "explicit-synthetic-provider",
+      "processing_seconds": 0.01,
+      "processing_generation": 1,
+      "clip_request_id": "5e538253-e7ee-405a-ab4a-1ca1022e6ec1",
+      "face_verification": {
+        "status": "not_run"
+      },
+      "url": "/storage/candidate_events/processed/5a44427d-81ca-403d-a713-0c659c2faac1.mp4",
+      "can_reprocess": true,
+      "reprocess_unavailable_reason": null,
+      "failure_category": null,
+      "job_id": "67609f77-933c-43c9-b3bf-961c9c06bb44",
+      "processing_state": "succeeded"
+    },
+    {
+      "media_id": "72b604ac-57ba-4cce-abdd-7baba7fc67ed",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_A",
+      "kind": "video",
+      "role": "reference",
+      "source_expires_at": 1794818406.0530412,
+      "source_deleted_at": null,
+      "status": "ready",
+      "redaction_status": "complete",
+      "capture_start_at": "2026-11-15T08:39:46.200000+00:00",
+      "capture_end_at": "2026-11-15T08:39:48.200000+00:00",
+      "created_at": "2026-11-15T08:40:06+00:00",
+      "deleted_at": null,
+      "error_code": null,
+      "faces_detected": 0,
+      "processed_frames": 10,
+      "redaction_mode": "scrfd",
+      "inference_backend": "explicit-synthetic-provider",
+      "processing_seconds": 0.01,
+      "processing_generation": 1,
+      "clip_request_id": "5829b441-0663-4247-82c2-9d67fcb49db1",
+      "face_verification": {
+        "status": "not_run"
+      },
+      "url": "/storage/candidate_events/processed/72b604ac-57ba-4cce-abdd-7baba7fc67ed.mp4",
+      "can_reprocess": true,
+      "reprocess_unavailable_reason": null,
+      "failure_category": null,
+      "job_id": "1b4349de-dd09-4980-b40c-5412e12ee923",
+      "processing_state": "succeeded"
+    },
+    {
+      "media_id": "5857a7bb-5d96-4b4d-9d6f-4c17f04212ac",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_B",
+      "kind": "video",
+      "role": "clip",
+      "source_expires_at": 1794818402.7384267,
+      "source_deleted_at": null,
+      "status": "ready",
+      "redaction_status": "complete",
+      "capture_start_at": "2026-11-15T08:39:46.200000+00:00",
+      "capture_end_at": "2026-11-15T08:39:48.200000+00:00",
+      "created_at": "2026-11-15T08:40:02+00:00",
+      "deleted_at": null,
+      "error_code": null,
+      "faces_detected": 0,
+      "processed_frames": 10,
+      "redaction_mode": "scrfd",
+      "inference_backend": "explicit-synthetic-provider",
+      "processing_seconds": 0.01,
+      "processing_generation": 1,
+      "clip_request_id": "48ddc82f-3449-4e94-9e29-fef982d77aa8",
+      "face_verification": {
+        "status": "not_run"
+      },
+      "url": "/storage/candidate_events/processed/5857a7bb-5d96-4b4d-9d6f-4c17f04212ac.mp4",
+      "can_reprocess": true,
+      "reprocess_unavailable_reason": null,
+      "failure_category": null,
+      "job_id": "1712602d-fbf4-4fef-9bb0-651021d888a0",
+      "processing_state": "succeeded"
+    },
+    {
+      "media_id": "5c748cb0-93d4-4f5f-8725-f31a4e3d1481",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_B",
+      "kind": "video",
+      "role": "clip",
+      "source_expires_at": 1794818407.6752138,
+      "source_deleted_at": null,
+      "status": "ready",
+      "redaction_status": "complete",
+      "capture_start_at": "2026-11-15T08:39:48.200000+00:00",
+      "capture_end_at": "2026-11-15T08:39:50.200000+00:00",
+      "created_at": "2026-11-15T08:40:07+00:00",
+      "deleted_at": null,
+      "error_code": null,
+      "faces_detected": 0,
+      "processed_frames": 10,
+      "redaction_mode": "scrfd",
+      "inference_backend": "explicit-synthetic-provider",
+      "processing_seconds": 0.01,
+      "processing_generation": 1,
+      "clip_request_id": "0eeddbe1-0829-4422-8631-82c8f2fc9241",
+      "face_verification": {
+        "status": "not_run"
+      },
+      "url": "/storage/candidate_events/processed/5c748cb0-93d4-4f5f-8725-f31a4e3d1481.mp4",
+      "can_reprocess": true,
+      "reprocess_unavailable_reason": null,
+      "failure_category": null,
+      "job_id": "34f414b4-9580-484f-8309-e6d6c475f34e",
+      "processing_state": "succeeded"
+    },
+    {
+      "media_id": "ef6d2ad3-d37a-4ee3-8fd7-de461baab905",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_B",
+      "kind": "video",
+      "role": "clip",
+      "source_expires_at": 1794818404.2522802,
+      "source_deleted_at": null,
+      "status": "ready",
+      "redaction_status": "complete",
+      "capture_start_at": "2026-11-15T08:39:50.200000+00:00",
+      "capture_end_at": "2026-11-15T08:39:51.800000+00:00",
+      "created_at": "2026-11-15T08:40:04+00:00",
+      "deleted_at": null,
+      "error_code": null,
+      "faces_detected": 0,
+      "processed_frames": 8,
+      "redaction_mode": "scrfd",
+      "inference_backend": "explicit-synthetic-provider",
+      "processing_seconds": 0.01,
+      "processing_generation": 1,
+      "clip_request_id": "7731404d-7d8c-4daf-87be-76d14e20bfda",
+      "face_verification": {
+        "status": "not_run"
+      },
+      "url": "/storage/candidate_events/processed/ef6d2ad3-d37a-4ee3-8fd7-de461baab905.mp4",
+      "can_reprocess": true,
+      "reprocess_unavailable_reason": null,
+      "failure_category": null,
+      "job_id": "de6e7881-6dea-4b8a-ad9f-b90f7354ccfb",
+      "processing_state": "succeeded"
+    }
+  ],
+  "retention": {
+    "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+    "decision": "pending",
+    "consent_confirmed": 0,
+    "consent_reference": null,
+    "decided_by": null,
+    "decided_at": null,
+    "retain_until": null,
+    "deleted_at": null,
+    "version": 0
+  },
+  "review_availability": {
+    "state": "continuous_event_not_closed",
+    "can_review": false,
+    "can_mark_unreviewable": false,
+    "missing_media_count": 0
+  },
+  "clip_requests": [
+    {
+      "request_id": "4da21145-dfde-4853-a0b3-c2abee3d777a",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_A",
+      "status": "received",
+      "error_code": null,
+      "created_at": 1794731998.0195777,
+      "updated_at": 1794731999.6291785,
+      "role": "reference"
+    },
+    {
+      "request_id": "5ac18b64-5fcf-4075-b264-8891ed12b562",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_EMPTY",
+      "status": "pending",
+      "error_code": null,
+      "created_at": 1794731998.0195777,
+      "updated_at": 1794731998.0195777,
+      "role": "reference"
+    },
+    {
+      "request_id": "5e538253-e7ee-405a-ab4a-1ca1022e6ec1",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_B",
+      "status": "received",
+      "error_code": null,
+      "created_at": 1794731998.0195777,
+      "updated_at": 1794732001.2206397,
+      "role": "clip"
+    },
+    {
+      "request_id": "b02bc3f3-e978-41f2-b281-0b6b122db410",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_MISSING",
+      "status": "pending",
+      "error_code": null,
+      "created_at": 1794731998.0195777,
+      "updated_at": 1794731998.0195777,
+      "role": "reference"
+    },
+    {
+      "request_id": "48ddc82f-3449-4e94-9e29-fef982d77aa8",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_B",
+      "status": "received",
+      "error_code": null,
+      "created_at": 1794731998.1160352,
+      "updated_at": 1794732002.7906518,
+      "role": "clip"
+    },
+    {
+      "request_id": "5829b441-0663-4247-82c2-9d67fcb49db1",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_A",
+      "status": "received",
+      "error_code": null,
+      "created_at": 1794731998.1160352,
+      "updated_at": 1794732006.1002228,
+      "role": "reference"
+    },
+    {
+      "request_id": "6420802a-a161-44c6-912d-08faa089f43c",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_MISSING",
+      "status": "pending",
+      "error_code": null,
+      "created_at": 1794731998.1160352,
+      "updated_at": 1794731998.1160352,
+      "role": "reference"
+    },
+    {
+      "request_id": "668ddec4-2c5a-4458-9d68-967d599c576c",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_EMPTY",
+      "status": "pending",
+      "error_code": null,
+      "created_at": 1794731998.1160352,
+      "updated_at": 1794731998.1160352,
+      "role": "reference"
+    },
+    {
+      "request_id": "0df21414-2000-4f01-add1-379bdae85e27",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_A",
+      "status": "pending",
+      "error_code": null,
+      "created_at": 1794731998.214407,
+      "updated_at": 1794731998.214407,
+      "role": "reference"
+    },
+    {
+      "request_id": "0eeddbe1-0829-4422-8631-82c8f2fc9241",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_B",
+      "status": "received",
+      "error_code": null,
+      "created_at": 1794731998.214407,
+      "updated_at": 1794732007.7279115,
+      "role": "clip"
+    },
+    {
+      "request_id": "41bffafe-0fcd-4a72-98b3-f8ee26305d56",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_EMPTY",
+      "status": "pending",
+      "error_code": null,
+      "created_at": 1794731998.214407,
+      "updated_at": 1794731998.214407,
+      "role": "reference"
+    },
+    {
+      "request_id": "b2ae70c8-80ef-437e-b2d7-6daf0e39e2a2",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_MISSING",
+      "status": "pending",
+      "error_code": null,
+      "created_at": 1794731998.214407,
+      "updated_at": 1794731998.214407,
+      "role": "reference"
+    },
+    {
+      "request_id": "4399bb67-d3ae-499f-af70-b846c130c309",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_EMPTY",
+      "status": "pending",
+      "error_code": null,
+      "created_at": 1794731998.315706,
+      "updated_at": 1794731998.315706,
+      "role": "reference"
+    },
+    {
+      "request_id": "7731404d-7d8c-4daf-87be-76d14e20bfda",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_B",
+      "status": "received",
+      "error_code": null,
+      "created_at": 1794731998.315706,
+      "updated_at": 1794732004.3287044,
+      "role": "clip"
+    },
+    {
+      "request_id": "79ed1ffb-8729-48c7-8267-3ec90e8834f2",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_A",
+      "status": "pending",
+      "error_code": null,
+      "created_at": 1794731998.315706,
+      "updated_at": 1794731998.315706,
+      "role": "reference"
+    },
+    {
+      "request_id": "a6bb3a30-b4eb-4b7f-b4f8-2cbc25821aeb",
+      "event_id": "EVT_eb9bab67a08c4500a2dbca819625a163",
+      "camera_id": "FV_MISSING",
+      "status": "pending",
+      "error_code": null,
+      "created_at": 1794731998.315706,
+      "updated_at": 1794731998.315706,
+      "role": "reference"
+    }
+  ],
+  "collection": {
+    "phase": "interrupted",
+    "revision": 2,
+    "evidence_revision": 8,
+    "observed_seconds": 3.5999999046325684,
+    "gap_seconds": 0.0,
+    "gap_count": 0,
+    "final_segment_count": 4,
+    "close_reason": "ppe_present",
+    "segments": [
+      {
+        "camera_id": "FV_A",
+        "sequence": 0,
+        "request_id": "4da21145-dfde-4853-a0b3-c2abee3d777a",
+        "capture_start_at": "2026-11-15T08:39:44.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:46.200000+00:00",
+        "status": "received",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_B",
+        "sequence": 0,
+        "request_id": "5e538253-e7ee-405a-ab4a-1ca1022e6ec1",
+        "capture_start_at": "2026-11-15T08:39:44.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:46.200000+00:00",
+        "status": "received",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_EMPTY",
+        "sequence": 0,
+        "request_id": "5ac18b64-5fcf-4075-b264-8891ed12b562",
+        "capture_start_at": "2026-11-15T08:39:44.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:46.200000+00:00",
+        "status": "pending",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_MISSING",
+        "sequence": 0,
+        "request_id": "b02bc3f3-e978-41f2-b281-0b6b122db410",
+        "capture_start_at": "2026-11-15T08:39:44.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:46.200000+00:00",
+        "status": "pending",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_A",
+        "sequence": 1,
+        "request_id": "5829b441-0663-4247-82c2-9d67fcb49db1",
+        "capture_start_at": "2026-11-15T08:39:46.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:48.200000+00:00",
+        "status": "received",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_B",
+        "sequence": 1,
+        "request_id": "48ddc82f-3449-4e94-9e29-fef982d77aa8",
+        "capture_start_at": "2026-11-15T08:39:46.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:48.200000+00:00",
+        "status": "received",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_EMPTY",
+        "sequence": 1,
+        "request_id": "668ddec4-2c5a-4458-9d68-967d599c576c",
+        "capture_start_at": "2026-11-15T08:39:46.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:48.200000+00:00",
+        "status": "pending",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_MISSING",
+        "sequence": 1,
+        "request_id": "6420802a-a161-44c6-912d-08faa089f43c",
+        "capture_start_at": "2026-11-15T08:39:46.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:48.200000+00:00",
+        "status": "pending",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_A",
+        "sequence": 2,
+        "request_id": "0df21414-2000-4f01-add1-379bdae85e27",
+        "capture_start_at": "2026-11-15T08:39:48.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:50.200000+00:00",
+        "status": "pending",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_B",
+        "sequence": 2,
+        "request_id": "0eeddbe1-0829-4422-8631-82c8f2fc9241",
+        "capture_start_at": "2026-11-15T08:39:48.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:50.200000+00:00",
+        "status": "received",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_EMPTY",
+        "sequence": 2,
+        "request_id": "41bffafe-0fcd-4a72-98b3-f8ee26305d56",
+        "capture_start_at": "2026-11-15T08:39:48.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:50.200000+00:00",
+        "status": "pending",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_MISSING",
+        "sequence": 2,
+        "request_id": "b2ae70c8-80ef-437e-b2d7-6daf0e39e2a2",
+        "capture_start_at": "2026-11-15T08:39:48.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:50.200000+00:00",
+        "status": "pending",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_A",
+        "sequence": 3,
+        "request_id": "79ed1ffb-8729-48c7-8267-3ec90e8834f2",
+        "capture_start_at": "2026-11-15T08:39:50.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:51.800000+00:00",
+        "status": "pending",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_B",
+        "sequence": 3,
+        "request_id": "7731404d-7d8c-4daf-87be-76d14e20bfda",
+        "capture_start_at": "2026-11-15T08:39:50.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:51.800000+00:00",
+        "status": "received",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_EMPTY",
+        "sequence": 3,
+        "request_id": "4399bb67-d3ae-499f-af70-b846c130c309",
+        "capture_start_at": "2026-11-15T08:39:50.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:51.800000+00:00",
+        "status": "pending",
+        "error_code": null
+      },
+      {
+        "camera_id": "FV_MISSING",
+        "sequence": 3,
+        "request_id": "a6bb3a30-b4eb-4b7f-b4f8-2cbc25821aeb",
+        "capture_start_at": "2026-11-15T08:39:50.200000+00:00",
+        "capture_end_at": "2026-11-15T08:39:51.800000+00:00",
+        "status": "pending",
+        "error_code": null
+      }
+    ],
+    "cameras": [
+      {
+        "camera_id": "FV_A",
+        "role": "reference",
+        "required_start_at": "2026-11-15T08:39:44.200000+00:00",
+        "required_end_at": "2026-11-15T08:39:51.800000+00:00",
+        "capture_report": {
+          "captured_ranges": [
+            {
+              "end_at": "2026-11-15T08:39:46.200000Z",
+              "start_at": "2026-11-15T08:39:44.200000Z"
+            },
+            {
+              "end_at": "2026-11-15T08:39:48.200000Z",
+              "start_at": "2026-11-15T08:39:46.200000Z"
+            }
+          ],
+          "clock_offset_seconds": 0.0,
+          "clock_uncertainty_seconds": 0.0,
+          "earliest_available_at": "2026-11-15T08:39:44.200000Z",
+          "missing_ranges": [
+            {
+              "end_at": "2026-11-15T08:39:51.800000Z",
+              "reason": "source_failed",
+              "start_at": "2026-11-15T08:39:48.200000Z"
+            }
+          ],
+          "reason": "source_failed",
+          "sequence": 1,
+          "state": "incomplete",
+          "time_basis": "source_utc_corrected"
+        }
+      },
+      {
+        "camera_id": "FV_B",
+        "role": "clip",
+        "required_start_at": "2026-11-15T08:39:44.200000+00:00",
+        "required_end_at": "2026-11-15T08:39:51.800000+00:00",
+        "capture_report": {
+          "captured_ranges": [
+            {
+              "end_at": "2026-11-15T08:39:46.200000Z",
+              "start_at": "2026-11-15T08:39:44.200000Z"
+            },
+            {
+              "end_at": "2026-11-15T08:39:48.200000Z",
+              "start_at": "2026-11-15T08:39:46.200000Z"
+            },
+            {
+              "end_at": "2026-11-15T08:39:50.200000Z",
+              "start_at": "2026-11-15T08:39:48.200000Z"
+            },
+            {
+              "end_at": "2026-11-15T08:39:51.800000Z",
+              "start_at": "2026-11-15T08:39:50.200000Z"
+            }
+          ],
+          "clock_offset_seconds": 0.0,
+          "clock_uncertainty_seconds": 0.0,
+          "earliest_available_at": "2026-11-15T08:39:44.200000Z",
+          "missing_ranges": [],
+          "reason": "event_capture_incomplete",
+          "sequence": 1,
+          "state": "incomplete",
+          "time_basis": "source_utc_corrected"
+        }
+      },
+      {
+        "camera_id": "FV_EMPTY",
+        "role": "reference",
+        "required_start_at": "2026-11-15T08:39:44.200000+00:00",
+        "required_end_at": "2026-11-15T08:39:51.800000+00:00",
+        "capture_report": {
+          "captured_ranges": [],
+          "clock_offset_seconds": 0.0,
+          "clock_uncertainty_seconds": 0.0,
+          "earliest_available_at": null,
+          "missing_ranges": [
+            {
+              "end_at": "2026-11-15T08:39:51.800000Z",
+              "reason": "source_failed",
+              "start_at": "2026-11-15T08:39:44.200000Z"
+            }
+          ],
+          "reason": "source_failed",
+          "sequence": 1,
+          "state": "incomplete",
+          "time_basis": "source_utc_corrected"
+        }
+      },
+      {
+        "camera_id": "FV_MISSING",
+        "role": "reference",
+        "required_start_at": "2026-11-15T08:39:44.200000+00:00",
+        "required_end_at": "2026-11-15T08:39:51.800000+00:00",
+        "capture_report": {
+          "captured_ranges": [],
+          "clock_offset_seconds": 0.0,
+          "clock_uncertainty_seconds": 0.0,
+          "earliest_available_at": null,
+          "missing_ranges": [
+            {
+              "end_at": "2026-11-15T08:39:51.800000Z",
+              "reason": "source_failed",
+              "start_at": "2026-11-15T08:39:44.200000Z"
+            }
+          ],
+          "reason": "source_failed",
+          "sequence": 1,
+          "state": "incomplete",
+          "time_basis": "source_utc_corrected"
+        }
+      }
+    ]
+  }
+}

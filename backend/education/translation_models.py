@@ -1,4 +1,5 @@
 from typing import Annotated
+from typing import Literal
 from pydantic import Field, BaseModel, ConfigDict
 from backend.education.models import MaterialContent, MaterialUpdate
 
@@ -18,3 +19,11 @@ class TranslationGenerate(BaseModel):
 
 class TranslationUpdate(MaterialUpdate):
     pass
+
+
+class WorkerTranslationRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    source_kind: Literal['material', 'bundle']
+    source_id: str = Field(min_length=1, max_length=200)
+    source_version: int = Field(ge=0)
+    language: Language

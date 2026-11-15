@@ -50,9 +50,12 @@ class PositivePPEtests(unittest.TestCase):
             self.assertFalse(timer.update(tracker.update(self.rows()), 4))
 
     def test_unknown_cropped_small_ambiguous_and_unsupported(self):
-        for box in ([30, 0, 130, 200], [30, 20, 40, 40], [30, 20, 130, 300]):
+        for box in ([30, 0, 130, 200], [30, 20, 40, 40]):
             row = assess_ppe([{**PERSON, 'bbox': box}], SHAPE)[0]
             self.assertTrue(all(x['status'] == 'unknown' for x in row['ppe'].values()))
+        cropped = assess_ppe([{**PERSON, 'bbox': [30, 20, 130, 300]}], SHAPE)[0]
+        self.assertEqual(cropped['ppe']['helmet']['status'], 'suspected_no_helmet')
+        self.assertEqual(cropped['ppe']['vest']['status'], 'unknown')
         rows = self.rows({**PERSON, 'bbox': [35, 20, 135, 220]}, HELMET, VEST)
         self.assertTrue(all(s['status'] == 'unknown' for p in rows for s in p['ppe'].values()))
         row = assess_ppe([PERSON], SHAPE, ('helmet',))[0]

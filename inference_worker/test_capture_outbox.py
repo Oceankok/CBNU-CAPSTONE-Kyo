@@ -88,7 +88,12 @@ class CaptureOutboxTests(unittest.TestCase):
         self.create();path,segment=self.source()
         for bad in ('/tmp/file.mp4','../outside.mp4',str(path),'a/../../file'):
             with self.assertRaises(OutboxError):self.box.bind_segment('e',camera='main',segment=segment,relative_path=bad)
-        path.unlink();path.symlink_to(self.base/'elsewhere')
+        path.unlink()
+        try:path.symlink_to(self.base/'elsewhere')
+        except OSError as error:
+            if getattr(error,"winerror",None)==1314:
+                self.skipTest("Windows symlink privilege unavailable; Linux CI must exercise this case")
+            raise
         self.box.reconcile()
         self.assertEqual(self.box.event_status('e')['reason'],'source_unsafe_or_inaccessible')
         with self.assertRaises(OutboxError):self.box.acknowledge_cleanup(segment.segment_id)

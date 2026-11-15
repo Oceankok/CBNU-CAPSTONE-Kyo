@@ -43,16 +43,20 @@ class RunnerResilienceTests(unittest.TestCase):
         self.assertIn('[SERVER RETRY]', output)
 
     def run_runner(self, client, *, submit=False, qualified=False, decoder=None,
-                   detector=None, buffer_mib=256, frame_shape=(64,64,3)):
+                   detector=None, review=False, buffer_mib=256, frame_shape=(64,64,3)):
         frame = np.zeros(frame_shape, dtype=np.uint8)
         output = io.StringIO()
         args = ['run_server', '--camera-id', 'CAM_001', '--max-chunks', str(client.count),
                 '--buffer-mib', str(buffer_mib)]
         if submit:
             args.append('--submit-events')
+        if review:
+            args.append('--submit-review-candidates')
         candidates = patch.object(runner, 'ViolationTracker', side_effect=lambda **kwargs: QualifiedCandidates(client.start)) if qualified else nullcontext()
         with (
             patch.object(runner, 'VideoClient', return_value=client),
+            patch.object(runner, 'open_event_outbox', side_effect=lambda *a:
+                         runner.EventSaveOutbox(':memory:', camera_id='CAM_001')),
             patch.object(runner, 'create_detector', return_value=detector or FakeDetector()),
             patch.object(runner, 'decode_mp4', side_effect=decoder or (lambda *args, **kwargs: iter((index,4.0,frame) for index in range(4)))),
             patch.object(runner.time, 'sleep'),

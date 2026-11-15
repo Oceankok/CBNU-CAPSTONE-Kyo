@@ -5,6 +5,7 @@ This is a candidate-screening heuristic, not definitive PPE compliance.
 """
 
 from inference_worker.event_validation import valid_ppe_confidence
+from inference_worker.detection_contract import DetectionContractError, validate_detections, unknown_people
 
 
 def center_of(bbox):
@@ -28,6 +29,10 @@ def helmet_in_head_region(person_bbox, helmet_bbox):
 
 
 def assess_helmets(detections):
+    try:
+        validate_detections(detections)
+    except DetectionContractError:
+        return unknown_people(detections)
     people = [
         d for d in detections if d["class_name"] == "person"
     ]
@@ -77,25 +82,32 @@ def assess_helmets(detections):
 
 
 def assess_ppe(detections, frame_shape, supported_ppe=("helmet", "vest")):
-    """Associate positive PPE boxes with people; absence is review-only evidence.
+    """One-to-one PPE association with explicit ambiguity/visibility reasons.
 
-    Geometric regions are tunable heuristics, not pose/occlusion estimates.
-    Small/cropped people, overlapping regions, and shared PPE boxes are unknown.
-    One row per person preserves identity when tracking both PPE types.
+    Positive boxes remain review-only observations, never a violation probability.
+    Head visibility is independent of cropped feet. Missing PPE on a cropped
+    torso is unknown; a well-localized visible positive can still establish wear.
     """
+    try:
+        validate_detections(detections)
+    except DetectionContractError:
+        return unknown_people(detections)
     from math import isfinite
+    import numpy as np
+    from scipy.optimize import linear_sum_assignment
 
     def valid_box(box):
         return (isinstance(box, (list, tuple)) and len(box) == 4
-                and all(isinstance(v, (int, float)) and isfinite(v) for v in box)
+                and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                        and isfinite(v) for v in box)
                 and box[0] < box[2] and box[1] < box[3])
 
     def overlap(a, b):
-        return max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(
-            0, min(a[3], b[3]) - max(a[1], b[1]))
+        return max(0, min(a[2], b[2])-max(a[0], b[0])) * max(
+            0, min(a[3], b[3])-max(a[1], b[1]))
 
     def area(box):
-        return (box[2] - box[0]) * (box[3] - box[1])
+        return (box[2]-box[0])*(box[3]-box[1])
 
     height, width = frame_shape[:2]
     people = [d for d in detections if d.get("class_name") == "person"
@@ -104,40 +116,71 @@ def assess_ppe(detections, frame_shape, supported_ppe=("helmet", "vest")):
              "ppe": {}} for p in people]
     for ppe_type in ("helmet", "vest"):
         regions = []
+        visible = []
         for person in people:
             x1, y1, x2, y2 = person["bbox"]
-            h = y2 - y1
-            regions.append([x1, y1, x2, y1 + .30*h] if ppe_type == "helmet"
-                           else [x1, y1 + .15*h, x2, y1 + .70*h])
-        matches = [[] for _ in people]
-        ambiguous = set()
-        for detection in detections:
-            box = detection.get("bbox")
-            if detection.get("class_name") != ppe_type or not valid_box(box):
-                continue
+            h, w = y2-y1, x2-x1
+            region = ([x1-.05*w, y1-.08*h, x2+.05*w, y1+.30*h]
+                      if ppe_type == "helmet"
+                      else [x1, y1+.15*h, x2, y1+.70*h])
+            regions.append(region)
+            visible.append(w >= 12 and h >= 40 and 1 <= x1 < x2 <= width-1
+                           and y1 >= 1 and region[3] <= height-1
+                           and (ppe_type == "helmet" or y2 <= height-1))
+        ppes = [d for d in detections if d.get("class_name") == ppe_type
+                and valid_box(d.get("bbox")) and valid_ppe_confidence(d.get("confidence"))]
+        scores = np.zeros((len(people), len(ppes)), dtype=float)
+        uncertain = set()
+        for j, detection in enumerate(ppes):
+            box = detection["bbox"]
             cx, cy = center_of(box)
-            owners = [i for i, region in enumerate(regions)
-                      if region[0] <= cx <= region[2] and region[1] <= cy <= region[3]
-                      and overlap(people[i]["bbox"], box) / area(box) >= .8]
-            if len(owners) == 1:
-                matches[owners[0]].append(detection)
-            elif owners:
-                ambiguous.update(owners)
+            for i, person in enumerate(people):
+                # Weak person boxes are tracking support, never PPE owners.
+                if not valid_ppe_confidence(person.get("confidence")):
+                    continue
+                region = regions[i]
+                px1, py1, px2, py2 = person["bbox"]
+                h, w = py2-py1, px2-px1
+                coverage = overlap(region, box) / area(box)
+                eligible = (region[0] <= cx <= region[2] and region[1] <= cy <= region[3]
+                            and coverage >= .5 and area(box) <= 2*area(region))
+                if eligible:
+                    expected_y = py1 + h*(.12 if ppe_type == "helmet" else .425)
+                    distance = abs(cx-(px1+px2)/2)/w + abs(cy-expected_y)/h
+                    scores[i, j] = 2 + coverage - distance
+                elif coverage > .1:
+                    uncertain.add(i)  # Nearby rejected box is not proof of absence.
+            owners = sorted(((scores[i, j], i) for i in range(len(people))
+                             if scores[i, j] > 0), reverse=True)
+            if len(owners) > 1 and owners[0][0]-owners[1][0] < .15:
+                uncertain.update(i for _, i in owners)
+                scores[:, j] = 0
+        matches = {}
+        if scores.size:
+            person_indices, ppe_indices = linear_sum_assignment(scores, maximize=True)
+            for i, j in zip(person_indices, ppe_indices):
+                if scores[i, j] > 0:
+                    matches[int(i)] = int(j)
         for i, person in enumerate(people):
             x1, y1, x2, y2 = person["bbox"]
-            # Conservative full-person gate: cropped frames cannot establish absence.
-            observable = (ppe_type in supported_ppe and x2-x1 >= 12 and y2-y1 >= 40
-                          and 1 <= x1 < x2 <= width-1 and 1 <= y1 < y2 <= height-1
-                          and valid_ppe_confidence(person.get("confidence")))
-            occluded = any(i != j and overlap(regions[i], other["bbox"]) / area(regions[i]) > .3
+            valid_person = (valid_ppe_confidence(person.get("confidence"))
+                            and x2-x1 >= 12 and y2-y1 >= 40
+                            and 1 <= x1 < x2 <= width-1 and y1 >= 1)
+            occluded = any(i != j and valid_ppe_confidence(other.get("confidence"))
+                           and overlap(regions[i], other["bbox"])/area(regions[i]) > .3
                            for j, other in enumerate(people))
-            if not observable or i in ambiguous:
-                status = "unknown"
-            elif matches[i]:
-                status = ppe_type
-            elif occluded:
-                status = "unknown"
+            if ppe_type not in supported_ppe:
+                status, reason = "unknown", "unsupported_ppe"
+            elif not valid_person:
+                status, reason = "unknown", "person_not_observable"
+            elif i in uncertain:
+                status, reason = "unknown", "ambiguous_ppe_association"
+            elif i in matches:
+                status, reason = ppe_type, "positive_ppe_association"
+            elif not visible[i] or occluded:
+                status, reason = "unknown", "ppe_region_not_observable"
             else:
-                status = f"suspected_no_{ppe_type}"
-            rows[i]["ppe"][ppe_type] = {"status": status, "verified_ppe_confidence": None}
+                status, reason = "suspected_no_" + ppe_type, "observable_ppe_absence"
+            rows[i]["ppe"][ppe_type] = {
+                "status": status, "verified_ppe_confidence": None, "reason": reason}
     return rows

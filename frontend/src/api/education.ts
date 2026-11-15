@@ -2,8 +2,9 @@ import { apiFetch } from './client';
 import { MOCK_AUTH, getSession } from './auth';
 import { mockZonesOf } from './users';
 import type { WorkerEducation } from '../types';
+import { languageQuery } from './workerTranslation';
 
-export async function fetchMyEducation(): Promise<WorkerEducation> {
+export async function fetchMyEducation(language?: string): Promise<WorkerEducation> {
   if (MOCK_AUTH) {
     const zones = mockZonesOf(getSession()?.user_id ?? '');
     const groups = zones.map((zone) => ({
@@ -31,5 +32,5 @@ export async function fetchMyEducation(): Promise<WorkerEducation> {
     }
     return { ...groups[0], groups };
   }
-  return apiFetch<WorkerEducation>('/api/worker/education');
+  return apiFetch<WorkerEducation>('/api/worker/education' + languageQuery(language));
 }
