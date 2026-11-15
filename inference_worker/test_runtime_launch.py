@@ -7,7 +7,8 @@ from unittest.mock import Mock, patch
 
 import httpx
 
-from inference_worker.run_multi import commands, continuous_profiles, main, child_main, run_preflight, FATAL_EXIT
+from inference_worker.run_multi import (commands, continuous_profiles, main, child_main, run_preflight,
+                                       preflight, probe_continuous_protocol, ContinuousProtocolError, FATAL_EXIT)
 from inference_worker.reference_collector import ReferenceCollector
 from deploy.host_runtime.settings import arguments
 from deploy.host_runtime.ownership import primary_ownership
@@ -19,6 +20,97 @@ def status_error(code):
 
 
 class RuntimeLaunchTests(unittest.TestCase):
+    def test_protocol_probe_uses_existing_readonly_discovery_and_validates_enabled_response(self):
+        from types import SimpleNamespace
+        requests = []
+        def respond(request):
+            requests.append(request)
+            return httpx.Response(200, json={'items': [], 'next_after': None})
+        with httpx.Client(base_url='https://fixture.invalid', transport=httpx.MockTransport(respond)) as client:
+            probe_continuous_protocol(SimpleNamespace(client=client))
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].method, 'GET')
+        self.assertEqual(requests[0].url.path, '/api/processing/continuous-events/active')
+        self.assertEqual(dict(requests[0].url.params), {'limit': '1'})
+
+    def test_protocol_probe_disabled_auth_unreachable_and_invalid_all_fail_closed(self):
+        from types import SimpleNamespace
+        for status, body, reason in ((503, {'detail': 'continuous_events_disabled'}, 'disabled'),
+                                    (401, {'detail': 'secret'}, 'auth'),
+                                    (403, {'detail': 'secret'}, 'auth'),
+                                    (503, {}, 'http_503'), (404, {}, 'http_404'),
+                                    (200, {}, 'invalid_response')):
+            with self.subTest(status=status, reason=reason), httpx.Client(
+                    base_url='https://fixture.invalid', transport=httpx.MockTransport(
+                        lambda request: httpx.Response(status, json=body))) as client:
+                with self.assertRaisesRegex(ContinuousProtocolError, '^'+reason+'$'):
+                    probe_continuous_protocol(SimpleNamespace(client=client))
+        def offline(request):
+            raise httpx.ConnectError('sensitive URL/token text', request=request)
+        with httpx.Client(base_url='https://fixture.invalid', transport=httpx.MockTransport(offline)) as client:
+            with self.assertRaisesRegex(ContinuousProtocolError, '^unreachable$'):
+                probe_continuous_protocol(SimpleNamespace(client=client))
+
+    def test_continuous_preflight_probes_before_model_and_closes_on_disabled(self):
+        from types import SimpleNamespace
+        for enabled in (False, True):
+            client = Mock()
+            client.client.get.return_value = httpx.Response(200 if enabled else 503,
+                json={'items': [], 'next_after': None} if enabled else {'detail': 'continuous_events_disabled'},
+                request=httpx.Request('GET', 'https://fixture.invalid'))
+            detector = Mock(return_value=Mock(supports_no_helmet=False))
+            modules = {'inference_worker.video_client': SimpleNamespace(VideoClient=lambda: client),
+                       'inference_worker.run_server': SimpleNamespace(create_detector=detector),
+                       'inference_worker.person_tracker': SimpleNamespace(PersonTracker=Mock()),
+                       'inference_worker.ppe_rules': SimpleNamespace(assess_ppe=Mock())}
+            with self.subTest(enabled=enabled), patch.dict('sys.modules', modules):
+                if enabled:
+                    preflight(['A'], self.model, '--submit-review-candidates', continuous=True)
+                    detector.assert_called_once()
+                else:
+                    with self.assertRaisesRegex(ContinuousProtocolError, 'disabled'):
+                        preflight(['A'], self.model, '--submit-review-candidates', continuous=True)
+                    detector.assert_not_called(); client.get_ppe_policy.assert_not_called()
+            client.close.assert_called_once()
+
+    def test_legacy_preflight_never_requires_continuous_protocol(self):
+        from types import SimpleNamespace
+        client = Mock()
+        modules = {'inference_worker.video_client': SimpleNamespace(VideoClient=lambda: client),
+                   'inference_worker.run_server': SimpleNamespace(create_detector=Mock()),
+                   'inference_worker.person_tracker': SimpleNamespace(PersonTracker=Mock()),
+                   'inference_worker.ppe_rules': SimpleNamespace(assess_ppe=Mock())}
+        with patch.dict('sys.modules', modules):
+            preflight(['A'], self.model, None)
+        client.client.get.assert_not_called()
+        client.close.assert_called_once()
+
+    def test_disabled_protocol_is_sanitized_fatal_before_peers_and_raw_state(self):
+        from io import StringIO
+        with patch('inference_worker.run_multi.continuous_profiles'), \
+             patch('inference_worker.run_multi.preflight', side_effect=ContinuousProtocolError('disabled')) as check, \
+             patch('inference_worker.run_multi.supervise') as supervisor, \
+             patch('sys.stderr', new_callable=StringIO) as error:
+            with self.assertRaises(SystemExit) as result:
+                main(['--model-path', str(self.model), '--camera-id', 'A', '--runner', 'continuous',
+                      '--continuous-profile', f'A={self.a}', '--submit-review-candidates', '--preflight-only'])
+        self.assertEqual(result.exception.code, FATAL_EXIT)
+        self.assertTrue(check.call_args.kwargs['continuous'])
+        self.assertIn('continuous_protocol_disabled', error.getvalue())
+        supervisor.assert_not_called()
+        self.assertEqual({p.name for p in self.root.iterdir()}, {'model.pt', 'a.json', 'b.json'})
+
+    def test_backend_discovery_disabled_guard_precedes_database_access(self):
+        from fastapi import HTTPException
+        from backend.processing import capture
+        with patch.dict('os.environ', {'PPE_CONTINUOUS_EVENTS_ENABLED': 'false'}), \
+             patch.object(capture.lc, 'get_connection') as connection:
+            with self.assertRaises(HTTPException) as result:
+                capture.discovery('fixture', limit=1)
+        self.assertEqual(result.exception.status_code, 503)
+        self.assertEqual(result.exception.detail, 'continuous_events_disabled')
+        connection.assert_not_called()
+
     def test_preflight_terminate_error_still_closes_owned_trees(self):
         trees = Mock()
         child = trees.spawn.return_value
