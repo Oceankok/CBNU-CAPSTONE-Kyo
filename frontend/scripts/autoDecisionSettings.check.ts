@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { maySelectEnforce, settingsSaveBlocker, settingsUpdate, settingsPreview } from '../src/autoDecisionSettings.ts';
 import { formatErrorDetail } from '../src/api/errorDetail.ts';
 import type { AutoDecisionSettings } from '../src/api/autoDecisions.ts';
-const base: AutoDecisionSettings = {version: 7, mode: 'off', threshold: 0.9,
+const base: AutoDecisionSettings = {version: 7, mode: 'off', decision_method: 'validated_model', rule_criteria: null, threshold: 0.9,
   model_versions: [], ppe_types: [], camera_ids: [], zone_names: [], validation_reference: null,
   activation_blockers: ['validated_adapter_unavailable'], automatic_confirmation_enabled: false};
 const before = JSON.stringify(base);
 const request = settingsUpdate(base, false, '  관리자 수정  ');
-assert.deepEqual(request, {expected_version: 7, mode: 'off', threshold: 0.9,
+assert.deepEqual(request, {expected_version: 7, mode: 'off', decision_method: 'validated_model', rule_criteria: null, threshold: 0.9,
   model_versions: [], ppe_types: [], camera_ids: [], zone_names: [], validation_reference: null, reason: '관리자 수정'});
 assert.equal('activation_blockers' in request, false);
 assert.equal('automatic_confirmation_enabled' in request, false);
@@ -34,3 +34,15 @@ assert.deepEqual(diagnosis.camera_ids, ['CAM_TEST']);
 assert.deepEqual(diagnosis.zone_names, ['ZONE_TEST']);
 assert.deepEqual(diagnosis.event_ids, ['EVENT_TEST']);
 assert.equal('activation_blockers' in diagnosis, false);
+
+const rules = { ...scoped, decision_method: 'continuous_rules_v1' as const,
+  rule_criteria: { minimum_observed_seconds: 5, minimum_frame_samples: 10 } };
+assert.deepEqual(settingsUpdate(rules, false, 'shadow only').rule_criteria, rules.rule_criteria);
+assert.equal(settingsPreview(rules, ['E1']).decision_method, 'continuous_rules_v1');
+assert.notEqual(settingsPreview(rules, ['E1']).rule_criteria, rules.rule_criteria);
+assert.equal(maySelectEnforce({ ...rules, activation_blockers: [] }), false);
+assert.throws(() => settingsUpdate({ ...rules, mode: 'enforce', activation_blockers: [] }, false, 'not authorized'));
+assert.throws(() => settingsPreview({ ...rules, mode: 'enforce' }, ['E1']));
+assert.throws(() => settingsUpdate({ ...rules, rule_criteria: { ...rules.rule_criteria, minimum_frame_samples: 2.5 } }, false, 'invalid'));
+assert.throws(() => settingsUpdate({ ...rules, rule_criteria: null }, false, 'missing'));
+assert.equal(settingsUpdate({ ...rules, mode: 'off', rule_criteria: null }, false, 'disable').mode, 'off');
