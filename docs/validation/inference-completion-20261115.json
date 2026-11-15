@@ -18,7 +18,8 @@
       "skipped": 3,
       "postgresql": true,
       "ffmpeg": true,
-      "log": ".private_media/completion-evidence/final-full-pg-inference.log"
+      "log": ".private_media/completion-evidence/final-full-pg-inference.log",
+      "scope": "7229a73, before settled-history followup"
     },
     "consumer_api_recovery": {
       "tests": 6,
@@ -47,5 +48,6 @@
     "other_connections": 0,
     "matching_test_processes": 0,
     "cluster_stopped": false
-  }
+  },
+  "settled_history_followup": "docs/validation/settled-history-followup-20261115.json"
 }
