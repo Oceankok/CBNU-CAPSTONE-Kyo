@@ -80,6 +80,7 @@ class RunnerEOSBoundaryTests(unittest.TestCase):
         for key in ('outbox','transport','delivery','capture','lifecycle','mux','decoder','source'): cfg[key]={}
         cfg['lifecycle']['missing_grace_seconds']=1
         cfg['capture']['spool_config']={}
+        cfg['capture']['writer_config']={'output_fps':15}
         args=SimpleNamespace(submit_events=False,submit_review_candidates=True,replay_buffer=False,
             continuous_config='unused',camera_id='main',model_path=None,max_chunks=100,stop_file=None,poll=0)
         runtime=Mock(); capture=Mock(); capture.events={}
