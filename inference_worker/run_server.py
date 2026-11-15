@@ -46,6 +46,16 @@ from backend.runtime_version import local_version
 
 
 logger = logging.getLogger(__name__)
+
+
+def _log_episode_close(transition, observed_at):
+    """One compact record per qualified close; no frame data or policy scope."""
+    record = {key: transition[key] for key in (
+        'camera_id', 'tracking_id', 'ppe_type', 'event_id', 'start_time', 'end_time')}
+    record.update(reason=transition['close_reason'], observed_at=observed_at)
+    print('[EPISODE CLOSE] ' + json.dumps(record, separators=(',', ':'), allow_nan=False), flush=True)
+
+
 _EVENT_ERROR_CODES = frozenset({
     'capture_context_required',
     'capture_interval_outside_context_or_future',
@@ -262,7 +272,8 @@ def main():
             ViolationTracker(threshold_seconds=3.0, camera_id=args.camera_id,
                              missing_grace_seconds=args.episode_missing_grace_seconds,
                              rewear_seconds=args.rewear_seconds,
-                             qualification_grace_seconds=args.qualification_grace_seconds),
+                             qualification_grace_seconds=args.qualification_grace_seconds,
+                             on_close=_log_episode_close),
         )
 
     tracker, violations = reset_tracking()
