@@ -1,0 +1,61 @@
+{
+  "date": "2026-11-15",
+  "parent": "7229a73c119a450a9749bd79b7897464b72237d4",
+  "independent_reproducer_candidate": "be5ef7644dafb5ac4e029f35a4e8934d1530ce66",
+  "product_files": [
+    "inference_worker/session_recovery.py"
+  ],
+  "automatic_confirmation_enabled": false,
+  "local_only": true,
+  "full_suite_rerun": false,
+  "tests": {
+    "local_recovery_settlement": {
+      "count": 26,
+      "seconds": 8.009,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "new_native_producer_asgi_pg": {
+      "count": 3,
+      "seconds": 41.504,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "existing_api_transport_eos": {
+      "count": 27,
+      "seconds": 21.424,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "skip_reason": "WinError1314 symlink privilege"
+    }
+  },
+  "native_evidence_inspection": {
+    "read_only_sqlite": true,
+    "events_matching_settlement": 2,
+    "raw_entries": 0,
+    "database_changes": 0
+  },
+  "remaining_limits": [
+    "retired_requests or orphan audit histories require existing authenticated recovery",
+    "spool metadata directories remaining after interrupted release do not prove settlement",
+    "current backend blocks all review of interrupted/incomplete continuous events"
+  ],
+  "native_child_retest": "root/fresh verifier pending after integration",
+  "database": "kyo_test_inference_completion_20261115",
+  "historical_ack_followup": {
+    "scenario": "committed COMPLETE response lost -> first recovery/delivery/raw cleanup -> actual confirmed review -> second restart",
+    "stored_committed_exact_receipt_validated": true,
+    "second_restart_http_calls": 0,
+    "second_restart_journal_changes": 0
+  },
+  "resource_release": {
+    "remaining_test_schemas": 0,
+    "public_table_count": 0,
+    "other_connections": 0,
+    "matching_test_processes": 0,
+    "cluster_stopped": false
+  }
+}

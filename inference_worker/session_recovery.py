@@ -199,6 +199,150 @@ class SessionRecovery:
             self.box.enqueue(event,seq=self.box.event_status(event)["next_seq"],kind="capture_report",
                 idempotency_key=f"{name}:{event}:restart-report:{sequence}",body=body)
 
+    def _settled_history(self,eventrow):
+        """Prove a released terminal history locally, without I/O or mutation.
+
+        Queue-empty and a recovery marker are insufficient: every required
+        camera and source needs an ACKed delivery or incomplete disposition.
+        Retired/conflicting or ambiguous history stays on protected recovery.
+        """
+        from datetime import datetime
+        stamp=lambda value:datetime.fromisoformat(value.replace("Z","+00:00")).timestamp()
+        def covers(ranges,left,right):
+            cursor=left
+            for start,end in sorted(ranges):
+                if start>cursor+1e-6:return False
+                cursor=max(cursor,end)
+                if cursor>=right-1e-6:return True
+            return cursor>=right-1e-6
+        event,session=eventrow["id"],eventrow["session"]
+        if eventrow["state"] not in ("closed","incomplete"):return False
+        complete=eventrow["state"]=="closed"
+        if self.box.db.execute("SELECT 1 FROM retired_requests WHERE event=?",(event,)).fetchone():return False
+        if self.box.db.execute("SELECT 1 FROM orphans WHERE event=?",(event,)).fetchone():return False
+        intent=self.box.db.execute("SELECT * FROM pending_closes WHERE event=?",(event,)).fetchone()
+        if not intent or intent["state"]!="finalized" or intent["session"]!=session:return False
+        try:
+            cameras=self.box._camera_ids(json.loads(eventrow["snapshot"]))
+            if not cameras or len(set(cameras))!=len(cameras):return False
+            rows=self.box.db.execute("SELECT * FROM requests WHERE event=? ORDER BY seq",(event,)).fetchall()
+            if len(rows)!=eventrow["next_seq"] or [r["seq"] for r in rows]!=list(range(len(rows))):return False
+            commands=[];reports={}
+            for row in rows:
+                if row["ack"] is None or hashlib.sha256(row["body"]).hexdigest()!=row["digest"]:return False
+                body,ack=_decoded(row),json.loads(row["ack"])
+                if row["kind"] not in ("start","progress","manifest","close","incomplete","capture_report"):return False
+                camera=row["idem"].split(":",1)[0] if row["kind"]=="capture_report" else None
+                expected=dict(kind="close" if row["kind"]=="incomplete" else row["kind"],session_id=session,
+                    sequence=0 if row["kind"]=="start" else body.get("sequence"),camera_id=camera)
+                if (body.get("session_id")!=session or ack.get("event_id")!=event
+                        or ack.get("accepted_command")!=expected):return False
+                if row["kind"]=="capture_report":
+                    if camera not in cameras or body.get("state") not in ("complete","incomplete"):return False
+                    reports[camera]=body
+                commands.append((row["kind"],body,ack))
+            starts=[b for k,b,a in commands if k=="start"]
+            closes=[(k,b,a) for k,b,a in commands if k in ("close","incomplete")]
+            if len(starts)!=1 or len(closes)!=1 or rows[0]["kind"]!="start":return False
+            start=starts[0];kind,close,close_ack=closes[0]
+            count=close.get("final_segment_count")
+            phase=close_ack.get("lifecycle",{}).get("phase")
+            if phase is None:
+                # Lost-response recovery stores an authoritative operation proof,
+                # rather than a normal mutation response's top-level lifecycle.
+                proof=close_ack.get("operation_receipt",{})
+                accepted=proof.get("accepted_operation",{})
+                accepted_body=accepted.get("body",{})
+                if (proof.get("receipt_status")!="committed_exact" or proof.get("event_id")!=event
+                        or proof.get("session_id")!=session or proof.get("sequence")!=close.get("sequence")
+                        or not re.fullmatch("[a-f0-9]{64}",str(proof.get("submitted_sha256","")))
+                        or accepted.get("sha256")!=proof["submitted_sha256"]
+                        or any((stamp(accepted_body[k])!=stamp(value) if k=="timestamp_end"
+                                else accepted_body[k]!=value) for k,value in close.items())):return False
+                if proof.get("lifecycle",{}).get("revision")!=close.get("sequence"):return False
+                phase=proof.get("lifecycle",{}).get("phase")
+            if (start.get("event_id")!=event or start.get("camera_id") not in cameras
+                    or kind!=("close" if complete else "incomplete")
+                    or close.get("kind")!="close" or close.get("complete") is not complete
+                    or type(count) is not int or count<0 or (complete and count==0)
+                    or set(reports)!=set(cameras) or close.get("sequence")!=intent["next_api_seq"]
+                    or phase!=("closed" if complete else "interrupted")):return False
+            if complete and any(r["state"]!="complete" for r in reports.values()):return False
+            if not complete and not any(r["state"]=="incomplete" for r in reports.values()):return False
+            required_start=stamp(start["timestamp_start"])-2
+            required_end=stamp(close["timestamp_end"])+2
+            captured={};missing={}
+            for camera,report in reports.items():
+                captured[camera]=[(stamp(r["start_at"]),stamp(r["end_at"])) for r in report["captured_ranges"]]
+                missing[camera]=[(stamp(r["start_at"]),stamp(r["end_at"])) for r in report["missing_ranges"]]
+                ranges=captured[camera]+missing[camera]
+                if (any(a<required_start-1e-6 or b>required_end+1e-6 or b<=a for a,b in ranges)
+                        or not covers(ranges,required_start,required_end)
+                        or (report["state"]=="complete" and missing[camera])
+                        or (report["state"]=="incomplete" and not report.get("reason"))):return False
+            manifests=[(b,a) for k,b,a in commands if k=="manifest"]
+            if len(manifests)!=count or [b["sequence"] for b,a in manifests]!=list(range(count)):return False
+            bindings={};cursor=required_start
+            for body,ack in manifests:
+                left,right=stamp(body["capture_start_at"]),stamp(body["capture_end_at"])
+                if abs(left-cursor)>1e-6 or right<=left or right>required_end+1e-6:return False
+                cursor=right
+                current=[r for r in ack["segments"] if r["sequence"]==body["sequence"]]
+                if len(current)!=len(cameras) or {r["camera_id"] for r in current}!=set(cameras):return False
+                for remote in current:
+                    camera=remote["camera_id"];role="clip" if camera==start["camera_id"] else "reference"
+                    if (remote["event_id"]!=event or remote["role"]!=role
+                            or stamp(remote["capture_start_at"])!=left
+                            or stamp(remote["capture_end_at"])!=right):return False
+                    bindings[(camera,left,right)]=remote
+            if complete and abs(cursor-required_end)>1e-6:return False
+            owners=self.box.db.execute("SELECT * FROM captures WHERE event=?",(event,)).fetchall()
+            if len({r["camera"] for r in owners})!=len(owners) or any(r["camera"] not in cameras for r in owners):return False
+            if complete and {r["camera"] for r in owners}!=set(cameras):return False
+            spools={r["spool"]:r["camera"] for r in owners}
+            for owner in owners:
+                directory=self.box.root/owner["spool"]
+                self.box._no_symlinks(directory)
+                if owner["state"] not in ("active","interrupted") or directory.exists():return False
+            segments=self.box.db.execute("SELECT * FROM segments WHERE event=?",(event,)).fetchall()
+            uploads=self.dispatcher.db.execute("SELECT * FROM uploads WHERE event=?",(event,)).fetchall()
+            plans={r["segment"]:r for r in uploads};delivered={c:[] for c in cameras};seen=set();used=set()
+            for segment in segments:
+                camera=segment["camera"]
+                if (camera not in cameras or spools.get(segment["path"].split("/")[0])!=camera
+                        or segment["cleanup"]!=0 or self.box._path(segment["path"]).exists()):return False
+                if segment["state"]=="unavailable":
+                    left=max(segment["start"],required_start);right=min(segment["end"],required_end)
+                    if (complete or not segment["reason"] or segment["id"] in plans
+                            or reports[camera]["state"]!="incomplete"
+                            or (right>left and not covers(missing[camera],left,right))):return False
+                    continue
+                key=(camera,stamp(_time(segment["start"])),stamp(_time(segment["end"])))
+                remote=bindings.get(key);upload=plans.get(segment["id"])
+                if (not remote or key in seen or not upload or upload["state"]!="accepted"
+                        or upload["session"]!=session or upload["role"]!=remote["role"]
+                        or segment["state"]!="uploaded_private" or segment["reason"]!="verified_upload_receipt"
+                        or not covers(captured[camera],segment["start"],segment["end"])):return False
+                plan=json.loads(upload["plan"])
+                if (plan["event_id"]!=event or plan["camera_id"]!=camera
+                        or plan["request_id"]!=remote["request_id"] or plan["relative_path"]!=segment["path"]
+                        or plan["capture_start"]!=segment["start"] or plan["capture_end"]!=segment["end"]
+                        or abs(plan["required_start"]-required_start)>1e-6
+                        or abs(plan["required_end"]-required_end)>1e-6
+                        or plan["final_range_verified"] is not True
+                        or not re.fullmatch("[a-f0-9]{64}",plan["sha256"])
+                        or not self.dispatcher.cleanup_receipt_verified(dict(segment))):return False
+                seen.add(key);used.add(segment["id"]);delivered[camera].append((segment["start"],segment["end"]))
+            if used!=set(plans):return False
+            for camera in cameras:
+                if any(not covers(delivered[camera],a,b) for a,b in captured[camera]):return False
+            for camera,left,right in bindings:
+                if (camera,left,right) not in seen and (reports[camera]["state"]!="incomplete"
+                        or not covers(missing[camera],left,right)):return False
+            return True
+        except (KeyError,TypeError,ValueError,AttributeError,OSError):
+            return False
+
     def run(self):
         """Bounded recovery passes. Unknown/protected state blocks new frames."""
         old=self.box.db.execute("SELECT * FROM events WHERE session!=?",(self.box.session,)).fetchall()
@@ -216,12 +360,10 @@ class SessionRecovery:
                 raise RecoveryRequired("original_endpoint_mismatch")
         for eventrow in old:
             event,session=eventrow["id"],eventrow["session"]
-            # Fully acknowledged finalized sessions need no new event mutation.
-            known=self.box.db.execute("SELECT state FROM recovery_states WHERE event=?",(event,)).fetchone()
-            if (known and known[0]=="reconciled" and eventrow["state"]=="closed"
-                    and not self.box.db.execute("SELECT 1 FROM segments WHERE event=? AND (state='present' OR cleanup=1)",(event,)).fetchone()
-                    and not self.dispatcher.db.execute("SELECT 1 FROM uploads WHERE event=? AND state!='accepted'",(event,)).fetchone()):
-                continue
+            # Normally completed history has no recovery marker. Skip only a
+            # terminal, fully bound and released local settlement, even if a
+            # prior recovery marker claimed success with obligations remaining.
+            if self._settled_history(eventrow):continue
             try:
                 historical=self.box.db.execute("SELECT * FROM requests WHERE event=? AND kind IN ('close','incomplete') AND ack IS NOT NULL ORDER BY seq DESC LIMIT 1",(event,)).fetchone()
                 if historical and self._receipt(event,_decoded(historical))["recovery_blockers"]:

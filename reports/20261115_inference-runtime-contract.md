@@ -58,3 +58,8 @@ Only PRIMARY produces detections in each continuous profile. To detect every cam
 Reference initial/midstream/per-camera HTTP/decode failures persist source_failed and incomplete evidence without blocking primary. A bound reference with no first frame gets max_lag_seconds grace before failure; the actual poll_source runner expires that grace before checking mux progress. Primary failure, global stream listing failure and 401/403 remain fatal. No reference reattachment within an old runtime is attempted.
 
 Remaining registered complete source bytes can be delivered using original session bindings and verified manifest/hash. Missing/unmapped raw never becomes complete by orderly restart. Raw lifetime is not extended. Exact historical operation ACK does not authorize mutation of protected events or imply evidence readiness.
+
+
+## Settled history followup
+
+A fully ACKed and released normal complete/incomplete producer event is now a local no-op at restart, independent of recovery_states. The predicate verifies the final command, every snapshot camera report, captured/missing coverage, accepted source receipts/dispositions, and absence of raw/upload/cleanup/orphan/close obligations before skipping historical protected lookup. Endpoint preflight remains before all IO. Retired/orphan-audited or unreleased histories remain on explicit recovery. See 20261115_settled-history-followup.md for evidence and current incomplete-review API limitation.
