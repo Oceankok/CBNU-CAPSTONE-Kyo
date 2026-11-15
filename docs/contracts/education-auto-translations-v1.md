@@ -64,7 +64,9 @@ pending은 같은 GET을 최소3초 간격으로 조회합니다. 큐60초·발�
 
 native 서비스는 동일 DB/schema·정책·공급자 환경에서 `python -m backend.education.auto_translation`을 별도 프로세스로 실행합니다. --once는 한 큐 항목 처리 후 종료하는 검사/단발 실행용입니다. 자동 DB 초기화는 하지 않습니다. 정책/공급자 설정 전에는 발송하지 않습니다.
 
-release는 별도 compose.translation.yaml overlay와 profile translation으로 실행합니다. 기존 release compose만 쓰면 worker/정책 mount는 추가되지 않습니다. 운영자는 PPE_AUTO_TRANSLATION_POLICY_FILE 및 기존 API digest·DB·공급자 환경을 준비하고 `docker compose -f compose.release.yaml -f compose.translation.yaml --profile translation up -d api translation-worker`를 사용합니다. schema36 적용은 정상 검토/배포 순서를 따릅니다. 이 작업에서 해당 운영 명령은 실행하지 않습니다.
+Compose overlay와 native worker는 **별도로 관리하는 opt-in 후보**입니다. `deploy/Release.ps1`은 compose.release.yaml과 Caddyfile만 release 디렉터리에 복사하며, 일반 업그레이드/rollback에 compose.translation.yaml 또는 translation-worker를 포함하지 않습니다. overlay를 준비했다는 사실이 기존 배포 도구에 통합됐거나 운영 준비가 검증됐다는 뜻은 아닙니다.
+
+별도 운영자가 overlay 경로와 PPE_AUTO_TRANSLATION_POLICY_FILE, **기존 배포와 같은 project-name/env-file, API 이미지 digest와 DB/schema36**을 명시적으로 맞춰야 합니다. 예시 형식은 `docker compose --project-name <기존-project> --env-file <기존-env> -f <배포-compose.release.yaml> -f <별도-compose.translation.yaml> --profile translation up -d api translation-worker`입니다. 각 꺾쇠 항목은 실제 경로/이름으로 대체해야 합니다. 다른 project로 실행해 서비스/DB를 중복 생성하거나, 이미지/정책을 일반 Release.ps1 rollback과 독립적으로 방치하지 않아야 합니다. worker 시작·중단·버전 변경·rollback은 이 후보를 사용하는 운영자의 별도 관리 대상입니다. 이 구현은 release-script를 변경하거나 운영 명령/활성화를 실행하지 않습니다. 실제 runtime 결합 검증은 격리 native worker로 수행하며 일반 배포 lifecycle 통합은 별도 범위입니다.
 
 DB의 schema advisory lock(PG)/write lock(SQLite)이 큐·한도·claim을 직렬화합니다. queued→dispatched와 총/UTC일별 요청 수·누적 원문 문자 수를 **외부 I/O 이전 commit**합니다. 고유 claim token/120초 deadline이 있으며 다른 프로세스가 재claim하지 않습니다. 원문/검증목록/현재 검토 게시본도 발송 전에 재확인합니다. 큐에 있는 동안 수동 게시가 생기면 호출/한도 소비 없이 제외합니다. 발송 후 수동 게시가 생기면 비용을 취소할 수 없지만 조회는 수동이 우선합니다.
 
@@ -87,3 +89,4 @@ python -W ignore -X utf8 -m unittest backend.tests.test_auto_translation backend
 - 신규 실제 CLI 검사3프로세스가 같은 DB의 API 생성 작업에 접근하고, mock 공급자 발송 로그1줄과 quota1회/ready를 확인했습니다. API는 FastAPI TestClient이며 네트워크 API/브라우저 결합은 별도 독립 검증 범위입니다.
 - Compose overlay `docker compose ... config --quiet`, 변경 Python compile, git diff --check 통과입니다. Compose 서비스를 실행한 결과는 아닙니다.
 - 로그는 전용 worktree의 무시되는 `.private_media/translation-validation/sqlite-final.log`, `postgres-final.log`입니다. 전용 PG의 test schema 잔여0개를 확인했습니다. 최초 PG 실행은 기존 이관 fixture의 final35 고정값 때문에1실패했고 LATEST_VERSION으로 수정한 후 위 최종 실행이 통과했습니다.
+- 제품 커밋 a3061167b2471776777b919e2f328d2a5ecdd7c3의 CI43688148159는6job 모두 성공했습니다. backend783회 중772통과/11skip, PG783회 중770통과/13skip이며 각 job의 inference343회 중272통과/71skip입니다. 영상 환경 관련 skip을 실제 영상 전체 검증 완료로 해석하지 않습니다. 이후 runbook 보완은 문서만 변경하며 위 제품 검사 기준을 유지합니다.
