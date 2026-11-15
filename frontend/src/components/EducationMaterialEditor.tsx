@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ConfirmButton from './ConfirmButton';
 import {
   MATERIAL_ERRORS,
@@ -16,7 +16,6 @@ import type {
   GenerationStatus,
 } from '../api/materials';
 import { ApiError } from '../api/client';
-import { isEducationScopeConflictStatus } from '../api/schema31Contracts';
 import { formatSeoul } from '../time';
 import styles from './EducationMaterialEditor.module.css';
 
@@ -67,6 +66,18 @@ export default function EducationMaterialEditor({
   const [checklist, setChecklist] = useState(draft?.checklist ?? '');
   const loadRequest = useRef(0);
   const scopeConflictRequest = useRef(0);
+  const draftRevision = useRef(0);
+  const [conflict, setConflict] = useState<EducationMaterial | null>(null);
+  const [reviewRequired, setReviewRequired] = useState<string | null>(null);
+  const locked = busy || generating;
+  const editingId = editing && editing !== 'new' ? editing.material_id : null;
+
+  // A response belongs to the draft that submitted it, including across unmounts.
+  useEffect(() => () => { ++draftRevision.current; }, []);
+
+  const isScopeConflict = (e: unknown) => e instanceof ApiError &&
+    ((e.status === 409 && e.message === 'education_recommendation_changed') ||
+      (e.status === 404 && e.message === 'recommendation_not_found'));
 
   const fail = (e: Error) => setError(MATERIAL_ERRORS[e.message] ?? e.message);
 
@@ -100,10 +111,36 @@ export default function EducationMaterialEditor({
     }
   };
 
+  const refreshMaterialAfterConflict = async (materialId: string) => {
+    const revision = draftRevision.current;
+    setReviewRequired(materialId);
+    setError('다른 관리자가 자료를 변경했습니다. 입력을 보존했습니다. 최신 서버본을 확인한 뒤 명시적으로 선택하세요.');
+    try {
+      const result = await load();
+      if (revision !== draftRevision.current) return;
+      const latest = result.items.find((item) => item.material_id === materialId);
+      setConflict(latest ?? null);
+      if (!latest) setError('최신 자료를 목록에서 찾지 못했습니다. 입력은 보존됩니다. 다시 조회하거나 다른 자료를 선택하세요.');
+    } catch {
+      // Keep saving blocked until the latest version can be reviewed.
+      if (revision === draftRevision.current) setError('최신 자료 조회에 실패했습니다. 입력을 보존했습니다. 다시 조회하세요.');
+    }
+  };
+
+  const handleMutationError = (e: unknown, materialId?: string) => {
+    if (e instanceof ApiError && e.status === 409 && materialId &&
+      ['education_material_version_conflict', 'published_material_read_only',
+        'education_material_not_draft', 'education_material_not_published'].includes(e.message)) {
+      return refreshMaterialAfterConflict(materialId);
+    }
+    if (isScopeConflict(e)) return refreshAfterScopeConflict();
+    fail(e instanceof Error ? e : new Error(String(e)));
+  };
+
   const toggle = () => {
     const next = !open;
     setOpen(next);
-    if (next && !items) void load();
+    if (next && !items) void load().catch(() => {});
     if (next && !generation)
       fetchGenerationStatus()
         .then(setGeneration)
@@ -112,13 +149,14 @@ export default function EducationMaterialEditor({
 
   // Drafts only; the admin still edits, checks the facts and approves before workers see it
   const generate = () => {
+    if (locked) return;
     setGenerating(true);
     setError(null);
     generateMaterial(recommendationId, structuredClone(scope))
       .then(() => load())
       .catch((e: unknown) => {
-        if (e instanceof ApiError && isEducationScopeConflictStatus(e.status)) {
-          void refreshAfterScopeConflict();
+        if (isScopeConflict(e)) {
+          return refreshAfterScopeConflict();
         } else {
           fail(e instanceof Error ? e : new Error(String(e)));
         }
@@ -127,6 +165,10 @@ export default function EducationMaterialEditor({
   };
 
   const startEdit = (m: EducationMaterial | 'new') => {
+    if (locked) return;
+    ++draftRevision.current;
+    setConflict(null);
+    setReviewRequired(null);
     const nextScope = structuredClone(scope);
     const nextTitle = m === 'new' ? '' : m.title;
     const nextBody = m === 'new' ? '' : m.body;
@@ -149,7 +191,8 @@ export default function EducationMaterialEditor({
   const updateDraft = (
     patch: Partial<Pick<EducationMaterialDraft, 'title' | 'body' | 'checklist'>>,
   ) => {
-    if (!editing) return;
+    if (!editing || locked) return;
+    ++draftRevision.current;
     onDraftChange?.({
       editing,
       editingScope: editingScope ?? structuredClone(scope),
@@ -172,7 +215,8 @@ export default function EducationMaterialEditor({
     title.trim() && body.trim() && checklist.split('\n').some((l) => l.trim());
 
   const save = () => {
-    if (!editing) return;
+    if (!editing || locked || (reviewRequired && reviewRequired === editingId) || !valid) return;
+    const revision = draftRevision.current;
     setBusy(true);
     setError(null);
     const request =
@@ -185,43 +229,42 @@ export default function EducationMaterialEditor({
         : updateMaterial(editing.material_id, content(), editing.version);
     request
       .then(() => {
-        setEditing(null);
-        onDraftChange?.(null);
+        if (revision === draftRevision.current) {
+          setEditing(null);
+          onDraftChange?.(null);
+        }
         return load();
       })
       .catch((e: unknown) => {
-        if (e instanceof ApiError && isEducationScopeConflictStatus(e.status)) {
-          // Keep the editor mounted and its draft fields untouched. A stale
-          // recommendation is never retried against a newly selected ID.
-          void refreshAfterScopeConflict();
-        } else {
-          fail(e instanceof Error ? e : new Error(String(e)));
-        }
+        if (revision !== draftRevision.current) return;
+        return handleMutationError(e, editing === 'new' ? undefined : editing.material_id);
       })
       .finally(() => setBusy(false));
   };
 
   const publish = (m: EducationMaterial) => {
+    if (locked || editingId === m.material_id || reviewRequired === m.material_id) return;
     setBusy(true);
     setError(null);
     publishMaterial(m.material_id, m.version)
       .then(() => load())
-      .catch(fail)
+      .catch((e: unknown) => handleMutationError(e, m.material_id))
       .finally(() => setBusy(false));
   };
 
   const unpublish = (m: EducationMaterial) => {
+    if (locked || editingId === m.material_id || reviewRequired === m.material_id) return;
     setBusy(true);
     setError(null);
     unpublishMaterial(m.material_id, m.version)
       .then(() => load())
-      .catch(fail)
+      .catch((e: unknown) => handleMutationError(e, m.material_id))
       .finally(() => setBusy(false));
   };
 
   return (
     <div className={styles.wrap}>
-      <button type="button" className={styles.toggle} onClick={toggle}>
+      <button type="button" className={styles.toggle} disabled={locked} onClick={toggle}>
         {open ? '교육 자료 닫기' : '교육 자료 작성·게시'}
       </button>
 
@@ -232,6 +275,47 @@ export default function EducationMaterialEditor({
             관리자가 직접 확인합니다.
           </p>
           {error && <p className={styles.error}>⚠ {error}</p>}
+          {reviewRequired && (
+            <div className={styles.preview} role="alert">
+              {conflict ? (
+                <>
+                  <strong>최신 서버본 · v{conflict.version} · {STATUS_LABEL[conflict.status]}</strong>
+                  <p>{conflict.title}</p>
+                  <p className={styles.bodyText}>{conflict.body}</p>
+                  <ul>{conflict.checklist.map((item, index) => <li key={index}>{item}</li>)}</ul>
+                  {editingId === conflict.material_id ? (
+                    <>
+                      <button type="button" disabled={locked || conflict.status !== 'draft'} onClick={() => startEdit(conflict)}>
+                        최신 서버본으로 다시 시작
+                      </button>
+                      <button type="button" disabled={locked || conflict.status !== 'draft'} onClick={() => {
+                        ++draftRevision.current;
+                        setEditing(conflict);
+                        onDraftChange?.({ editing: conflict, editingScope: editingScope ?? structuredClone(scope), title, body, checklist });
+                        setConflict(null);
+                        setReviewRequired(null);
+                        setError(null);
+                      }}>
+                        내 입력을 유지하고 최신 버전 선택
+                      </button>
+                      {conflict.status !== 'draft' && <p>현재 서버본은 수정할 수 없습니다. 입력을 복사하거나 다른 초안을 선택하세요.</p>}
+                    </>
+                  ) : (
+                    <button type="button" disabled={locked} onClick={() => {
+                      setConflict(null);
+                      setReviewRequired(null);
+                      setError(null);
+                    }}>최신 자료 확인 완료</button>
+                  )}
+                </>
+              ) : (
+                <button type="button" disabled={locked} onClick={() => {
+                  setBusy(true);
+                  void refreshMaterialAfterConflict(reviewRequired).finally(() => setBusy(false));
+                }}>최신 자료 다시 조회</button>
+              )}
+            </div>
+          )}
           {!items && !error && <p className={styles.help}>불러오는 중...</p>}
 
           {items?.map((m) => (
@@ -267,17 +351,17 @@ export default function EducationMaterialEditor({
                     label="게시 취소"
                     question="작업자에게 더 이상 보이지 않고 초안으로 돌아갑니다. 이전에 교체된 자료는 복구되지 않습니다."
                     confirmLabel="게시 취소"
-                    disabled={busy}
+                    disabled={locked || editingId === m.material_id || reviewRequired === m.material_id}
                     onConfirm={() => unpublish(m)}
                   />
                 </div>
               )}
-              {m.status === 'draft' && editing !== m && (
+              {m.status === 'draft' && editingId !== m.material_id && (
                 <div className={styles.actions}>
                   <button
                     type="button"
                     className={styles.btn}
-                    disabled={busy}
+                    disabled={locked}
                     onClick={() => startEdit(m)}
                   >
                     수정
@@ -288,7 +372,7 @@ export default function EducationMaterialEditor({
                     question="게시하면 작업자에게 바로 보이고, 같은 구역의 이전 자료는 교체됩니다."
                     confirmLabel="게시"
                     danger={false}
-                    disabled={busy}
+                    disabled={locked || reviewRequired === m.material_id}
                     onConfirm={() => publish(m)}
                   />
                 </div>
@@ -304,6 +388,7 @@ export default function EducationMaterialEditor({
               <label className={styles.field}>
                 제목
                 <input
+                  disabled={locked}
                   className={styles.input}
                   value={title}
                   maxLength={200}
@@ -316,6 +401,7 @@ export default function EducationMaterialEditor({
               <label className={styles.field}>
                 본문
                 <textarea
+                  disabled={locked}
                   className={styles.input}
                   rows={5}
                   value={body}
@@ -329,6 +415,7 @@ export default function EducationMaterialEditor({
               <label className={styles.field}>
                 확인 목록 (한 줄에 하나)
                 <textarea
+                  disabled={locked}
                   className={styles.input}
                   rows={4}
                   value={checklist}
@@ -342,8 +429,12 @@ export default function EducationMaterialEditor({
                 <button
                   type="button"
                   className={styles.btn}
+                  disabled={locked}
                   onClick={() => {
+                    ++draftRevision.current;
                     setEditing(null);
+                    setConflict(null);
+                    setReviewRequired(null);
                     onDraftChange?.(null);
                   }}
                 >
@@ -352,7 +443,7 @@ export default function EducationMaterialEditor({
                 <button
                   type="button"
                   className={styles.primary}
-                  disabled={busy || !valid}
+                  disabled={locked || !valid || Boolean(reviewRequired && reviewRequired === editingId)}
                   onClick={save}
                 >
                   {editing === 'new' ? '초안 저장' : '수정 저장'}
@@ -364,6 +455,7 @@ export default function EducationMaterialEditor({
               <button
                 type="button"
                 className={styles.btn}
+                disabled={locked}
                 onClick={() => startEdit('new')}
               >
                 + 새 초안 작성

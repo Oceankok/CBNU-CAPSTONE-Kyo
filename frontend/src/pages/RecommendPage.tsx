@@ -13,7 +13,7 @@ import { isLatestRequest } from '../api/schema31Contracts';
 import { refreshAfterScopeConflict as refreshLatestAfterScopeConflict } from '../api/schema31Interactions';
 import EducationMaterialEditor from '../components/EducationMaterialEditor';
 import type { EducationMaterialDraft } from '../components/EducationMaterialEditor';
-import { retainBundleSelection } from '../api/educationBundleEditorContracts';
+import { fetchEducationBundleTargets, type EducationBundleTargets } from '../api/educationBundles';
 import EducationBundleEditor from '../components/EducationBundleEditor';
 import type { EducationMaterialScope } from '../api/materials';
 import type { LayoutContext } from '../components/AppLayout';
@@ -42,31 +42,16 @@ function RecommendCard({
   draft,
   onDraftChange,
   onScopeConflict,
-  selected,
-  selectionDisabled,
-  onSelectionChange,
 }: {
   item: EducationRecommendation;
   quarter: string;
   draft?: EducationMaterialDraft;
   onDraftChange: (draft: EducationMaterialDraft | null) => void;
   onScopeConflict: (scope: EducationMaterialScope) => void;
-  selected: boolean;
-  selectionDisabled: boolean;
-  onSelectionChange: (checked: boolean) => void;
 }) {
   const rankColor = RANK_COLORS[item.recommendation_rank - 1] ?? '#718096';
   return (
     <div className={styles.card}>
-      <label className={styles.selectRow}>
-        <input
-          type="checkbox"
-          checked={selected}
-          disabled={selectionDisabled}
-          onChange={(event) => onSelectionChange(event.target.checked)}
-        />
-        <span>통합 교육자료에 포함</span>
-      </label>
       <div className={styles.cardHeader}>
         <span className={styles.rank} style={{ background: rankColor }}>
           {item.recommendation_rank}순위
@@ -159,6 +144,48 @@ export default function RecommendPage() {
   const selectedIds = selection.ids;
   const recommendationRequest = useRef(0);
   const latestRecommendationRequest = useRef(0);
+  const [targets, setTargets] = useState<EducationBundleTargets | null>(null);
+  const [pendingTargets, setPendingTargets] = useState<EducationBundleTargets | null>(null);
+  const [pendingRecommendations, setPendingRecommendations] = useState<EducationRecommendationList | null>(null);
+  const [targetsError, setTargetsError] = useState<string | null>(null);
+  const [targetsLoading, setTargetsLoading] = useState(true);
+  const targetRequest = useRef(0);
+
+  const readTargets = async (regenerate: boolean) => {
+    const request = ++targetRequest.current;
+    setTargetsLoading(true);
+    setTargetsError(null);
+    try {
+      const recommendations = regenerate ? await generateRecommendations(quarter) : null;
+      if (request !== targetRequest.current) return;
+      const next = await fetchEducationBundleTargets(quarter);
+      if (request !== targetRequest.current) return;
+      setPendingRecommendations(recommendations);
+      // Never replace a selected pool or a preview silently after a refresh.
+      if (targets || selectedIds.length || regenerate) setPendingTargets(next);
+      else setTargets(next);
+    } catch (e) {
+      if (request === targetRequest.current) setTargetsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (request === targetRequest.current) setTargetsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const targetEpoch = targetRequest;
+    const latestEpoch = latestRecommendationRequest;
+    const request = ++targetRequest.current;
+    fetchEducationBundleTargets(quarter)
+      .then(next => { if (request === targetRequest.current) setTargets(next); })
+      .catch((e: unknown) => {
+        if (request === targetRequest.current) setTargetsError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => { if (request === targetRequest.current) setTargetsLoading(false); });
+    return () => {
+      ++targetEpoch.current;
+      ++latestEpoch.current;
+    };
+  }, [quarter]);
 
   const storeDraft = (recommendationId: string, draft: EducationMaterialDraft | null) => {
     setDrafts((current) => {
@@ -197,14 +224,15 @@ export default function RecommendPage() {
     );
     // Even unchanged IDs can represent new source data after the explicit refresh.
     setSelection(current => ({
-      ids: retainBundleSelection(current.ids, next.items),
+      ids: current.ids,
       revision: current.revision + 1,
     }));
     setLatest(null);
     setError(null);
   };
 
-  const selectedPpe = data?.items.find((item) => selectedIds.includes(item.recommendation_id))?.ppe_type;
+  const selectedPpe = targets?.items.find((item) => selectedIds.includes(item.recommendation_id))?.ppe_type;
+  const selectedZones = new Set(targets?.items.filter(item => selectedIds.includes(item.recommendation_id)).map(item => item.zone_name));
   const toggleSelection = (recommendationId: string, checked: boolean) => {
     setSelection(current => {
       if (checked === current.ids.includes(recommendationId)) return current;
@@ -220,6 +248,7 @@ export default function RecommendPage() {
 
   // AppLayout remounts this page when the quarter changes, so this runs once per quarter
   useEffect(() => {
+    const epoch = recommendationRequest;
     const request = ++recommendationRequest.current;
     const noData = `${quarter}에는 추천을 만들 확정 위반 기록이 아직 없습니다.`;
     fetchRecommendations(quarter)
@@ -236,7 +265,21 @@ export default function RecommendPage() {
         }
         return generateRecommendations(quarter)
           .then((next) => {
-            if (isLatestRequest(request, recommendationRequest.current)) setData(next);
+            if (!isLatestRequest(request, recommendationRequest.current)) return;
+            setData(next);
+            // A newly generated quarter now has a complete saved selection pool.
+            const targetRead = ++targetRequest.current;
+            return fetchEducationBundleTargets(quarter)
+              .then(result => {
+                if (targetRead === targetRequest.current) {
+                  setTargets(result);
+                  setTargetsError(null);
+                }
+              })
+              .catch((e: unknown) => {
+                if (targetRead === targetRequest.current) setTargetsError(e instanceof Error ? e.message : String(e));
+              })
+              .finally(() => { if (targetRead === targetRequest.current) setTargetsLoading(false); });
           })
           .catch((ge) => {
             if (!isLatestRequest(request, recommendationRequest.current)) return;
@@ -253,6 +296,7 @@ export default function RecommendPage() {
       .finally(() => {
         if (isLatestRequest(request, recommendationRequest.current)) setLoading(false);
       });
+    return () => { ++epoch.current; };
   }, [quarter]);
 
   return (
@@ -297,9 +341,39 @@ export default function RecommendPage() {
         </section>
       )}
 
-      {data && (
+      <section className={styles.card} aria-label="통합 교육 대상 선택">
+        <strong>통합 교육 대상 선택 · 같은 PPE의 서로 다른 2~20개 구역</strong>
+        <p className={styles.desc}>상위 3개 추천과 별도로 전체 저장 대상에서 선택합니다. 이전에 생성된 추천은 일부 구역만 포함할 수 있습니다. 전체 대상을 확보하려면 추천을 명시적으로 갱신하세요.</p>
+        <div>
+          <button type="button" className={styles.reselect} disabled={targetsLoading || loading} onClick={() => void readTargets(true)}>추천·전체 대상 갱신</button>
+          <button type="button" className={styles.reselect} disabled={targetsLoading || loading} onClick={() => void readTargets(false)}>저장된 대상 다시 조회</button>
+        </div>
+        {targetsLoading && <p>통합 대상을 불러오는 중...</p>}
+        {targetsError && <p role="alert">통합 대상 조회·갱신 실패: {targetsError}. 기존 선택과 입력은 유지됩니다. 다시 조회하거나 명시적으로 갱신하세요.</p>}
+        {pendingTargets && <div className={styles.notice}>
+          <p>최신 통합 대상 {pendingTargets.items.length}개를 조회했습니다. 적용하면 구역을 다시 선택하고 미리보기를 확인해야 합니다. 작성 중인 내용은 보존됩니다.</p>
+          <button type="button" className={styles.reselect} disabled={targetsLoading} onClick={() => {
+            setTargets(pendingTargets);
+            setPendingTargets(null);
+            setSelection(current => ({ ids: [], revision: current.revision + 1 }));
+            if (pendingRecommendations) setData(pendingRecommendations);
+            setPendingRecommendations(null);
+          }}>최신 대상 적용·구역 다시 선택</button>
+        </div>}
+        {targets && <p className={styles.desc}>저장된 대상 {targets.items.length}개 · {targets.generated_at ?? '생성 기록 없음'}</p>}
+        {targets?.items.length === 0 && <p>저장된 통합 대상이 없습니다. 필요한 경우 추천·전체 대상 갱신을 실행하세요.</p>}
+        {targets?.items.map(item => <label key={item.recommendation_id} className={styles.selectRow}>
+          <input type="checkbox" checked={selectedIds.includes(item.recommendation_id)} disabled={
+            loading || targetsLoading || Boolean(pendingTargets) || (!selectedIds.includes(item.recommendation_id) &&
+              (selectedIds.length >= 20 || Boolean(selectedPpe && item.ppe_type !== selectedPpe) || selectedZones.has(item.zone_name)))
+          } onChange={event => toggleSelection(item.recommendation_id, event.target.checked)} />
+          <span>{item.zone_name} · {PPE_LABEL[item.ppe_type] ?? item.ppe_type} · {item.education_topic} · {item.priority_score.toFixed(1)}점</span>
+        </label>)}
+      </section>
+
+      {(data || targets) && (
         <EducationBundleEditor
-          quarter={data.quarter}
+          quarter={quarter}
           recommendationIds={selectedIds}
           selectionRevision={selection.revision}
         />
@@ -315,12 +389,6 @@ export default function RecommendPage() {
                 draft={drafts[item.recommendation_id]}
                 onDraftChange={(draft) => storeDraft(item.recommendation_id, draft)}
                 onScopeConflict={(scope) => void refreshRecommendationsAfterConflict(scope)}
-                selected={selectedIds.includes(item.recommendation_id)}
-                selectionDisabled={
-                  (!selectedIds.includes(item.recommendation_id) && selectedIds.length >= 20) ||
-                  Boolean(selectedPpe && item.ppe_type !== selectedPpe)
-                }
-                onSelectionChange={(checked) => toggleSelection(item.recommendation_id, checked)}
               />
           ))}
         </div>

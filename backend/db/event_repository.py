@@ -955,10 +955,19 @@ def get_education_recommendations(quarter: str) -> dict:
         return _read_education_recommendations(conn, quarter)
 
 
-def _read_education_recommendations(conn, quarter: str) -> dict:
+def get_education_bundle_targets(quarter: str) -> dict:
+    """Read all cached, named-zone targets; never regenerate on a GET."""
+    _get_quarter_date_range(quarter)
+    with get_connection() as conn:
+        result = _read_education_recommendations(conn, quarter, all_targets=True)
+    result["items"] = [item for item in result["items"] if item["zone_name"]]
+    return result
+
+
+def _read_education_recommendations(conn, quarter: str, *, all_targets: bool = False) -> dict:
     """Materialize rankings before the generating transaction is committed."""
     rows = conn.execute(
-        """
+        f"""
         SELECT
             recommendation_id,
             recommendation_rank,
@@ -974,7 +983,8 @@ def _read_education_recommendations(conn, quarter: str) -> dict:
             score_version
         FROM education_recommendation
         WHERE quarter = ?
-        ORDER BY recommendation_rank ASC;
+        ORDER BY recommendation_rank ASC, recommendation_id ASC
+        {'' if all_targets else 'LIMIT 3'};
         """,
         (quarter,),
     ).fetchall()
@@ -1403,7 +1413,7 @@ def _replace_education_recommendations(conn, quarter: str) -> None:
 
     # Education-only meaning: this PPE's share of all confirmed events in
     # this same quarter and frozen event zone. Build denominators from the
-    # exact same source rows, before applying the top-three ranking limit.
+    # exact same source rows. Top-three is a read/display limit, not a target limit.
     zone_totals = {}
     for row in rows:
         zone_totals[row["zone_name"]] = zone_totals.get(row["zone_name"], 0) + row["confirmed_count"]
@@ -1439,7 +1449,7 @@ def _replace_education_recommendations(conn, quarter: str) -> None:
     )
 
     from backend.education.identity import recommendation_id as semantic_recommendation_id
-    for rank, item in enumerate(scored_items[:3], start=1):
+    for rank, item in enumerate(scored_items, start=1):
         topic = _get_education_topic(item["ppe_type"], item["zone_name"])
         recommendation_id = semantic_recommendation_id(quarter, item["zone_name"], item["ppe_type"], topic)
 

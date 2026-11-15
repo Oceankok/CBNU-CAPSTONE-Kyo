@@ -12,6 +12,11 @@
 
 ## 관리자 API
 
+통합 선택 목록은 `GET /api/education/bundles/targets?quarter=2026-Q1`을 사용합니다.
+관리자 전용이며 `{quarter, generated_at, items}`의 `items`는 저장된 전체 구역/PPE 대상 중 빈 구역명을 제외한 목록입니다.
+기존 추천 GET/생성 응답은 상위 3개를 유지합니다. 과거 3개 캐시는 명시적인 추천 갱신 후 전체 대상을 조회해야 합니다.
+GET은 자동 생성하지 않습니다. 상세 계약·보존 정책은 [G1 전체 대상 계약](20261115_Education_Bundle_Targets.md)을 따릅니다.
+
 모든 경로에 기존 관리자 인증 필요. `POST /api/education/bundles/preview`:
 
 ```json

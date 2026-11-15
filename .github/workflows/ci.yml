@@ -106,9 +106,21 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - name: Install Chromium for education browser checks
+        run: npx playwright install --with-deps chromium
       - name: Lint
         run: npm run lint
       - name: Unit checks
         run: npm test
+      - name: Education browser regression checks (isolated HTTP mocks)
+        run: npm run test:education:browser
+      - name: Upload education browser results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: education-browser-results
+          path: frontend/test-results/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Type check and build
         run: npm run build

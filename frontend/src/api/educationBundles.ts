@@ -3,6 +3,7 @@ import { MOCK_AUTH } from './auth';
 import type {
   EducationBundle,
   EducationBundleSource,
+  EducationRecommendationList,
   WorkerEducationBundle,
 } from '../types';
 import {
@@ -94,6 +95,13 @@ export function fetchEducationBundles(
   return apiFetch(
     `/api/education/bundles?quarter=${encodeURIComponent(quarter)}&limit=${limit}&offset=${offset}`,
   );
+}
+
+// Full selection pool; the recommendation cards intentionally remain top three.
+export type EducationBundleTargets = Omit<EducationRecommendationList, 'generated_at'> & { generated_at: string | null };
+
+export function fetchEducationBundleTargets(quarter: string): Promise<EducationBundleTargets> {
+  return apiFetch(`/api/education/bundles/targets?quarter=${encodeURIComponent(quarter)}`);
 }
 
 export function fetchEducationBundle(bundleId: string): Promise<EducationBundle> {
