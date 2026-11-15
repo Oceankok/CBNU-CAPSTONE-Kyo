@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-LATEST_VERSION = 35
+LATEST_VERSION = 36
 
 
 def _now() -> str:
@@ -579,6 +579,20 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
             if 'revision_nonce' not in {row[1] for row in conn.execute('PRAGMA table_info(zone_rule)')}:
                 conn.execute("ALTER TABLE zone_rule ADD COLUMN revision_nonce TEXT NOT NULL DEFAULT ''")
             conn.execute('PRAGMA user_version=35')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+    if version < 36:
+        from pathlib import Path
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            script = (Path(__file__).resolve().parents[1] / 'education' / 'auto_translation_schema.sql').read_text(encoding='utf-8')
+            for statement in script.split(';'):
+                if statement.strip(): conn.execute(statement)
+            conn.execute('PRAGMA user_version=36')
             conn.commit()
         except Exception:
             conn.rollback()

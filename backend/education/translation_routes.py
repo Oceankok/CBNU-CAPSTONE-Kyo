@@ -1,15 +1,38 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from backend.auth.service import require_admin
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from backend.auth.service import require_admin, current_user
 from backend.education.models import MaterialApproval, MaterialContent, MaterialVersion
-from backend.education.translation_models import TranslationCreate, TranslationUpdate, TranslationGenerate
+from backend.education.translation_models import TranslationCreate, TranslationUpdate, TranslationGenerate, WorkerTranslationRequest
 from backend.education import translations as service
 
 router=APIRouter(prefix='/api/education',tags=['education translations'],dependencies=[Depends(require_admin)])
+worker_router = APIRouter(prefix='/api/worker/education-translations', tags=['worker'])
+
+
+@worker_router.post('/request', status_code=202)
+def request_translation(body: WorkerTranslationRequest, response: Response, user=Depends(current_user)):
+    if user['role'] != 'worker':
+        raise HTTPException(403, 'Worker access required')
+    from backend.education.auto_translation import request
+    from backend.education.languages import protect_worker_response
+    protect_worker_response(response)
+    return request(user['user_id'], body)
 
 @router.get('/translation-generation')
 def availability():
     from backend.education.translation_provider import availability
     return availability()
+
+
+@router.get('/materials/{material_id}/automatic-translations')
+def material_auto_cache(material_id: str, source_version: int = Query(ge=0)):
+    from backend.education.auto_translation import admin_cached
+    return admin_cached('material', material_id, source_version)
+
+
+@router.get('/bundles/{bundle_id}/automatic-translations')
+def bundle_auto_cache(bundle_id: str, source_version: int = Query(ge=0)):
+    from backend.education.auto_translation import admin_cached
+    return admin_cached('bundle', bundle_id, source_version)
 
 @router.get('/materials/{material_id}/translations')
 def list_translations(material_id: str, limit: int=Query(50,ge=1,le=100), offset: int=Query(0,ge=0)):

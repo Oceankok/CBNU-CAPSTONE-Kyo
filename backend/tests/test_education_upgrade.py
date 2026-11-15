@@ -31,7 +31,7 @@ class EducationUpgradeTests(unittest.TestCase):
         for _ in range(2):
             init_database()
             with get_connection() as conn:
-                self.assertEqual(schema_version(conn), 35)
+                self.assertEqual(schema_version(conn), LATEST_VERSION)
                 self.assertEqual(self._snapshot(conn, tables), before)
                 migrated = self._snapshot(conn, ('zone_rule',))['zone_rule']
                 self.assertTrue(all(z.pop('revision_nonce') == '' for z in migrated))

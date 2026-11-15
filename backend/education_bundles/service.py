@@ -193,13 +193,14 @@ def for_worker(user_id, language="ko"):
                 (s['quarter'],s['zone_name'],s['ppe_type'],s['education_topic'])).fetchone()]
             if not matching:
                 continue
-            from backend.education.translations import published_content
-            translated = published_content(conn, row['bundle_id'], row['version'], language, kind='bundle') if language != 'ko' else None
+            from backend.education.auto_translation import selection, content as source_content
+            translated, metadata = selection(conn, 'bundle', row, language)
             content = translated if translated is not None else row
             result.append({'bundle_id': row['bundle_id'], 'quarter': row['quarter'], 'ppe_type': row['ppe_type'],
                            'assigned_zones': [s['zone_name'] for s in matching], 'title': content['title'],
                            'body': content['body'], 'checklist': json.loads(content['checklist_json']),
                            'language': translated['language'] if translated is not None else 'ko',
-                           'requested_language': requested(language), 'translation_fallback': (translated['language'] if translated is not None else 'ko') != requested(language)})
+                           'requested_language': requested(language), 'translation_fallback': (translated['language'] if translated is not None else 'ko') != requested(language),
+                           'translation': metadata, 'original': source_content(row)})
         return result
     return run_stats_transaction(operation)

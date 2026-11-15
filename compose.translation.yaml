@@ -1,0 +1,32 @@
+# Explicit release-stack opt-in only; not loaded by default.
+# Combine with compose.release.yaml --profile translation. All values are operator-owned.
+services:
+  api:
+    environment:
+      PPE_AUTO_TRANSLATION_POLICY: /run/translation-policy.json
+      PPE_EDUCATION_TRANSLATION_PROVIDER: ${PPE_EDUCATION_TRANSLATION_PROVIDER:-}
+      PPE_EDUCATION_TRANSLATION_MODEL: ${PPE_EDUCATION_TRANSLATION_MODEL:-}
+      PPE_EDUCATION_TRANSLATION_OPENAI_API_KEY: ${PPE_EDUCATION_TRANSLATION_OPENAI_API_KEY:-}
+    volumes:
+      - ${PPE_AUTO_TRANSLATION_POLICY_FILE:?Set verified policy file}:/run/translation-policy.json:ro
+  translation-worker:
+    image: ${PPE_API_IMAGE:?Set a published API digest}
+    profiles: [translation]
+    command: [python, -m, backend.education.auto_translation]
+    restart: unless-stopped
+    environment:
+      PPE_DATABASE_URL: ${PPE_DATABASE_URL:?Set PostgreSQL URL}
+      PPE_AUTO_TRANSLATION_POLICY: /run/translation-policy.json
+      PPE_EDUCATION_TRANSLATION_PROVIDER: ${PPE_EDUCATION_TRANSLATION_PROVIDER:-}
+      PPE_EDUCATION_TRANSLATION_MODEL: ${PPE_EDUCATION_TRANSLATION_MODEL:-}
+      PPE_EDUCATION_TRANSLATION_OPENAI_API_KEY: ${PPE_EDUCATION_TRANSLATION_OPENAI_API_KEY:-}
+    volumes:
+      - ${PPE_AUTO_TRANSLATION_POLICY_FILE:?Set verified policy file}:/run/translation-policy.json:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    init: true

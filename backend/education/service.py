@@ -159,21 +159,25 @@ def unpublish(material_id, actor, expected_version):
     return result
 
 
-def published_for(conn, quarter, zone_name, ppe_type, topic, language="ko", *, include_language=False):
-    row = conn.execute('''SELECT material_id,version,title,body,checklist_json FROM education_material
+def published_for(conn, quarter, zone_name, ppe_type, topic, language="ko", *, include_language=False, include_translation=False):
+    row = conn.execute('''SELECT * FROM education_material
         WHERE quarter=? AND zone_name=? AND ppe_type=? AND education_topic=? AND status='published' ''',
         (quarter, zone_name, ppe_type, topic)).fetchone()
     if not row:
+        if include_translation:
+            return None, None, None, None
         return (None, None) if include_language else None
+    from backend.education.auto_translation import selection, content
+    original = content(row)
+    translated, metadata = selection(conn, 'material', row, language)
     actual_language = 'ko'
     heading = '확인 목록\n'
-    if language != 'ko':
-        from backend.education.translations import published_content
-        translated = published_content(conn, row['material_id'], row['version'], language)
-        if translated is not None:
-            actual_language = translated['language']
-            row = translated
-            heading = ''
+    if translated is not None:
+        actual_language = translated['language']
+        row = translated
+        heading = ''
     checklist = '\n'.join('- ' + item for item in json.loads(row['checklist_json']))
     material = row['title'] + '\n\n' + row['body'] + '\n\n' + heading + checklist
+    if include_translation:
+        return material, actual_language, metadata, original
     return (material, actual_language) if include_language else material
