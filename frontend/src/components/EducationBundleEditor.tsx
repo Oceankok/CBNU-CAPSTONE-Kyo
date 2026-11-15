@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ConfirmButton from './ConfirmButton';
+import EducationTranslationEditor from './EducationTranslationEditor';
 import {
   bundleErrorMessage,
   createEducationBundle,
@@ -448,6 +449,7 @@ export default function EducationBundleEditor({
                   }}>최신 자료 다시 조회</button>}
                 </div>
               )}
+              <EducationTranslationEditor kind="bundle" sourceId={bundle.bundle_id} sourceVersion={bundle.version} published={bundle.status === 'published'} disabled={busy} />
             </article>
           ))}
         </div>
