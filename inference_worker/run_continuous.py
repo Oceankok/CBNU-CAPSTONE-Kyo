@@ -27,7 +27,10 @@ from inference_worker.private_chunk_decoder import PrivateChunkDecoder
 
 
 def check_source_progress(mux,*,now,elapsed,max_lag_seconds,waiting_for_first=()):
-    """Bound initial no-frame waiting too; timeout is never an EOS signal."""
+    """Bound first-primary waiting independently of reference progress; never EOS."""
+    if mux.primary not in mux.latest and mux.primary not in mux.ended:
+        if elapsed>=max_lag_seconds:raise SourceMuxError('source_initial_frame_timeout')
+        return
     if mux.latest:mux.check_stall(now=now,max_lag_seconds=max_lag_seconds,waiting_for_first=waiting_for_first)
     elif elapsed>=max_lag_seconds:raise SourceMuxError('source_initial_frame_timeout')
 
