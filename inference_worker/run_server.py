@@ -26,6 +26,7 @@ from inference_worker.video_client import VideoClient
 from inference_worker.video_decoder import decode_mp4
 from inference_worker.ppe_rules import assess_helmets, assess_ppe
 from inference_worker.person_tracker import PersonTracker
+from inference_worker.assessment_pipeline import detect_assess
 from inference_worker.violation_tracker import ViolationTracker
 from inference_worker.policy import helmet_policy_status, ppe_policy_status
 from inference_worker.work_area_policy import resolve_person_policy
@@ -111,6 +112,8 @@ def pump_event_saves(client, outbox):
     # A single attempt per due request. The durable queue owns backoff.
     for event_id, outcome in outbox.pump(lambda event: _submit_event(client, event)):
         print(f'[EVENT SAVE] event={event_id} outcome={outcome}')
+    for event_id,outcome in outbox.pump_clip_reports(client):
+        print(f'[CLIP DISPOSITION] event={event_id} outcome={outcome}')
 
 
 def report_incomplete_clip(client, event):
@@ -245,8 +248,8 @@ def main():
     if args.submit_events and getattr(detector, "supports_no_helmet", None) is False:
         parser.error("Event submission requires person/helmet/no_helmet classes; "
                      "select verified local weights with --model-path")
-    if args.submit_review_candidates and getattr(detector, "supports_no_helmet", None) is not False:
-        parser.error("Review-only mode requires an identified 3-class model (no no_helmet class)")
+    assessment_mode = ("review" if args.submit_review_candidates or
+                       getattr(detector,"supports_no_helmet",None) is False else "verified_helmet")
     client = VideoClient()
     priority = InferenceLoad(client)
     clips = tempfile.TemporaryDirectory(prefix="ppe_inference_")
@@ -300,6 +303,9 @@ def main():
                         tracker, violations = reset_tracking()
                         last_frame_timestamp = None
                         clip_buffer = new_clip_buffer()
+                        if outbox is not None:
+                            outbox.unavailable_clips('source_or_policy_reset',
+                                [j['event']['event_id'] for j in pending_clips.pending if j.get('event')])
                         pending_clips = PendingClips()
                         stream_id = None
                         previous_chunk = None
@@ -340,6 +346,9 @@ def main():
                     tracker, violations = reset_tracking()
                     last_frame_timestamp = None
                     clip_buffer = new_clip_buffer()
+                    if outbox is not None:
+                        outbox.unavailable_clips('source_or_policy_reset',
+                            [j['event']['event_id'] for j in pending_clips.pending if j.get('event')])
                     pending_clips = PendingClips()
                     previous_chunk = None
                     previous_policy = policy_signature
@@ -349,6 +358,9 @@ def main():
                     tracker, violations = reset_tracking()
                     last_frame_timestamp = None
                     clip_buffer = new_clip_buffer()
+                    if outbox is not None:
+                        outbox.unavailable_clips('source_or_policy_reset',
+                            [j['event']['event_id'] for j in pending_clips.pending if j.get('event')])
                     pending_clips = PendingClips()
                     previous_chunk = None
                     print(f"[POLICY SKIP] reason={reason}")
@@ -372,6 +384,9 @@ def main():
                     tracker, violations = reset_tracking()
                     last_frame_timestamp = None
                     clip_buffer = new_clip_buffer()
+                    if outbox is not None:
+                        outbox.unavailable_clips('source_or_policy_reset',
+                            [j['event']['event_id'] for j in pending_clips.pending if j.get('event')])
                     pending_clips = PendingClips()
 
                     print(f"[STREAM] {stream_id}")
@@ -380,6 +395,13 @@ def main():
                 chunks = client.list_chunks(stream_id, last_sequence)
 
                 if not chunks:
+                    final=selected.get("final_sequence")
+                    if (selected.get("capture_stopped") is True and type(final) is int
+                            and final==last_sequence and pending_clips.pending):
+                        if outbox is not None:
+                            outbox.unavailable_clips("source_ended_before_postroll",
+                                [j["event"]["event_id"] for j in pending_clips.pending if j.get("event")])
+                        pending_clips=PendingClips()
                     time.sleep(args.poll)
                     continue
 
@@ -409,6 +431,9 @@ def main():
                             tracker, violations = reset_tracking()
                             last_frame_timestamp = None
                             clip_buffer = new_clip_buffer()
+                            if outbox is not None:
+                                outbox.unavailable_clips('source_or_policy_reset',
+                                    [j['event']['event_id'] for j in pending_clips.pending if j.get('event')])
                             pending_clips = PendingClips()
                             print("[RESET] Chunk discontinuity")
 
@@ -421,6 +446,9 @@ def main():
                         tracker, violations = reset_tracking()
                         last_frame_timestamp = None
                         clip_buffer = new_clip_buffer()
+                        if outbox is not None:
+                            outbox.unavailable_clips('source_or_policy_reset',
+                                [j['event']['event_id'] for j in pending_clips.pending if j.get('event')])
                         pending_clips = PendingClips()
                         previous_chunk = None
                         last_sequence = sequence
@@ -482,7 +510,8 @@ def main():
                                 incomplete_clip_count += 1
                                 print(f"[CLIP INCOMPLETE] track={job['tracking_id']} ")
                                 if job.get("event"):
-                                    report_incomplete_clip(client, job["event"])
+                                    outbox.unavailable_clips("observation_clip_incomplete",[job["event"]["event_id"]])
+                                    outbox.pump_clip_reports(client)
                                 selected.clear()
                                 continue
 
@@ -501,17 +530,20 @@ def main():
                                     priority.release()
                                     result = submit_event_with_clip(client, job["event"], clip_path)
                                     outbox.acknowledge(job["event"]["event_id"])
+                                    outbox.finish_clip(job["event"]["event_id"])
                                     label = "REVIEW CANDIDATE DELIVERED" if job["event"].get("review_only") else "EVENT DELIVERED"
                                     print(f"[{label}] {result['event_id']}")
                                 else:
                                     print("[LOCAL CLIP READY] temporary clip validated")
                             except ClipDeliveryError as error:
+                                outbox.unavailable_clips("clip_delivery_unconfirmed",[job["event"]["event_id"]])
                                 print(f"[EVENT DELIVERY FAILED] event={job['event']['event_id']} reason={error}")
                             except httpx.HTTPError as error:
                                 status = error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
                                 if status is not None and status not in (429, 500, 502, 503, 504):
                                     raise
                                 outbox.enqueue(job['event'])
+                                outbox.unavailable_clips('clip_delivery_unconfirmed',[job['event']['event_id']])
                                 print(f"[CLIP DELIVERY UNCONFIRMED] event={job['event']['event_id']}")
                             finally:
                                 clip_path.unlink(missing_ok=True)
@@ -519,14 +551,8 @@ def main():
 
                         # Uploads release the lease; reacquire before GPU inference.
                         priority.refresh()
-                        detections = detector.detect(frame)
-
-                        # Person-level PPE assessment and tracking.
                         assessments = tracker.update(
-                            assess_ppe(detections, frame.shape, getattr(detector, "supported_ppe", ("helmet", "vest")))
-                            if getattr(detector, "supports_no_helmet", None) is False
-                            else assess_helmets(detections), timestamp.timestamp()
-                        )
+                            detect_assess(detector, frame, mode=assessment_mode), timestamp.timestamp())
                         # Apply PPE requirements for each person's *current* ROI.
                         # The ViolationTracker uses policy_scope_key to prevent carrying
                         # a 3-second observation across area/policy changes.
@@ -626,6 +652,7 @@ def main():
                                 # Register the sustained observation now; post-roll is
                                 # uploaded later under the same idempotent event ID.
                                 outbox.enqueue(event)
+                                outbox.arm_clip(event['event_id'])
                                 ready_count += 1
                                 pending_clips.add(candidate, args.camera_id, event=event)
                                 print(f"[REVIEW CANDIDATE READY] {event['event_id']}")
@@ -661,6 +688,7 @@ def main():
 
                             if args.submit_events:
                                 outbox.enqueue(event)
+                                outbox.arm_clip(event['event_id'])
                             ready_count += 1
 
                             pending_clips.add(candidate, args.camera_id, event=event)
@@ -712,7 +740,9 @@ def main():
         try:
             if outbox is not None:
                 try:
-                    print(f"[EVENT OUTBOX] retained={outbox.counts()}")
+                    outbox.unavailable_clips("runner_stopped_before_clip")
+                    pump_event_saves(client,outbox)
+                    print(f"[EVENT OUTBOX] retained={outbox.counts()} clips={outbox.clip_counts()}")
                 finally:
                     outbox.close()
         finally:
@@ -741,4 +771,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    result = main()
+    raise SystemExit(result if isinstance(result, int) else 0)

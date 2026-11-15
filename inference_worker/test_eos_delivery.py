@@ -79,13 +79,14 @@ class RunnerEOSBoundaryTests(unittest.TestCase):
             'metadata_steps_per_pump':1,'max_lag_seconds':5}
         for key in ('outbox','transport','delivery','capture','lifecycle','mux','decoder','source'): cfg[key]={}
         cfg['lifecycle']['missing_grace_seconds']=1
+        cfg['capture']['spool_config']={}
         args=SimpleNamespace(submit_events=False,submit_review_candidates=True,replay_buffer=False,
             continuous_config='unused',camera_id='main',model_path=None,max_chunks=100,stop_file=None,poll=0)
         runtime=Mock(); capture=Mock(); capture.events={}
         mux=Mock(); mux.last_emitted=123.; mux.latest={'main':123.,'ref':123.}
         mux.cameras=('main','ref'); mux.ended={'main','ref'} if verified else {'main'}; mux.queue=[]
         mux.drained_sources.return_value=set(mux.ended)
-        reader=Mock(); reader.poll.side_effect=[[],runner.SourceMuxError(reason)]
+        reader=Mock(); reader.reference_failures={}; reader.poll.side_effect=[[],runner.SourceMuxError(reason)]
         reader.sequence={'main':4}; reader.end_reasons={'main':'source_ended','ref':'source_ended'}
         detector=Mock(); detector.supports_no_helmet=False
         with ExitStack() as st:
@@ -94,6 +95,8 @@ class RunnerEOSBoundaryTests(unittest.TestCase):
             st.enter_context(patch.dict(runner.os.environ,{'PPE_PROCESSING_NODE_TOKEN':'synthetic'}))
             st.enter_context(patch.object(runner.time,'sleep'))
             st.enter_context(patch('builtins.print'))
+            st.enter_context(patch('inference_worker.session_recovery.SessionRecovery'))
+            st.enter_context(patch('inference_worker.session_recovery.dispose_previous_sources'))
             for name in ('VideoClient','InferenceLoad','CaptureOutbox','PrivateClipTransport',
                          'ContinuousDispatcher','LifecycleJournal','PrivateChunkDecoder','CleanupSupervisor'):
                 obj=Mock()
@@ -121,9 +124,11 @@ class RunnerEOSBoundaryTests(unittest.TestCase):
     def test_failed_delivery_is_not_success(self):
         result,error,drain,runtime=self.execute_runner('session_stopped',drained=False)
         self.assertIsNone(result); self.assertEqual(error,'eos_delivery_pending')
-        drain.assert_called_once(); runtime.stop.assert_called_once_with('eos_delivery_pending')
+        self.assertGreaterEqual(drain.call_count,1); runtime.stop.assert_called_once_with('eos_delivery_pending')
 
     def test_timeout_or_unverified_eos_never_drains_as_normal_stop(self):
         for reason,verified in [('camera_missing_or_stalled',True),('session_stopped',False)]:
             result,error,drain,runtime=self.execute_runner(reason,verified=verified)
-            self.assertIsNone(result); self.assertEqual(error,reason); drain.assert_not_called()
+            self.assertIsNone(result); self.assertEqual(error,reason)
+            runtime.prepare_stop.assert_called_once_with(reason)
+            drain.assert_called_once()

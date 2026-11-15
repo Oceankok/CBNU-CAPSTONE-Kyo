@@ -3,10 +3,11 @@
 Requires a fully specified local JSON configuration; no operating grace, clock,
 retention or memory defaults are invented here. Never enables automatic judgment.
 """
-import json,math,os,time,inspect
+import json,math,os,time,inspect,sys
 from pathlib import Path
 from inference_worker.video_client import VideoClient
 from inference_worker.person_tracker import PersonTracker
+from inference_worker.assessment_pipeline import detect_assess
 from inference_worker.ppe_rules import assess_ppe,assess_helmets
 from inference_worker.work_area_policy import resolve_person_policy
 from inference_worker.policy import ppe_policy_status
@@ -25,10 +26,20 @@ from inference_worker.cleanup_supervisor import CleanupSupervisor
 from inference_worker.private_chunk_decoder import PrivateChunkDecoder
 
 
-def check_source_progress(mux,*,now,elapsed,max_lag_seconds):
+def check_source_progress(mux,*,now,elapsed,max_lag_seconds,waiting_for_first=()):
     """Bound initial no-frame waiting too; timeout is never an EOS signal."""
-    if mux.latest:mux.check_stall(now=now,max_lag_seconds=max_lag_seconds)
+    if mux.latest:mux.check_stall(now=now,max_lag_seconds=max_lag_seconds,waiting_for_first=waiting_for_first)
     elif elapsed>=max_lag_seconds:raise SourceMuxError('source_initial_frame_timeout')
+
+
+def poll_source(reader,mux,*,now,elapsed,max_lag_seconds):
+    """Runner ordering: expire reference grace before checking the mux."""
+    reader.expire_reference_stalls(now=now,max_lag_seconds=max_lag_seconds)
+    batch=reader.poll()
+    if not batch:
+        check_source_progress(mux,now=now,elapsed=elapsed,max_lag_seconds=max_lag_seconds,
+                              waiting_for_first=reader.waiting_first_references())
+    return batch
 
 
 def policy_assessments(rows,policy,shape,*,review_only):
@@ -56,15 +67,20 @@ def read_config(path,primary,*,now):
               'lifecycle','source','decoder','metadata_steps_per_pump','max_lag_seconds'}
     if not isinstance(config,dict) or set(config)!=required:raise ValueError('continuous config keys must be explicit')
     clocks=config['clocks']
-    if not isinstance(clocks,dict) or primary not in clocks or len(clocks)<2:
-        raise ValueError('primary and reference clock snapshot required')
+    if not isinstance(clocks,dict) or primary not in clocks or len(clocks)<1:
+        raise ValueError('primary clock snapshot required')
     for camera,row in clocks.items():
         if (not isinstance(camera,str) or not camera or set(row)!=
                 {'offset','error_bound','verified','epoch','valid_until'} or row['verified'] is not True
                 or not isinstance(row['epoch'],str) or not row['epoch']
                 or parse_capture_time(row['valid_until']).timestamp()<=now
+                or any(isinstance(row[k],bool) or not isinstance(row[k],(int,float)) for k in ('offset','error_bound'))
                 or not math.isfinite(row['offset']) or not math.isfinite(row['error_bound']) or row['error_bound']<0):
             raise ValueError('explicit current camera calibration required')
+    if len({row['epoch'] for row in clocks.values()})!=1:
+        raise ValueError('camera timestamps require a shared declared epoch')
+    if type(config['metadata_steps_per_pump']) is not int or config['metadata_steps_per_pump']<=0:
+        raise ValueError('explicit metadata dispatch budget required')
     directory=Path(config['state_directory'])
     if not directory.is_absolute():raise ValueError('absolute private state directory required')
     if not math.isfinite(config['max_lag_seconds']) or config['max_lag_seconds']<=0:
@@ -97,18 +113,25 @@ def run(args):
     from inference_worker.run_server import create_detector
     detector=create_detector(args.model_path) if args.model_path is not None else create_detector()
     review=args.submit_review_candidates
-    if (review and getattr(detector,'supports_no_helmet',None) is not False) or (
-            args.submit_events and getattr(detector,'supports_no_helmet',None) is False):
+    if args.submit_events and getattr(detector,'supports_no_helmet',None) is False:
         raise ValueError('submission mode does not match existing detector capability')
     client=VideoClient();priority=InferenceLoad(client)
     box=transport=dispatcher=capture=runtime=mux=decoder=None
-    stop_reason='runner_stopped_or_failed'
+    stop_reason='runner_stopped_or_failed';tail_done=False
     try:
         state=Path(config['state_directory']);clocks=config['clocks'];ids=list(clocks)
         box=CaptureOutbox(state/'journal',private_root=state/'raw',**config['outbox'])
         transport=PrivateClipTransport(server_url=client.server_url,token=os.environ['PPE_PROCESSING_NODE_TOKEN'],
             private_root=state/'raw',**config['transport'])
         dispatcher=ContinuousDispatcher(box,transport,enabled=True,**config['delivery'])
+        from inference_worker.session_recovery import SessionRecovery,dispose_previous_sources
+        box.bind_runtime({'endpoint':client.server_url,'primary':args.camera_id,
+            'clocks':clocks,'model_version':detector.model_version,
+            'assessment_mode':'review' if review else 'verified_helmet',
+            'detector_contract':getattr(detector,'contract_manifest',None)})
+        SessionRecovery(box,dispatcher,endpoint=client.server_url).run()
+        dispose_previous_sources(box,spool_config=config['capture']['spool_config'],
+                                 verified_receipt=dispatcher.cleanup_receipt_verified)
         capture=MultiCameraCapture(state/'raw',cameras={c:CameraClock(r['offset'],r['error_bound'],True) for c,r in clocks.items()},**config['capture'])
         lifecycle_config={
             'rewear_seconds':getattr(args,'rewear_seconds',0.5),
@@ -121,7 +144,8 @@ def run(args):
         mux=SourceMux(camera_ids=ids,primary_camera=args.camera_id,
             clock_error_by_camera={c:r['error_bound'] for c,r in clocks.items()},**config['mux'])
         decoder=PrivateChunkDecoder(box,**config['decoder'])
-        reader=ContinuousSourceReader(client,mux,decoder=decoder,offsets={c:r['offset'] for c,r in clocks.items()},**config['source'])
+        reader=ContinuousSourceReader(client,mux,decoder=decoder,offsets={c:r['offset'] for c,r in clocks.items()},
+            **{**config['source'],'degrade_references':True})
         tracker=PersonTracker(max_missing_seconds=max(lifecycle_config['missing_grace_seconds'],0.1));policy_signature=None;processed=0;primary_sequence=None
         source_started=time.monotonic()
         while processed<args.max_chunks and not(args.stop_file and args.stop_file.exists()):
@@ -134,7 +158,9 @@ def run(args):
                 raise ValueError('policy changed; fresh capture session required')
             policy_signature=signature
             try:
-                batch=reader.poll()
+                batch=poll_source(reader,mux,now=now,elapsed=time.monotonic()-source_started,
+                                  max_lag_seconds=config['max_lag_seconds'])
+                for metadata in reader.reference_failures.values():box.record_reference_failure(metadata)
             except SourceMuxError as error:
                 if (str(error) not in ('session_stopped','primary_source_ended')
                         or set(mux.ended)!=set(mux.cameras) or mux.queue):
@@ -146,7 +172,7 @@ def run(args):
                 print(json.dumps({'continuous_delivery_tail':result},sort_keys=True))
                 if result['state']!='drained':
                     raise SourceMuxError('eos_delivery_pending')
-                stop_reason=str(error)
+                stop_reason=str(error);tail_done=True
                 return result
             journal.bind_capture_context(reader.primary_capture_context())
             remaining={c:sum(1 for row in batch if row[0]==c) for c in ids}
@@ -156,9 +182,9 @@ def run(args):
             for camera,timestamp,frame in batch:
                 assessments=None
                 if camera==args.camera_id:
-                    priority.refresh();detections=detector.detect(frame)
-                    rows=tracker.update(assess_ppe(detections,frame.shape,getattr(detector,'supported_ppe',('helmet','vest')))
-                        if review else assess_helmets(detections), timestamp)
+                    priority.refresh()
+                    rows=tracker.update(detect_assess(detector,frame,
+                        mode="review" if review else "verified_helmet"),timestamp)
                     assessments=policy_assessments(rows,policy,frame.shape,review_only=review)
                 runtime.frame(camera,timestamp,frame,assessments=assessments)
                 remaining[camera]-=1
@@ -176,9 +202,8 @@ def run(args):
                 if primary_sequence is not None:processed+=1
                 primary_sequence=current
             if not had_frames:
-                check_source_progress(mux,now=now,elapsed=time.monotonic()-source_started,
-                                      max_lag_seconds=config['max_lag_seconds'])
                 time.sleep(args.poll)
+        stop_reason='operator_stop' if args.stop_file and args.stop_file.exists() else 'chunk_limit_reached'
     except SourceMuxError as error:
         stop_reason=str(error)
         if isinstance(error,SourceUnavailableError) and box:
@@ -188,6 +213,16 @@ def run(args):
     finally:
         # Attempt every cleanup even if one disk/decoder operation fails.
         cleanup_error=None
+        original_failure=sys.exc_info()[0] is not None
+        if runtime and not tail_done:
+            try:
+                runtime.prepare_stop(stop_reason)
+                from inference_worker.eos_delivery import drain_delivery
+                result=drain_delivery(runtime)
+                print(json.dumps({'continuous_shutdown_tail':result},sort_keys=True))
+                if result['state']!='drained':
+                    cleanup_error=SourceMuxError('shutdown_delivery_pending')
+            except Exception as error:cleanup_error=error
         callbacks=[]
         if runtime:callbacks.append(lambda:runtime.stop(stop_reason))
         elif capture:callbacks.append(capture.close)
@@ -202,4 +237,4 @@ def run(args):
             try:cleanup()
             except Exception as error:
                 if cleanup_error is None:cleanup_error=error
-        if cleanup_error is not None:raise cleanup_error
+        if cleanup_error is not None and not original_failure:raise cleanup_error

@@ -1,0 +1,51 @@
+{
+  "date": "2026-11-15",
+  "branch": "feat/inference-completion-20261115",
+  "base": "33c39ae6bd22c3d6669dcf4cb4a5b7fa9fdc968a",
+  "implementation_checkpoint": "f02dfa5",
+  "backend_dependency": "92b079b89fd5cc3140f0b96f3f06beb425818360",
+  "backend_local_merge": "c32cef5",
+  "automatic_confirmation_enabled": false,
+  "remote_push": false,
+  "new_gpu_replay": false,
+  "production_changed": false,
+  "validation": {
+    "inference_suite": {
+      "tests": 451,
+      "seconds": 67.65,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 3,
+      "postgresql": true,
+      "ffmpeg": true,
+      "log": ".private_media/completion-evidence/final-full-pg-inference.log"
+    },
+    "consumer_api_recovery": {
+      "tests": 6,
+      "seconds": 20.222,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "postgresql": true,
+      "transport": "TestClient/ASGI bridge",
+      "log": ".private_media/completion-evidence/final-recovery-api-pg.log"
+    }
+  },
+  "skip_reason": "Windows WinError1314 symlink capability only; Linux security verification remains",
+  "limitations": [
+    "new weights not available or verified",
+    "no new live camera/UI/e2e acceptance",
+    "identity not restored across process restart",
+    "uncertain identities not automatically merged",
+    "old-model false positives/misses/delays remain historical limitations",
+    "protected/conflicting/unmapped source recovery remains manual fail-closed"
+  ],
+  "resource_release": {
+    "database": "kyo_test_inference_completion_20261115",
+    "remaining_test_schemas": 0,
+    "public_table_count": 0,
+    "other_connections": 0,
+    "matching_test_processes": 0,
+    "cluster_stopped": false
+  }
+}

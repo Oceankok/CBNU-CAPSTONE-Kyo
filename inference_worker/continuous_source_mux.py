@@ -39,7 +39,7 @@ class SourceMux:
         self.primary=primary_camera;self.max_bytes=max_bytes;self.max_frames=max_frames
         self.max_pixels=max_frame_pixels;self.errors=dict(clock_error_by_camera)
         self.queue=[];self.latest={};self.bytes=0;self.serial=0;self.failure=None
-        self.last_emitted=None;self.ended=set()
+        self.last_emitted=None;self.ended=set();self.failed_sources={}
 
     @locked
     def push(self,camera,timestamp,frame):
@@ -77,10 +77,15 @@ class SourceMux:
         return result
 
     @locked
-    def check_stall(self,*,now,max_lag_seconds):
+    def check_stall(self,*,now,max_lag_seconds,waiting_for_first=()):
         if not math.isfinite(now) or not math.isfinite(max_lag_seconds) or max_lag_seconds<=0:
             raise ValueError('stall policy')
-        if any(c not in self.latest or now-self.latest[c]>max_lag_seconds for c in self.cameras if c not in self.ended):
+        waiting=set(waiting_for_first)
+        if self.primary in waiting or not waiting.issubset(self.cameras):
+            raise ValueError("first-frame grace can only cover configured references")
+        if any((c not in self.latest and c not in waiting) or
+               (c in self.latest and now-self.latest[c]>max_lag_seconds)
+               for c in self.cameras if c not in self.ended):
             self.failure='camera_missing_or_stalled';raise SourceMuxError(self.failure)
 
     @locked
@@ -89,6 +94,20 @@ class SourceMux:
         if self.failure:raise SourceMuxError(self.failure)
         if camera not in self.cameras:raise ValueError('unexpected camera')
         self.ended.add(camera)
+
+    @locked
+    def fail_reference(self,camera,reason):
+        """A failure removes a watermark dependency, never grants clean EOS."""
+        if camera==self.primary or camera not in self.cameras:
+            raise ValueError("reference failure owner")
+        if self.failure not in (None,"camera_clock_regression"):
+            raise SourceMuxError(self.failure)
+        self.failure=None
+        self.failed_sources[camera]=reason
+        self.ended.add(camera)
+        self.queue=[row for row in self.queue if row[3]!=camera]
+        heapq.heapify(self.queue)
+        self.bytes=sum(row[4].nbytes for row in self.queue)
 
     @locked
     def drained_sources(self):

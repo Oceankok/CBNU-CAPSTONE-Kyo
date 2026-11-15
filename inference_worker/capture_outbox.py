@@ -83,6 +83,16 @@ class CaptureOutbox:
                 raise OutboxError('existing database exceeds capacity')
             self.db.execute(f'PRAGMA max_page_count={pages}')
             self.db.executescript('''
+                CREATE TABLE IF NOT EXISTS runtime_bindings(
+                  session TEXT PRIMARY KEY,metadata TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS retired_requests(
+                  event TEXT NOT NULL,seq INTEGER NOT NULL,reason TEXT NOT NULL,receipt TEXT NOT NULL,
+                  PRIMARY KEY(event,seq));
+                CREATE TABLE IF NOT EXISTS recovery_states(
+                  event TEXT PRIMARY KEY,state TEXT NOT NULL,reason TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS reference_failures(
+                  session TEXT NOT NULL,camera TEXT NOT NULL,metadata TEXT NOT NULL,
+                  PRIMARY KEY(session,camera));
                 CREATE TABLE IF NOT EXISTS source_failures(
                   session TEXT PRIMARY KEY, metadata TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS spool_dispositions(
@@ -148,7 +158,7 @@ class CaptureOutbox:
                     self.db.execute('INSERT INTO lifecycle_heads VALUES(?,0)',(event,))
                     continue
                 row=self._event(event)
-                if (row['state']!='active' and not (row['state']=='incomplete' and (kind=='pending_close' or (kind=='progress' and op.get('final_progress') is True)))) or row['session']!=self.session:
+                if (row['state']!='active' and not (row['state']=='incomplete' and kind in ('pending_close','progress'))) or row['session']!=self.session:
                     raise OutboxError('inactive lifecycle session')
                 head=self.db.execute('SELECT api_seq FROM lifecycle_heads WHERE event=?',(event,)).fetchone()
                 if head is None or op['api_sequence']!=head['api_seq']+1:
@@ -158,7 +168,7 @@ class CaptureOutbox:
                 if kind == 'progress':
                     self.enqueue(event, seq=row['next_seq'], kind='progress',
                                  idempotency_key=op['idempotency_key'], body=op['body'],
-                                 _lifecycle_final_progress=op.get('final_progress') is True)
+                                 _lifecycle_final_progress=(op.get('final_progress') is True or row['state']=='incomplete'))
                     self.db.execute('UPDATE lifecycle_heads SET api_seq=? WHERE event=?',(op['api_sequence'],event))
                 elif kind == 'pending_close':
                     encoded=_json(op['transition']).encode()
@@ -228,7 +238,7 @@ class CaptureOutbox:
 
     def _room(self):
         count=sum(self.db.execute('SELECT count(*) FROM '+table).fetchone()[0]
-                  for table in ('events','requests','segments','captures','orphans','lifecycle_heads','pending_closes','spool_dispositions','source_failures'))
+                  for table in ('events','requests','segments','captures','orphans','lifecycle_heads','pending_closes','spool_dispositions','source_failures','reference_failures','runtime_bindings','retired_requests','recovery_states'))
         if count>=self.limit: raise OutboxError('journal record capacity')
 
     def _event(self,event):
@@ -260,9 +270,11 @@ class CaptureOutbox:
     def _incomplete_capture_open(self,row,*,camera=None):
         if row['state']!='incomplete' or row['session']!=self.session:
             return False
-        intent=self.db.execute("SELECT 1 FROM pending_closes WHERE event=? AND session=? AND state='pending'",
+        intent=self.db.execute("SELECT state FROM pending_closes WHERE event=? AND session=?",
                                (row['id'],self.session)).fetchone()
-        if not intent:return False
+        if intent is not None and intent['state']!='pending':return False
+        if intent is None and not self.db.execute("SELECT 1 FROM lifecycle_heads WHERE event=?",(row['id'],)).fetchone():
+            return False
         sql="SELECT 1 FROM captures WHERE event=? AND state='active'"
         params=[row['id']]
         if camera is not None:
@@ -305,10 +317,10 @@ class CaptureOutbox:
     def pending(self):
         self.reconcile()
         # One unacknowledged head per event prevents delivery out of order.
-        rows=self.db.execute('''SELECT r.* FROM requests r WHERE ack IS NULL
+        rows=self.db.execute('''SELECT r.* FROM requests r WHERE ack IS NULL AND NOT EXISTS (SELECT 1 FROM retired_requests t WHERE t.event=r.event AND t.seq=r.seq)
           AND NOT (r.kind='close' AND EXISTS (SELECT 1 FROM events e WHERE e.id=r.event AND e.state!='closed'))
           AND NOT EXISTS
-          (SELECT 1 FROM requests p WHERE p.event=r.event AND p.seq<r.seq AND p.ack IS NULL)
+          (SELECT 1 FROM requests p WHERE p.event=r.event AND p.seq<r.seq AND p.ack IS NULL AND NOT EXISTS (SELECT 1 FROM retired_requests t WHERE t.event=p.event AND t.seq=p.seq))
           ORDER BY event,seq''').fetchall()
         return [dict(row) for row in rows]
 
@@ -316,7 +328,8 @@ class CaptureOutbox:
         """Requires remote-state reconciliation, never rewrite or blindly retry."""
         return [dict(row) for row in self.db.execute("""SELECT r.*,e.reason AS block_reason
           FROM requests r JOIN events e ON e.id=r.event
-          WHERE r.ack IS NULL AND r.kind='close' AND e.state!='closed'""")]
+          WHERE r.ack IS NULL AND r.kind='close' AND e.state!='closed'
+          AND NOT EXISTS (SELECT 1 FROM retired_requests t WHERE t.event=r.event AND t.seq=r.seq)""")]
 
     def acknowledge(self,event,seq,*,receipt):
         encoded=_json(receipt)
@@ -325,7 +338,7 @@ class CaptureOutbox:
             row=self.db.execute('SELECT ack FROM requests WHERE event=? AND seq=?',(event,seq)).fetchone()
             if row is None: raise OutboxError('unknown request')
             if row['ack'] is not None and row['ack']!=encoded: raise OutboxError('receipt conflict')
-            if self.db.execute('SELECT 1 FROM requests WHERE event=? AND seq<? AND ack IS NULL',(event,seq)).fetchone():
+            if self.db.execute('SELECT 1 FROM requests r WHERE event=? AND seq<? AND ack IS NULL AND NOT EXISTS(SELECT 1 FROM retired_requests t WHERE t.event=r.event AND t.seq=r.seq)',(event,seq)).fetchone():
                 raise OutboxError('earlier request unacknowledged')
             self.db.execute('UPDATE requests SET ack=? WHERE event=? AND seq=?',(encoded,event,seq))
 
@@ -514,6 +527,44 @@ class CaptureOutbox:
             path=self._path(row['path'])
             if path.exists(): raise OutboxError('source still present')
             self.db.execute('UPDATE segments SET cleanup=0 WHERE id=?',(segment_id,))
+
+    def bind_runtime(self,metadata):
+        body=_json(metadata)
+        if len(body.encode())>self.body_limit:raise OutboxError("runtime binding size")
+        with self.transaction():
+            self._room()
+            self.db.execute("INSERT INTO runtime_bindings VALUES(?,?)",(self.session,body))
+
+    def recovery_state(self,event,state,reason):
+        with self.transaction():
+            self._room()
+            self.db.execute("INSERT INTO recovery_states VALUES(?,?,?) ON CONFLICT(event) DO UPDATE SET state=excluded.state,reason=excluded.reason",
+                            (event,state,reason))
+
+    def retire_request(self,event,seq,*,reason,receipt):
+        """Retain original bytes forever; explicitly stop delivery with an audit."""
+        body=_json(receipt)
+        if len(body.encode())>self.body_limit:raise OutboxError("retirement receipt size")
+        with self.transaction():
+            if not self.db.execute("SELECT 1 FROM requests WHERE event=? AND seq=?",(event,seq)).fetchone():
+                raise OutboxError("retirement request missing")
+            self._room()
+            self.db.execute("INSERT OR IGNORE INTO retired_requests VALUES(?,?,?,?)",(event,seq,reason,body))
+
+    def unacknowledged_count(self):
+        return self.db.execute("""SELECT count(*) FROM requests r WHERE ack IS NULL
+            AND NOT EXISTS(SELECT 1 FROM retired_requests t WHERE t.event=r.event AND t.seq=r.seq)""").fetchone()[0]
+
+    def record_reference_failure(self,metadata):
+        _key(metadata["camera"])
+        body=_json(metadata)
+        if len(body.encode())>self.body_limit:raise OutboxError("reference failure metadata capacity")
+        with self.transaction():
+            if not self.db.execute("SELECT 1 FROM reference_failures WHERE session=? AND camera=?",
+                                   (self.session,metadata["camera"])).fetchone():
+                self._room()
+                self.db.execute("INSERT INTO reference_failures VALUES(?,?,?)",
+                                (self.session,metadata["camera"],body))
 
     def record_source_failure(self,metadata):
         allowed={'reason','camera','stream','expected_sequence','availability_reason'}

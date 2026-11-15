@@ -5,6 +5,7 @@ This is a candidate-screening heuristic, not definitive PPE compliance.
 """
 
 from inference_worker.event_validation import valid_ppe_confidence
+from inference_worker.detection_contract import DetectionContractError, validate_detections, unknown_people
 
 
 def center_of(bbox):
@@ -28,6 +29,10 @@ def helmet_in_head_region(person_bbox, helmet_bbox):
 
 
 def assess_helmets(detections):
+    try:
+        validate_detections(detections)
+    except DetectionContractError:
+        return unknown_people(detections)
     people = [
         d for d in detections if d["class_name"] == "person"
     ]
@@ -83,6 +88,10 @@ def assess_ppe(detections, frame_shape, supported_ppe=("helmet", "vest")):
     Head visibility is independent of cropped feet. Missing PPE on a cropped
     torso is unknown; a well-localized visible positive can still establish wear.
     """
+    try:
+        validate_detections(detections)
+    except DetectionContractError:
+        return unknown_people(detections)
     from math import isfinite
     import numpy as np
     from scipy.optimize import linear_sum_assignment
