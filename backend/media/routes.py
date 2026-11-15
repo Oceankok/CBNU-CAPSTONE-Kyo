@@ -37,7 +37,8 @@ def list_media(event_id: str):
     if not event:
         raise HTTPException(404, "Event not found")
     return {"items": event["media"], "retention": get_retention(event_id),
-            "review_availability": event["review_availability"], "clip_requests": event["clip_requests"]}
+            "review_availability": event["review_availability"], "clip_requests": event["clip_requests"],
+            "collection": event.get("collection")}
 
 
 class ClipRequestRegistration(BaseModel):

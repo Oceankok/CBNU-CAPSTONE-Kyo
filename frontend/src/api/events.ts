@@ -355,6 +355,33 @@ export interface EventClipRequest {
   error_code?: string;
 }
 
+export interface EvidenceRange {
+  start_at: string;
+  end_at: string;
+}
+
+export interface EventMediaCollection {
+  phase: string;
+  cameras: Array<{
+    camera_id: string;
+    role: string;
+    required_start_at: string;
+    required_end_at: string;
+    capture_report: {
+      state: 'collecting' | 'complete' | 'incomplete';
+      reason?: string | null;
+      captured_ranges: EvidenceRange[];
+      missing_ranges: Array<EvidenceRange & { reason: string }>;
+    } | null;
+  }>;
+  segments: Array<{
+    camera_id: string;
+    request_id: string;
+    capture_start_at: string;
+    capture_end_at: string;
+  }>;
+}
+
 // `fresh` skips the stored copy; use it when polling for a processing state to change
 export function fetchEventMedia(
   eventId: string,
@@ -364,6 +391,7 @@ export function fetchEventMedia(
   retention: EventRetention;
   review_availability?: ReviewAvailability;
   clip_requests?: EventClipRequest[];
+  collection?: EventMediaCollection | null;
 }> {
   return cached(`media:${eventId}`, options.fresh ? 0 : MEDIA_TTL_MS, () =>
     apiFetch(`/api/events/${encodeURIComponent(eventId)}/media`),
