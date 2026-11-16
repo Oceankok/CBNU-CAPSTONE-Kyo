@@ -3,6 +3,7 @@
 The producer's absence heuristic can be wrong. These rules check persistence and
 evidence completeness; shadow comparison with labelled footage remains necessary.
 """
+import json
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -22,6 +23,9 @@ def evaluate(conn, event_id, criteria, diagnostic):
     # Only this explicitly selected rule path accepts absence-only observations.
     # Keep their original review_only provenance and null public confidence.
     reasons = set(diagnostic['blocking_reasons']) - {'review_only', 'verified_confidence_missing'}
+    lifecycle = conn.execute('SELECT start_payload FROM processing_event_lifecycle WHERE event_id=?', (event_id,)).fetchone()
+    if lifecycle and json.loads(lifecycle['start_payload']).get('evidence_mode') == 'manual_review':
+        reasons.add('manual_review_evidence_not_automatic')
     whole = diagnostic['whole_event_evidence']
     if criteria is None:
         reasons.add('explicit_rule_criteria_required')

@@ -151,7 +151,10 @@ class SessionRecovery:
         from inference_worker.continuous_transport import UploadPlan
         parse=lambda value:datetime.fromisoformat(value.replace("Z","+00:00")).timestamp()
         status=self.box.event_status(event)
-        if status["state"]!="closed" or remote["lifecycle"]["phase"]!="closed":return
+        manual=remote['lifecycle'].get('evidence_mode')=='manual_review'
+        if manual:
+            if status['state'] not in ('closed','incomplete') or remote['lifecycle']['phase'] not in ('closed','interrupted'):return
+        elif status["state"]!="closed" or remote["lifecycle"]["phase"]!="closed":return
         for row in self.box.db.execute("SELECT * FROM segments WHERE event=? AND state='present'",(event,)).fetchall():
             matches=[s for s in remote["segments"] if s["camera_id"]==row["camera"]
                      and abs(parse(s["capture_start_at"])-row["start"])<1e-6
@@ -169,6 +172,35 @@ class SessionRecovery:
             if not result or any(state!="accepted_private" for _,state in result):break
         if self.dispatcher.db.execute("SELECT 1 FROM uploads WHERE event=? AND state!='accepted'",(event,)).fetchone():
             raise RecoveryRequired("restart_upload_pending")
+
+    def _manual_manifests(self,event,session,remote):
+        """Register durable partial runs before closing an interrupted manual event."""
+        if remote['lifecycle'].get('evidence_mode')!='manual_review' or remote['lifecycle']['phase']!='open':return remote
+        if self.box.db.execute("SELECT 1 FROM requests WHERE event=? AND kind='manifest' AND ack IS NULL",(event,)).fetchone():
+            raise RecoveryRequired('restart_manifest_pending')
+        wire=lambda t:datetime.fromtimestamp(t,timezone.utc)
+        for camera in remote['cameras']:
+            name=camera['camera_id']
+            present=[s for s in remote['segments'] if s['camera_id']==name]
+            sequence=max((s['sequence'] for s in present),default=-1)+1
+            start=datetime.fromisoformat(camera['required_start_at'].replace('Z','+00:00'))
+            end=datetime.fromisoformat(camera['required_end_at'].replace('Z','+00:00'))
+            for source in self.box.db.execute("SELECT * FROM segments WHERE event=? AND camera=? AND state='present' ORDER BY start",(event,name)).fetchall():
+                if any(abs(datetime.fromisoformat(s['capture_start_at'].replace('Z','+00:00')).timestamp()-source['start'])<1e-6
+                       and abs(datetime.fromisoformat(s['capture_end_at'].replace('Z','+00:00')).timestamp()-source['end'])<1e-6 for s in present):continue
+                if wire(source['start'])<start-timedelta(microseconds=1) or wire(source['end'])>end+timedelta(microseconds=1):
+                    self.box.request_cleanup(source['id'],reason='outside_recovered_event_interval')
+                    continue
+                body=dict(session_id=session,camera_id=name,sequence=sequence,
+                          capture_start_at=_time(source['start']),capture_end_at=_time(source['end']))
+                self.box.enqueue(event,seq=self.box.event_status(event)['next_seq'],kind='manifest',
+                    idempotency_key=f'{event}:restart-manifest:{name}:{sequence}',body=body,
+                    _recovered_manual_manifest=True)
+                sequence+=1
+        self._flush(event)
+        if self.box.db.execute("SELECT 1 FROM requests WHERE event=? AND kind='manifest' AND ack IS NULL",(event,)).fetchone():
+            raise RecoveryRequired('restart_manifest_pending')
+        return self._read(event,session)
 
     def _reports(self,event,session,remote):
         binding=self.box.db.execute("SELECT metadata FROM runtime_bindings WHERE session=?",(session,)).fetchone()
@@ -193,13 +225,22 @@ class SessionRecovery:
             missing=list(old.get("missing_ranges",[])) if old else []
             gap={"start_at":camera["required_start_at"],"end_at":camera["required_end_at"],
                  "reason":"process_restart_evidence_unavailable"}
-            if not complete and gap not in missing:missing.append(gap)
+            if not complete and remote['lifecycle'].get('evidence_mode')=='manual_review' and not old:
+                cursor=datetime.fromisoformat(camera['required_start_at'].replace('Z','+00:00'))
+                end=datetime.fromisoformat(camera['required_end_at'].replace('Z','+00:00'))
+                for captured in available[name][0]:
+                    a=datetime.fromisoformat(captured['start_at'].replace('Z','+00:00'))
+                    b=datetime.fromisoformat(captured['end_at'].replace('Z','+00:00'))
+                    if a>cursor:missing.append(dict(start_at=cursor.isoformat(),end_at=a.isoformat(),reason='process_restart_evidence_unavailable'))
+                    cursor=max(cursor,b)
+                if cursor<end:missing.append(dict(start_at=cursor.isoformat(),end_at=end.isoformat(),reason='process_restart_evidence_unavailable'))
+            elif not complete and gap not in missing:missing.append(gap)
             body=dict(session_id=session,sequence=sequence,state="complete" if complete else "incomplete",
                 captured_ranges=old.get("captured_ranges",[]) if old else available[name][0],missing_ranges=missing,
                 earliest_available_at=old.get("earliest_available_at") if old else (available[name][0][0]["start_at"] if available[name][0] else None),
-                time_basis=old.get("time_basis","source_utc_corrected") if old else "source_utc_corrected",
-                clock_offset_seconds=old.get("clock_offset_seconds",clock["offset"]) if old else clock["offset"],
-                clock_uncertainty_seconds=old.get("clock_uncertainty_seconds",clock["error_bound"]) if old else clock["error_bound"],
+                time_basis=old.get("time_basis","source_utc_corrected") if old else ('source_utc_unverified' if clock.get('verified') is False else 'source_utc_corrected'),
+                clock_offset_seconds=old.get("clock_offset_seconds",clock["offset"]) if old else (None if clock.get('verified') is False else clock['offset']),
+                clock_uncertainty_seconds=old.get("clock_uncertainty_seconds",clock["error_bound"]) if old else (None if clock.get('verified') is False else clock['error_bound']),
                 reason=None if complete else "process_restart_evidence_unavailable")
             self.box.enqueue(event,seq=self.box.event_status(event)["next_seq"],kind="capture_report",
                 idempotency_key=f"{name}:{event}:restart-report:{sequence}",body=body)
@@ -229,6 +270,15 @@ class SessionRecovery:
         if self.box.db.execute("SELECT 1 FROM retired_requests WHERE event=?",(event,)).fetchone():return False
         if self.box.db.execute("SELECT 1 FROM orphans WHERE event=?",(event,)).fetchone():return False
         intent=self.box.db.execute("SELECT * FROM pending_closes WHERE event=?",(event,)).fetchone()
+        if intent is None:
+            # An open manual event interrupted by process death never created
+            # an in-process close intent. Require its original manual start and
+            # acknowledged restart close, then apply ALL custody checks below.
+            original=self.box.db.execute("SELECT body FROM requests WHERE event=? AND kind='start'",(event,)).fetchone()
+            terminal=self.box.db.execute("SELECT body FROM requests WHERE event=? AND kind='incomplete' AND ack IS NOT NULL ORDER BY seq DESC LIMIT 1",(event,)).fetchone()
+            if (not original or not terminal or _decoded(original).get('evidence_mode')!='manual_review'
+                    or _decoded(terminal).get('close_reason')!='process_restart'):return False
+            intent=dict(state='finalized',session=session,next_api_seq=_decoded(terminal)['sequence'])
         if not intent or intent["state"]!="finalized" or intent["session"]!=session:return False
         try:
             cameras=self.box._camera_ids(json.loads(eventrow["snapshot"]))
@@ -290,22 +340,35 @@ class SessionRecovery:
                         or (report["state"]=="complete" and missing[camera])
                         or (report["state"]=="incomplete" and not report.get("reason"))):return False
             manifests=[(b,a) for k,b,a in commands if k=="manifest"]
-            if len(manifests)!=count or [b["sequence"] for b,a in manifests]!=list(range(count)):return False
+            manual=start.get('evidence_mode')=='manual_review'
+            if manual:
+                groups={c:[b['sequence'] for b,a in manifests if b.get('camera_id')==c] for c in cameras}
+                if len(groups[start['camera_id']])!=count:return False
+                if any(v!=list(range(len(v))) for v in groups.values()):return False
+                if any(b.get('camera_id') not in cameras for b,a in manifests):return False
+            elif len(manifests)!=count or [b["sequence"] for b,a in manifests]!=list(range(count)):return False
             bindings={};cursor=required_start
+            cursors={c:required_start for c in cameras}
             for index,(body,ack) in enumerate(manifests):
                 left,right=stamp(body["capture_start_at"]),stamp(body["capture_end_at"])
                 adjacent=abs(left-cursor)<=epsilon if index==0 else left==cursor
-                if not adjacent or right<=left or right>required_end+epsilon:return False
+                targets={body['camera_id']} if manual else set(cameras)
+                if manual:
+                    if left<cursors[body['camera_id']]-epsilon:return False
+                    if complete and abs(left-cursors[body['camera_id']])>epsilon:return False
+                    cursors[body['camera_id']]=right
+                elif not adjacent:return False
+                if right<=left or right>required_end+epsilon:return False
                 cursor=right
-                current=[r for r in ack["segments"] if r["sequence"]==body["sequence"]]
-                if len(current)!=len(cameras) or {r["camera_id"] for r in current}!=set(cameras):return False
+                current=[r for r in ack["segments"] if r["sequence"]==body["sequence"] and r['camera_id'] in targets]
+                if len(current)!=len(targets) or {r["camera_id"] for r in current}!=targets:return False
                 for remote in current:
                     camera=remote["camera_id"];role="clip" if camera==start["camera_id"] else "reference"
                     if (remote["event_id"]!=event or remote["role"]!=role
                             or stamp(remote["capture_start_at"])!=left
                             or stamp(remote["capture_end_at"])!=right):return False
                     bindings[(camera,left,right)]=remote
-            if complete and abs(cursor-required_end)>epsilon:return False
+            if complete and (any(abs(v-required_end)>epsilon for v in cursors.values()) if manual else abs(cursor-required_end)>epsilon):return False
             owners=self.box.db.execute("SELECT * FROM captures WHERE event=?",(event,)).fetchall()
             if len({r["camera"] for r in owners})!=len(owners) or any(r["camera"] not in cameras for r in owners):return False
             if complete and {r["camera"] for r in owners}!=set(cameras):return False
@@ -382,6 +445,7 @@ class SessionRecovery:
                     self._terminal_ambiguities(event,session)
                     self._flush(event)
                     remote=self._read(event,session)
+                    remote=self._manual_manifests(event,session,remote)
                     self._incomplete_open(event,session,remote)
                     self._flush(event)
                     remote=self._read(event,session)

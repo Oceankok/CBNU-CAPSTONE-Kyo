@@ -365,17 +365,24 @@ export interface EventMediaCollection {
   cameras: Array<{
     camera_id: string;
     role: string;
+    evidence_status?: 'ready' | 'partial' | 'processing' | 'redaction_failed' | 'unavailable' | 'awaiting_upload' | 'not_requested';
+    available_ranges?: EvidenceRange[];
+    delivery_errors?: string[];
+    media_errors?: string[];
     required_start_at: string;
     required_end_at: string;
     capture_report: {
       state: 'collecting' | 'complete' | 'incomplete';
       reason?: string | null;
+      time_basis?: 'source_utc_corrected' | 'shared_monotonic' | 'source_utc_unverified';
+      clock_uncertainty_seconds?: number | null;
       captured_ranges: EvidenceRange[];
       missing_ranges: Array<EvidenceRange & { reason: string }>;
     } | null;
   }>;
   segments: Array<{
     camera_id: string;
+    sequence?: number;
     request_id: string;
     capture_start_at: string;
     capture_end_at: string;

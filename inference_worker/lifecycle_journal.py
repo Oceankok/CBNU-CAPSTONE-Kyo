@@ -15,7 +15,8 @@ class LifecycleJournal:
     def __init__(self, outbox, *, camera_id, camera_snapshot, model_version,
                  missing_grace_seconds, threshold_seconds, max_sample_gap_seconds, progress_emit_interval_seconds,
                  rewear_seconds=0.0, qualification_grace_seconds=0.0,
-                 qualification_window_seconds=6.0, capture_output_fps=None):
+                 qualification_window_seconds=6.0, capture_output_fps=None,
+                 review_episode_continuity=False, evidence_mode='verified_continuous'):
         if not isinstance(model_version,str) or not model_version:
             raise ValueError('explicit model version required')
         if (isinstance(progress_emit_interval_seconds,bool) or not isinstance(progress_emit_interval_seconds,(int,float))
@@ -39,6 +40,10 @@ class LifecycleJournal:
         self.api_sequences={}
         self.capture_context_id=None
         self.capture_context_bound=False
+        self.review_episode_continuity=review_episode_continuity
+        if evidence_mode not in ('verified_continuous','manual_review'):
+            raise ValueError('evidence_mode')
+        self.evidence_mode=evidence_mode
 
     def bind_capture_context(self,context_id):
         """Freeze source attribution before processing the first frame.
@@ -66,6 +71,9 @@ class LifecycleJournal:
             if kind=='start':
                 body=start_payload(transition,session_id=self.outbox.session,model_version=self.model_version,
                     capture_context_id=self.capture_context_id,capture_output_fps=self.capture_output_fps)
+                if self.evidence_mode=='manual_review':
+                    if not body['review_only']:raise ValueError('manual review requires unverified observation')
+                    body['evidence_mode']='manual_review'
                 operations.append(dict(kind='start',event_id=event,camera_snapshot=deepcopy(self.snapshot),
                     idempotency_key=event+':start',body=body))
                 sequences[event]=0
@@ -103,6 +111,11 @@ class LifecycleJournal:
 
     def update(self, assessments, timestamp, *, departed_tracking_ids=()):
         candidate=deepcopy(self.lifecycle)
+        if self.review_episode_continuity:
+            from inference_worker.violation_tracker import ViolationTracker
+            adapter=ViolationTracker(preserve_required_episodes=True)
+            adapter.lifecycle=candidate
+            assessments=adapter.prepare_assessments(assessments)
         transitions=candidate.update(assessments,timestamp,departed_tracking_ids=departed_tracking_ids)
         return self._commit(candidate,transitions)
 

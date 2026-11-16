@@ -35,8 +35,13 @@ class ContinuousFrameRuntime:
         if self.closed:raise ValueError('runtime closed')
         # Reader/mux already corrected the timestamp. Capture applies its own
         # immutable offset, so undo it here rather than double-correcting.
-        self.capture.ingest(camera,timestamp-self.capture.cameras[camera].offset,frame)
-        self.media_watermark=timestamp
+        capture_frame=frame
+        if self.capture.manual_review and frame.shape[0]*frame.shape[1]>self.capture.wc['max_frame_pixels']:
+            import cv2
+            ratio=(self.capture.wc['max_frame_pixels']/(frame.shape[0]*frame.shape[1]))**.5
+            capture_frame=cv2.resize(frame,(max(2,int(frame.shape[1]*ratio)//2*2),max(2,int(frame.shape[0]*ratio)//2*2)))
+        self.capture.ingest(camera,timestamp-self.capture.cameras[camera].offset,capture_frame)
+        self.media_watermark=max(timestamp,self.media_watermark) if self.media_watermark is not None else timestamp
         transitions=[]
         if camera==self.journal.lifecycle.camera_id:
             if assessments is None:raise ValueError('primary assessments required')
@@ -101,6 +106,21 @@ class ContinuousFrameRuntime:
         return result
 
     def _partial_manifests(self,event,status):
+        if self.capture.manual_review:
+            rows=self.outbox.db.execute("SELECT body FROM requests WHERE event=? AND kind='manifest' ORDER BY seq",(event,)).fetchall()
+            bodies=[json.loads(row['body']) for row in rows]
+            known={(b['camera_id'],b['capture_start_at'],b['capture_end_at']) for b in bodies}
+            from inference_worker.continuous_payloads import _time
+            counts={camera:sum(b.get('camera_id')==camera for b in bodies) for camera in self.cameras}
+            for camera,segments in self._safe_segments(event,status).items():
+                for segment in segments:
+                    key=(camera,_time(segment.capture_start),_time(segment.capture_end))
+                    if key in known:continue
+                    body=segment_payload(segment,session_id=self.outbox.session,event_sequence=counts[camera])
+                    body['camera_id']=camera
+                    self._enqueue(event,'manifest',event+':manifest:'+camera+':'+str(counts[camera]),body)
+                    counts[camera]+=1;known.add(key)
+            return counts[self.journal.lifecycle.camera_id]
         # Extend only a contiguous prefix. Never fabricate a missing camera file,
         # bridge a source gap, replace an existing manifest or truncate bytes.
         rows=self.outbox.db.execute(
@@ -127,15 +147,21 @@ class ContinuousFrameRuntime:
             if intent['state']!='pending' or event not in self.capture.events:continue
             status=self.capture.status(event)
             if not all(row['done'] for row in status['cameras'].values()):continue
-            if not status['complete'] or self.outbox.event_status(event)['state']=='incomplete':
-                self.outbox.mark_incomplete(event,reason='camera_capture_incomplete')
+            if self.capture.manual_review or not status['complete'] or self.outbox.event_status(event)['state']=='incomplete':
+                if not status['complete'] or self.outbox.event_status(event)['state']=='incomplete':
+                    self.outbox.mark_incomplete(event,reason='camera_capture_incomplete')
                 # No silently shortened success. Detailed raw/source failure is
                 # retained by capture/outbox; complete close is never fabricated.
                 self._partial_manifests(event,status)
                 self._drain_metadata()
                 existing=self.outbox.db.execute("SELECT ack FROM requests WHERE event=? AND kind='manifest'",(event,)).fetchall()
                 if any(row['ack'] is None for row in existing):continue
-                self.outbox.finalize_pending_close(event,complete=False,final_segment_count=len(existing))
+                count=len(existing)
+                if self.capture.manual_review:
+                    count=self._partial_manifests(event,status)
+                complete=(self.capture.manual_review and status['complete']
+                          and self.outbox.event_status(event)['state']!='incomplete')
+                self.outbox.finalize_pending_close(event,complete=complete,final_segment_count=count)
                 continue
             rows=[status['cameras'][camera]['segments'] for camera in self.cameras]
             if len({len(row) for row in rows})!=1:raise ValueError('camera segment grid mismatch')
@@ -174,7 +200,7 @@ class ContinuousFrameRuntime:
             intervals={}
             for row in self.outbox.db.execute("SELECT body,ack FROM requests WHERE event=? AND kind='manifest' AND ack IS NOT NULL",(event,)):
                 body=json.loads(row['body'])
-                intervals[(body['capture_start_at'],body['capture_end_at'])]=body['sequence']
+                intervals[(body.get('camera_id'),body['capture_start_at'],body['capture_end_at'])]=body['sequence']
                 for segment in json.loads(row['ack'])['segments']:
                     requests[(segment['camera_id'],segment['sequence'])]=segment
             safe=self._safe_segments(event,status)
@@ -188,11 +214,11 @@ class ContinuousFrameRuntime:
                 if key not in self.reports:
                     self._enqueue(event,'capture_report',camera+':'+event+':report1',
                         capture_payload(report_status,camera_id=camera,clock=self.capture.cameras[camera],
-                            session_id=self.outbox.session,sequence=1,time_basis='source_utc_corrected',required_end=status['end']))
+                            session_id=self.outbox.session,sequence=1,time_basis='source_utc_unverified' if self.capture.manual_review else 'source_utc_corrected',required_end=status['end']))
                     self.reports.add(key)
                 for segment in safe[camera]:
                     from inference_worker.continuous_payloads import _time
-                    sequence=intervals.get((_time(segment.capture_start),_time(segment.capture_end)))
+                    sequence=intervals.get((camera if self.capture.manual_review else None,_time(segment.capture_start),_time(segment.capture_end)))
                     if sequence is None:continue
                     if segment.segment_id in planned:continue
                     binding=requests.get((camera,sequence))

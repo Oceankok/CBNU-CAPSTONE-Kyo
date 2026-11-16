@@ -153,8 +153,17 @@ jobs:
       - name: Automatic rule UI browser checks (isolated HTTP mocks)
         timeout-minutes: 5
         run: npm run test:auto-rules:browser
+      - name: Prepare synthetic incident segment video
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=black:s=64x64:r=15 -frames:v 329 -an -c:v libx264 -threads 1 -pix_fmt yuv420p -movflags +faststart "$RUNNER_TEMP/incident-segment-fixture.mp4"
       - name: Terminal evidence display checks (saved API fixtures)
         timeout-minutes: 5
+        env:
+          PPE_SEGMENT_TEST_VIDEO: ${{ runner.temp }}/incident-segment-fixture.mp4
         run: npx playwright test --config playwright.terminal-evidence.config.ts
       - name: Zone rule locks and revision recovery (isolated HTTP mocks)
         timeout-minutes: 5

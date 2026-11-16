@@ -134,7 +134,7 @@ def validate_review(conn, review: dict):
     if result not in {"confirmed", "false_positive", "hold", "unreviewable"}:
         raise ValueError("invalid_review_result")
     from backend.processing.lifecycle import require_finalizable
-    require_finalizable(conn, review["event_id"])
+    require_finalizable(conn, review["event_id"], manual_review=True)
     if result == "hold":
         return
     retention = conn.execute("SELECT decision FROM event_retention WHERE event_id=?", (review["event_id"],)).fetchone()

@@ -99,6 +99,9 @@ def load(conn):
 
 def enabled_for_event(conn, event):
     """Configured activation/scope, not a claim that this event is eligible."""
+    collection=conn.execute('SELECT start_payload FROM processing_event_lifecycle WHERE event_id=?',(event['event_id'],)).fetchone()
+    if collection and json.loads(collection['start_payload']).get('evidence_mode')=='manual_review':
+        return False
     policy, _, _ = load(conn)
     if policy.mode != 'enforce' or activation_blockers(policy):
         return False

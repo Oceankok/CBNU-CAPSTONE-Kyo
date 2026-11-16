@@ -47,6 +47,7 @@ def canonical(body):
     # Preserve the pre-context serialized form for legacy start retries.
     if payload.get('capture_context_id') is None:payload.pop('capture_context_id',None)
     if payload.get('capture_output_fps') is None:payload.pop('capture_output_fps',None)
+    if payload.get('evidence_mode') == 'verified_continuous':payload.pop('evidence_mode',None)
     return json.dumps(payload, sort_keys=True, separators=(',', ':'))
 
 
@@ -58,12 +59,15 @@ class Observation(BaseModel):
 
 
 class Start(EventSubmission, Observation):
+    evidence_mode: Literal['verified_continuous', 'manual_review'] = 'verified_continuous'
     session_id: str = Field(pattern=r'^[0-9a-f]{32}$')
     policy_key: str = Field(min_length=1, max_length=200)
     capture_output_fps: int | None = Field(default=None, strict=True, ge=1, le=MAX_CAPTURE_OUTPUT_FPS)
 
     @model_validator(mode='after')
     def observation_span(self):
+        if self.evidence_mode == 'manual_review' and not self.review_only:
+            raise ValueError('manual_evidence_requires_review_only')
         span = (self.timestamp_end-self.timestamp_start).total_seconds()
         if (span+OBSERVATION_EPSILON_SECONDS < 3
                 or self.observed_seconds+OBSERVATION_EPSILON_SECONDS < 3
@@ -98,6 +102,7 @@ class Update(Observation):
 class Segment(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     session_id: str = Field(pattern=r'^[0-9a-f]{32}$')
+    camera_id: str | None = Field(default=None, min_length=1, max_length=80)
     sequence: int = Field(ge=0, le=9999)
     capture_start_at: AwareDatetime
     capture_end_at: AwareDatetime
@@ -139,6 +144,7 @@ def _mutable(conn, event_id):
 
 def public(conn, event_id):
     row = dict(conn.execute('SELECT * FROM processing_event_lifecycle WHERE event_id=?', (event_id,)).fetchone())
+    row['evidence_mode']=json.loads(row['start_payload']).get('evidence_mode','verified_continuous')
     for key in ('start_payload','owner_node_id','session_id'):
         row.pop(key)
     segments = [dict(r) for r in conn.execute('''SELECT s.*,r.status,r.error_code,r.role
@@ -310,7 +316,15 @@ def segment(event_id, body, node_id):
     with get_connection() as conn:
         begin_write(conn)
         row=_owner(conn,event_id,node_id,body.session_id)
-        existing=conn.execute('SELECT * FROM processing_event_segment WHERE event_id=? AND sequence=?',(event_id,body.sequence)).fetchall()
+        scoped=body.camera_id is not None
+        if scoped and json.loads(row['start_payload']).get('evidence_mode')!='manual_review':
+            raise HTTPException(422,'camera_manifest_requires_manual_evidence')
+        selected=conn.execute('SELECT camera_id,role FROM processing_event_camera WHERE event_id=? ORDER BY camera_id',(event_id,)).fetchall()
+        if scoped:
+            selected=[camera for camera in selected if camera['camera_id']==body.camera_id]
+            if not selected:raise HTTPException(404,'continuous_camera_not_found')
+        existing=conn.execute('SELECT * FROM processing_event_segment WHERE event_id=? AND sequence=?'+(' AND camera_id=?' if scoped else ''),
+                              (event_id,body.sequence,body.camera_id) if scoped else (event_id,body.sequence)).fetchall()
         start_at,end_at=stamp(body.capture_start_at),stamp(body.capture_end_at)
         if existing:
             if any(r['capture_start_at']!=start_at or r['capture_end_at']!=end_at for r in existing):
@@ -324,8 +338,10 @@ def segment(event_id, body, node_id):
         if (body.capture_start_at<dt(event['timestamp_start'])-timedelta(seconds=2)-WIRE_TIME_EPSILON
                 or body.capture_end_at>capture_end(conn,event_id,event['timestamp_start'],event['timestamp_end'])+WIRE_TIME_EPSILON):
             raise HTTPException(422,'segment_outside_observation')
-        previous=conn.execute('SELECT sequence,capture_end_at FROM processing_event_segment WHERE event_id=? ORDER BY sequence DESC LIMIT 1',(event_id,)).fetchone()
-        if (previous is None and body.sequence!=0) or (previous is not None and (body.sequence!=previous['sequence']+1 or body.capture_start_at!=dt(previous['capture_end_at']))):
+        previous=conn.execute('SELECT sequence,capture_end_at FROM processing_event_segment WHERE event_id=?'+(' AND camera_id=?' if scoped else '')+' ORDER BY sequence DESC LIMIT 1',
+                              (event_id,body.camera_id) if scoped else (event_id,)).fetchone()
+        if (previous is None and body.sequence!=0) or (previous is not None and (body.sequence!=previous['sequence']+1 or
+                (body.capture_start_at<dt(previous['capture_end_at']) if scoped else body.capture_start_at!=dt(previous['capture_end_at'])))):
             raise HTTPException(409,'segment_sequence_or_boundary_conflict')
         # This configurable delivery deadline is separate from the capture interval.
         try:
@@ -335,7 +351,7 @@ def segment(event_id, body, node_id):
         except ValueError:
             raise HTTPException(503,'invalid_continuous_delivery_timeout')
         now=time.time()
-        for camera in conn.execute('SELECT camera_id,role FROM processing_event_camera WHERE event_id=?',(event_id,)).fetchall():
+        for camera in selected:
             request_id=str(uuid4())
             conn.execute('''INSERT INTO event_clip_request(request_id,event_id,camera_id,role,created_at,updated_at) VALUES(?,?,?,?,?,?)''',
                          (request_id,event_id,camera['camera_id'],camera['role'],now,now))
@@ -345,17 +361,22 @@ def segment(event_id, body, node_id):
         return public(conn,event_id)
 
 
-def require_finalizable(conn,event_id):
+def require_finalizable(conn,event_id, *, manual_review=False):
     """Fail closed for new continuous events only; partial-evidence policy is unresolved."""
-    row=conn.execute('SELECT phase FROM processing_event_lifecycle WHERE event_id=?',(event_id,)).fetchone()
+    row=conn.execute('SELECT phase,start_payload FROM processing_event_lifecycle WHERE event_id=?',(event_id,)).fetchone()
     if row is None:
         return
-    if row['phase']!='closed':
+    manual = manual_review and json.loads(row['start_payload']).get('evidence_mode') == 'manual_review'
+    if row['phase']!='closed' and not (manual and row['phase']=='interrupted'):
         raise ValueError('continuous_event_not_closed')
     retention=conn.execute('SELECT decision,retain_until FROM event_retention WHERE event_id=?',(event_id,)).fetchone()
     if retention and (retention['decision']=='delete' or
                       (retention['decision']=='retain' and retention['retain_until'] is not None and retention['retain_until']<=time.time())):
         raise ValueError('event_media_deleted_or_expired')
+    if manual:
+        # Human review may use surviving redacted evidence. The caller still
+        # requires a usable public media URL; automatic callers keep strict checks.
+        return
     parts=conn.execute("""SELECT s.request_id,s.capture_start_at AS segment_start,s.capture_end_at AS segment_end,
         r.status AS delivery_status,m.* FROM processing_event_segment s
         JOIN event_clip_request r ON r.request_id=s.request_id

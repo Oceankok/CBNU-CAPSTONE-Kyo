@@ -209,6 +209,9 @@ def main():
     parser.add_argument("--camera-id", required=True)
     parser.add_argument("--continuous-config", type=Path,
                         help="Opt-in continuous two-camera runner; requires explicit calibrated resource configuration")
+    parser.add_argument('--reference-camera-id',action='append',default=[])
+    parser.add_argument('--qualification-clips',action='store_true',
+                        help='Explicit compatibility mode: first qualification clips only')
     parser.add_argument("--stop-file", type=Path,
                         help="Exit cleanly when the supervisor creates this file")
     parser.add_argument("--model-path", type=Path,
@@ -244,7 +247,7 @@ def main():
         if not math.isfinite(value) or value < 0:
             parser.error("episode observation budgets must be finite and nonnegative")
 
-    if args.continuous_config is not None:
+    if args.continuous_config is not None or (args.submit_review_candidates and not args.qualification_clips):
         from inference_worker.run_continuous import run
         return run(args)
 
@@ -273,7 +276,8 @@ def main():
                              missing_grace_seconds=args.episode_missing_grace_seconds,
                              rewear_seconds=args.rewear_seconds,
                              qualification_grace_seconds=args.qualification_grace_seconds,
-                             on_close=_log_episode_close),
+                             on_close=_log_episode_close,
+                             preserve_required_episodes=args.submit_review_candidates),
         )
 
     tracker, violations = reset_tracking()
@@ -592,6 +596,15 @@ def main():
                                 person_enabled = False
                                 effective_policy = None
 
+                            if effective_policy is not None and (person_enabled or args.submit_review_candidates):
+                                # Resolved not-required is distinct from unknown
+                                # geometry. OFF must end an existing PPE episode.
+                                assessment["policy_scope_key"] = (
+                                    effective_policy.get("policy_version"),
+                                    effective_policy.get("scope"),
+                                    tuple(effective_policy.get("area_ids") or []),
+                                    tuple(sorted(effective_policy.get("required_ppe") or [])),
+                                )
                             if not person_enabled:
                                 assessment["status"] = "unknown"
                                 for state in assessment.get("ppe", {}).values():
@@ -599,12 +612,6 @@ def main():
                                 assessment["verified_ppe_confidence"] = None
                                 continue
 
-                            assessment["policy_scope_key"] = (
-                                effective_policy.get("policy_version"),
-                                effective_policy.get("scope"),
-                                tuple(effective_policy.get("area_ids") or []),
-                                tuple(sorted(effective_policy.get("required_ppe") or [])),
-                            )
                             person_policies[track_id] = effective_policy
 
                         # Detect sustained suspected violations.

@@ -210,9 +210,12 @@ class CaptureOutbox:
             if complete and row['state']=='incomplete':
                 raise OutboxError('incomplete event cannot claim complete')
             manifests=self.db.execute("SELECT body,ack FROM requests WHERE event=? AND kind='manifest' ORDER BY seq",(event,)).fetchall()
-            if len(manifests)!=final_segment_count:
+            start=self.db.execute("SELECT body FROM requests WHERE event=? AND kind='start'",(event,)).fetchone()
+            start_body=json.loads(start['body']) if start else {}
+            scoped=start_body.get('evidence_mode')=='manual_review'
+            if not scoped and len(manifests)!=final_segment_count:
                 raise OutboxError('manifest count mismatch')
-            sequences=[]
+            sequences=[];by_camera={}
             for manifest in manifests:
                 payload=json.loads(manifest['body'])
                 sequence=payload.get('sequence')
@@ -220,7 +223,16 @@ class CaptureOutbox:
                         payload.get('session_id')!=intent['session']):
                     raise OutboxError('manifest unacknowledged or wrong session')
                 sequences.append(sequence)
-            if sorted(sequences)!=list(range(final_segment_count)):
+                if scoped:
+                    camera=payload.get('camera_id')
+                    if not isinstance(camera,str):raise OutboxError('manual manifest requires camera')
+                    by_camera.setdefault(camera,[]).append(sequence)
+            if scoped:
+                if any(sorted(values)!=list(range(len(values))) for values in by_camera.values()):
+                    raise OutboxError('camera manifest prefix incomplete or duplicated')
+                if len(by_camera.get(start_body['camera_id'],[]))!=final_segment_count:
+                    raise OutboxError('primary manifest count mismatch')
+            elif sorted(sequences)!=list(range(final_segment_count)):
                 raise OutboxError('manifest prefix incomplete or duplicated')
             wire_kind='close' if complete else 'incomplete'
             exact=self.enqueue(event,seq=row['next_seq'],kind=wire_kind,idempotency_key=idem,body=body)
@@ -281,7 +293,7 @@ class CaptureOutbox:
             sql+=' AND camera=?';params.append(camera)
         return self.db.execute(sql,params).fetchone() is not None
 
-    def enqueue(self,event,*,seq,kind,idempotency_key,body,_lifecycle_final_progress=False):
+    def enqueue(self,event,*,seq,kind,idempotency_key,body,_lifecycle_final_progress=False,_recovered_manual_manifest=False):
         """Canonical bytes are persisted once; retries never reconstruct payloads."""
         _key(idempotency_key)
         if type(seq) is not int or seq<0 or kind not in ('start','progress','close','incomplete','manifest','capture_report'):
@@ -296,7 +308,13 @@ class CaptureOutbox:
                 if (old['kind'],old['idem'],old['body'])!=(kind,idempotency_key,payload):
                     raise OutboxError('immutable request conflict')
                 return bytes(old['body'])
-            if (row['state']!='active' and kind!='incomplete'
+            recovered=False
+            if _recovered_manual_manifest and kind=='manifest' and isinstance(body,dict):
+                original=self.db.execute("SELECT body FROM requests WHERE event=? AND kind='start'",(event,)).fetchone()
+                recovered=(original is not None and json.loads(original['body']).get('evidence_mode')=='manual_review'
+                    and body.get('session_id')==row['session'] and row['state'] in ('interrupted','incomplete')
+                    and body.get('camera_id') in self._camera_ids(json.loads(row['snapshot'])))
+            if (not recovered and row['state']!='active' and kind!='incomplete'
                     and not (row['state']=='closed' and kind=='capture_report')
                     and not (row['state']=='incomplete' and kind=='progress' and _lifecycle_final_progress is True)
                     and not (kind=='manifest' and isinstance(body,dict) and body.get('session_id')==self.session

@@ -40,7 +40,8 @@ class MultiCameraCapture:
                  post_seconds, discovery_delay_limit, prebuffer_seconds,
                  prebuffer_bytes, max_buffer_frames, max_events,
                  global_spool_bytes, spool_config, writer_config, before_spool_create=None,
-                 capture_output_fps=None):
+                 capture_output_fps=None, manual_review=False):
+        self.manual_review=manual_review
         numeric = dict(max_clock_error=max_clock_error, pre_seconds=pre_seconds,
                        post_seconds=post_seconds, discovery_delay_limit=discovery_delay_limit,
                        prebuffer_seconds=prebuffer_seconds)
@@ -87,11 +88,21 @@ class MultiCameraCapture:
             cap.reasons.append(reason)
         cap.done = True
         if cap.writer and not cap.writer.closed:
+            if self.manual_review:
+                try:
+                    self._manual_flush(cap)
+                    if reason in ('source_ended','reference_drain_cutoff','source_failed','coordinator_shutdown'):
+                        cap.reasons.append('missing_post_roll')
+                    return
+                except Exception:
+                    pass  # A broken encoder must still be disposed safely.
             cap.writer.abort(reason='coordinator_incomplete')
 
     def _feed(self, event, cap, timestamp, frame):
         if cap.done:
             return
+        if self.manual_review:
+            return self._manual_feed(event,cap,timestamp,frame)
         try:
             boundary = event['end']
             if boundary is not None and timestamp >= boundary:
@@ -107,6 +118,39 @@ class MultiCameraCapture:
                 cap.last_source_at = timestamp
         except Exception as exc:
             self._fail(cap, 'capture_failure:' + str(exc)[:100])
+
+    def _manual_flush(self,cap,boundary=None):
+        if cap.writer and not cap.writer.closed and cap.writer.last_timestamp is not None:
+            end=cap.writer.last_timestamp+1/cap.writer.fps
+            if boundary is not None:end=min(end,boundary)
+            cap.segments.extend(cap.writer.finish(end))
+
+    def _manual_feed(self,event,cap,timestamp,frame):
+        try:
+            boundary=event['end']
+            if boundary is not None and cap.writer.origin is not None:
+                # An encoded frame is indivisible. Seal on this run's actual
+                # output grid before the shared obligation, reporting the short
+                # residual as missing instead of overrunning or inventing it.
+                grid_end=cap.writer.origin+math.floor((boundary-cap.writer.origin)*cap.writer.fps+1e-5)/cap.writer.fps
+                if timestamp>=grid_end-1e-6 and cap.writer.last_timestamp is not None:
+                    cap.segments.extend(cap.writer.finish(grid_end))
+                    if boundary-grid_end>1e-6 and 'missing_post_roll' not in cap.reasons:cap.reasons.append('missing_post_roll')
+                    cap.done=True
+                    return
+            gap=(cap.last_source_at is not None and timestamp-cap.last_source_at>1.5/self.wc['output_fps'])
+            if gap:
+                self._manual_flush(cap,boundary)
+                if 'source_input_gap' not in cap.reasons:cap.reasons.append('source_input_gap')
+                cap.writer=TimestampSegmentWriter(cap.spool,**self.wc)
+            if boundary is not None and timestamp>=boundary:
+                if not gap and cap.writer.last_timestamp is not None:
+                    cap.segments.extend(cap.writer.finish(boundary))
+                cap.done=True
+                return
+            cap.segments.extend(cap.writer.push(timestamp,frame))
+            cap.last_source_at=timestamp
+        except Exception as exc:self._fail(cap,'capture_failure:'+str(exc)[:100])
 
     def ingest(self, camera, timestamp, frame):
         if camera in self.ended_sources:raise ValueError('frame_after_source_end')
@@ -172,7 +216,7 @@ class MultiCameraCapture:
                 reason = self.ended_sources[camera]
             elif not admitted:
                 reason = 'global_spool_admission'
-            elif not clock.verified or not math.isfinite(clock.error_bound) or not 0 <= clock.error_bound <= self.error:
+            elif not self.manual_review and (not clock.verified or not math.isfinite(clock.error_bound) or not 0 <= clock.error_bound <= self.error):
                 reason = 'clock_unverified_or_skew'
             elif not start <= discovered_at <= start + self.delay:
                 reason = 'late_discovery'
@@ -183,7 +227,14 @@ class MultiCameraCapture:
             if reason is None and (seed is None or
                     event['start']-seed[0] > self.wc['max_input_gap_seconds'] or
                     (buffered and buffered[-1][0] > discovered_at + 1e-8)):
-                reason = 'missing_prebuffer_or_discovery_order'
+                if not self.manual_review:
+                    reason = 'missing_prebuffer_or_discovery_order'
+                elif not buffered:
+                    reason='missing_prebuffer'
+                elif seed is None:
+                    cap.reasons.append('missing_pre_roll')
+                    seed=buffered[0]
+                    frames=buffered[1:]
             if reason:
                 self._fail(cap, reason)
                 continue
@@ -195,7 +246,7 @@ class MultiCameraCapture:
                 cap.writer = TimestampSegmentWriter(cap.spool, **self.wc)
                 cap.seed = dict(source_sample_at=seed[0], output_sample_at=event['start'],
                                 hold_seconds=event['start']-seed[0], clock_error_bound=clock.error_bound)
-                self._feed(event, cap, event['start'], seed[1])
+                self._feed(event, cap, max(event['start'],seed[0]) if self.manual_review else event['start'], seed[1])
                 cap.last_source_at = seed[0]
                 for t, frame in frames:
                     self._feed(event, cap, t, frame)
@@ -237,7 +288,7 @@ class MultiCameraCapture:
                             self._fail(cap, 'source_discarded_or_expired')
                     except Exception as exc:
                         self._fail(cap, 'maintenance_failure:' + str(exc)[:100])
-                if not cap.done and now-cap.last_source_at > self.wc['max_input_gap_seconds']:
+                if not self.manual_review and not cap.done and now-cap.last_source_at > self.wc['max_input_gap_seconds']:
                     self._fail(cap, 'source_gap_or_missing_postbuffer')
 
     def status(self, event_id):

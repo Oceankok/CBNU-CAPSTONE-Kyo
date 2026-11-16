@@ -137,6 +137,8 @@ def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, An
         lifecycle = conn.execute('SELECT phase,revision,evidence_revision,observed_seconds,gap_seconds,gap_count,final_segment_count,close_reason FROM processing_event_lifecycle WHERE event_id=?', (event['event_id'],)).fetchone()
         if lifecycle:
             event['collection'] = dict(lifecycle)
+            start_payload=conn.execute('SELECT start_payload FROM processing_event_lifecycle WHERE event_id=?',(event['event_id'],)).fetchone()[0]
+            event['collection']['evidence_mode']=json.loads(start_payload).get('evidence_mode','verified_continuous')
             from backend.auto_decision.settings import enabled_for_event
             event['auto_decision_enabled'] = enabled_for_event(conn,event)
             segment_rows = [dict(item) for item in conn.execute("""SELECT s.camera_id,s.sequence,s.request_id,s.capture_start_at,s.capture_end_at,r.status,r.error_code
@@ -153,7 +155,7 @@ def _attach_event_media(events: list[dict[str, Any]], conn) -> list[dict[str, An
         if lifecycle:
             from backend.processing.lifecycle import require_finalizable
             try:
-                require_finalizable(conn, event['event_id'])
+                require_finalizable(conn, event['event_id'], manual_review=True)
             except ValueError as exc:
                 event['review_availability'] = {**event['review_availability'], 'state': str(exc),
                     'can_review': False, 'can_mark_unreviewable': False}

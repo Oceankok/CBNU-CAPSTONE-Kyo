@@ -99,7 +99,7 @@ def capture_payload(status, *, camera_id, clock, session_id, sequence,
     """
     if type(sequence) is not int or not 1 <= sequence <= 2147483647:
         raise ValueError('sequence')
-    if time_basis not in ('source_utc_corrected', 'shared_monotonic'):
+    if time_basis not in ('source_utc_corrected', 'shared_monotonic','source_utc_unverified'):
         raise ValueError('time_basis')
     import math
     if (not math.isfinite(clock.offset) or not math.isfinite(clock.error_bound)
@@ -123,7 +123,7 @@ def capture_payload(status, *, camera_id, clock, session_id, sequence,
                        'end_at': _time(segment.capture_end)})
         cursor = canonical(segment.capture_end)
     reasons = list(cap['reasons'])
-    if not clock.verified:
+    if not clock.verified and time_basis!='source_utc_unverified':
         reasons.append('clock_unverified')
     state = 'incomplete' if reasons else 'collecting'
     if cap['done'] and not reasons:
@@ -148,15 +148,15 @@ def capture_payload(status, *, camera_id, clock, session_id, sequence,
         for segment in cap['segments']:
             if canonical(segment.capture_start) > cursor:
                 missing.append({'start_at': cursor.isoformat(timespec='microseconds'), 'end_at': _time(segment.capture_start),
-                                'reason': reasons[0][:100]})
+                                'reason': ('missing_pre_roll' if cursor==required_start else 'source_input_gap') if time_basis=='source_utc_unverified' else reasons[0][:100]})
             cursor = canonical(segment.capture_end)
         if cursor < required_end:
             missing.append({'start_at': cursor.isoformat(timespec='microseconds'), 'end_at': required_end.isoformat(timespec='microseconds'),
-                            'reason': reasons[0][:100]})
+                            'reason': 'missing_post_roll' if time_basis=='source_utc_unverified' else reasons[0][:100]})
     missing = [row for i, row in enumerate(missing) if row not in missing[:i]]
     return {'session_id': _session(session_id), 'sequence': sequence, 'state': state,
             'captured_ranges': ranges, 'missing_ranges': missing,
             'earliest_available_at': ranges[0]['start_at'] if ranges else None,
-            'time_basis': time_basis, 'clock_offset_seconds': clock.offset,
-            'clock_uncertainty_seconds': clock.error_bound,
+            'time_basis': time_basis, 'clock_offset_seconds': None if time_basis=='source_utc_unverified' else clock.offset,
+            'clock_uncertainty_seconds': None if time_basis=='source_utc_unverified' else clock.error_bound,
             'reason': reasons[0][:100] if reasons else None}
