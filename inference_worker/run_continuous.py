@@ -219,7 +219,9 @@ def run(args):
                     raise SourceMuxError('eos_delivery_pending')
                 stop_reason=str(error);tail_done=True
                 return result
-            journal.bind_capture_context(reader.primary_capture_context())
+            # An idle poll has no source binding; None here is not a legacy stream.
+            if args.camera_id in reader.streams:
+                journal.bind_capture_context(reader.primary_capture_context())
             remaining={c:sum(1 for row in batch if row[0]==c) for c in ids}
             ended=mux.drained_sources()
             for camera in ended:

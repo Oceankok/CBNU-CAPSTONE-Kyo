@@ -20,6 +20,16 @@ from inference_worker.test_legacy_required_episode import POLICY
 
 
 class ConfiguredManualRunnerTests(TestCase):
+    def test_idle_polls_before_first_stream_do_not_freeze_a_legacy_context(self):
+        class Tracker:
+            def __init__(self, **kwargs): pass
+            def update(self, rows, timestamp):
+                return [dict(row, tracking_id='fixture-person') for row in rows]
+        # No model/GPU/ByteTrack initialization: the runner, reader and journal
+        # still bind the real fixture context and deliver one complete episode.
+        with patch.object(runner, 'PersonTracker', Tracker):
+            self.run_case(0, initial_empty_polls=3)
+
     def test_manual_source_waits_for_capture_and_does_not_equate_unverified_camera_clocks(self):
         from inference_worker.continuous_source_mux import SourceMux
         from inference_worker.continuous_source_reader import ContinuousSourceReader
@@ -43,7 +53,7 @@ class ConfiguredManualRunnerTests(TestCase):
     def test_default_review_without_gap_encodes_one_long_clip_per_camera(self):
         self.run_case(0)
 
-    def run_case(self,seam):
+    def run_case(self,seam,initial_empty_polls=0):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); source=root/'source.mp4'
             writer=cv2.VideoWriter(str(source),cv2.VideoWriter_fourcc(*'mp4v'),15,(64,64))
@@ -55,9 +65,13 @@ class ConfiguredManualRunnerTests(TestCase):
                 server_url='https://synthetic.test'
                 tick=-2
                 delayed=False
+                empty_polls=0
                 def get_ppe_policy(self,camera):return POLICY
                 def set_inference_load(self,*a,**kw):pass
                 def list_streams(self):
+                    if self.empty_polls < initial_empty_polls:
+                        self.empty_polls+=1
+                        return []
                     if self.tick==7 and not self.delayed:
                         self.delayed=True
                         raise httpx.ReadTimeout('synthetic delayed arrival')
@@ -132,6 +146,7 @@ class ConfiguredManualRunnerTests(TestCase):
             starts=[body for _,body in commands if 'event_id' in body]
             self.assertEqual(len(starts),1)
             self.assertEqual(starts[0]['evidence_mode'],'manual_review')
+            self.assertEqual(starts[0]['capture_context_id'],'a'*36)
             closes=[b for p,b in commands if p.endswith('/updates') and b['kind']=='close']
             self.assertEqual(len(closes),1)
             self.assertGreaterEqual((datetime.fromisoformat(closes[0]['timestamp_end'])-datetime.fromisoformat(starts[0]['timestamp_start'])).total_seconds(),19.9)
