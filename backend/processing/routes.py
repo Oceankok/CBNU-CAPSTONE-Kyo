@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from backend.auth.service import require_admin
@@ -18,6 +18,7 @@ from backend.field.routes import current_node
 from backend.media.paths import WORK_ROOT, PROCESSED_ROOT, private_source_path, storage_key, publish_file
 from backend.media.verification_policy import VerificationReport, record as verification_record
 from backend.media.redaction import MediaError
+from backend.media.verification_diagnostics import FailureDiagnostic
 from backend.processing import service
 from backend.processing.events import EventSubmission, submit
 from backend.processing.reference_contract import resolve_reference_context
@@ -298,11 +299,19 @@ class Failure(BaseModel):
                         'incomplete_video_decode', 'scrfd_model_missing', 'face_model_missing',
                         'media_processing_failed', 'gpu_unavailable', 'face_verification_failed',
                         'face_verifier_model_invalid', 'face_verifier_configuration_invalid']
+    verification_failure: FailureDiagnostic | None = None
+
+    @model_validator(mode='after')
+    def diagnostic_code(self):
+        if self.verification_failure is not None and self.error_code != 'face_verification_failed':
+            raise ValueError('verification_diagnostic_requires_face_failure')
+        return self
 
 
 @router.post('/jobs/{job_id}/failure')
 def failure(job_id: str, body: Failure, node: dict = Depends(processor), x_processing_lease: str = Header(default='')):
-    return service.finish_failure(job_id, node['node_id'], x_processing_lease, body.error_code)
+    return service.finish_failure(job_id, node['node_id'], x_processing_lease, body.error_code,
+                                  verification_failure=body.verification_failure)
 
 
 @router.post('/jobs/{job_id}/cleanup')

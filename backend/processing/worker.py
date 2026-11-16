@@ -152,10 +152,21 @@ class Worker:
             allowed = {'source_file_missing', 'source_expired', 'invalid_frame', 'video_decode_failed',
                        'incomplete_video_decode', 'scrfd_model_missing', 'face_model_missing', 'gpu_unavailable',
                        'face_verification_failed', 'face_verifier_model_invalid', 'face_verifier_configuration_invalid'}
+            failure = {'error_code': code if code in allowed else 'media_processing_failed'}
+            if code == 'face_verification_failed' and hasattr(error, 'verification_failure'):
+                from backend.media.verification_diagnostics import FailureDiagnostic
+                try:
+                    failure['verification_failure'] = FailureDiagnostic.model_validate(
+                        error.verification_failure).model_dump(exclude_none=True)
+                except ValueError:
+                    pass  # Keep reporting failure even if diagnostic metadata is invalid.
+                else:
+                    logger.warning('Face verification diagnostic: %s %s', ident,
+                                   json.dumps(failure['verification_failure'], sort_keys=True))
             for _ in range(2):
                 try:
                     self.client.post(f'/api/processing/jobs/{ident}/failure', headers=headers,
-                                     json={'error_code': code if code in allowed else 'media_processing_failed'})
+                                     json=failure)
                     break
                 except httpx.HTTPError:
                     continue

@@ -16,6 +16,7 @@ import numpy as np
 
 from backend.media.paths import PROJECT_ROOT
 from backend.media.redaction import MediaError
+from backend.media.verification_diagnostics import VerificationFailure
 
 MODEL = 'retinaface-resnet50-raw-640'
 _cache_lock = Lock()
@@ -106,20 +107,24 @@ class RetinaFace:
         image[:scaled_h, :scaled_w] = cv2.resize(frame, (scaled_w, scaled_h))
         tensor = (image - np.array((104, 117, 123), dtype=np.float32)).transpose(2, 0, 1)[None]
         try:
+            phase = 'detector_runtime_error'
             with self.lock:
                 result = self.session.run(None, {self.input_name: np.ascontiguousarray(tensor)})
+            phase = 'detector_output_invalid'
             heads = {array.shape[-1]: array for array in result if isinstance(array, np.ndarray) and array.ndim == 3}
             count = len(self.anchors)
             if (set(heads) != {2, 4, 10} or any(a.shape != (1, count, n) or not np.isfinite(a).all()
                                               for n, a in heads.items())):
                 raise ValueError('invalid output contract')
             confidence = heads[2][0]
+            phase = 'detector_probability_invalid'
             if np.any(confidence < 0) or np.any(confidence > 1) or not np.allclose(confidence.sum(axis=1), 1, atol=.01):
                 raise ValueError('expected probabilities')
             scores = confidence[:, 1]
             selected = np.flatnonzero(scores >= .5)
             selected = selected[np.argsort(scores[selected])[::-1]][:5000]
             loc, anchor = heads[4][0][selected], self.anchors[selected]
+            phase = 'detector_box_decode_failed'
             centers = anchor[:, :2] + loc[:, :2] * .1 * anchor[:, 2:]
             with np.errstate(over='raise', invalid='raise'):
                 sizes = anchor[:, 2:] * np.exp(loc[:, 2:] * .2)
@@ -135,7 +140,8 @@ class RetinaFace:
             boxes, scores = boxes[valid], scores[selected][valid]
             if not len(boxes):
                 return []
+            phase = 'detector_postprocess_error'
             keep = cv2.dnn.NMSBoxes(boxes.tolist(), scores.tolist(), .5, .3)
             return [(*map(float, boxes[i]), float(scores[i])) for i in np.asarray(keep).reshape(-1)]
         except Exception as exc:
-            raise MediaError('face_verification_failed') from exc
+            raise VerificationFailure(phase) from exc
