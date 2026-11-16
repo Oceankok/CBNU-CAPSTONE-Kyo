@@ -94,8 +94,14 @@ class MultiCameraCapture:
                     if reason in ('source_ended','reference_drain_cutoff','source_failed','coordinator_shutdown'):
                         cap.reasons.append('missing_post_roll')
                     return
-                except Exception:
-                    pass  # A broken encoder must still be disposed safely.
+                except Exception as exc:
+                    # Persist a bounded code, never raw encoder errors or paths.
+                    failure = ('capture_flush_grid_error' if isinstance(exc, ValueError)
+                               and str(exc) == 'end boundary must align to output frame grid'
+                               else 'capture_flush_failed')
+                    cap.reasons.append(failure)
+                    cap.writer.abort(reason=failure)
+                    return
             cap.writer.abort(reason='coordinator_incomplete')
 
     def _feed(self, event, cap, timestamp, frame):
@@ -121,8 +127,15 @@ class MultiCameraCapture:
 
     def _manual_flush(self,cap,boundary=None):
         if cap.writer and not cap.writer.closed and cap.writer.last_timestamp is not None:
-            end=cap.writer.last_timestamp+1/cap.writer.fps
-            if boundary is not None:end=min(end,boundary)
+            writer=cap.writer
+            # Close the last observed frame on its original output grid. Chunk
+            # jitter may put the source sample between grid points; never extend
+            # a run across an unknown gap or invent a longer final frame.
+            count=math.floor((writer.last_timestamp-writer.origin)*writer.fps+1e-5)+1
+            end=writer.origin+count/writer.fps
+            if boundary is not None:
+                limit=writer.origin+math.floor((boundary-writer.origin)*writer.fps+1e-5)/writer.fps
+                end=min(end,limit)
             cap.segments.extend(cap.writer.finish(end))
 
     def _manual_feed(self,event,cap,timestamp,frame):
