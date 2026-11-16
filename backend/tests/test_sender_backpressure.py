@@ -27,11 +27,12 @@ class BackpressureTests(TestCase):
         return retry_upload(attempt, policy=Policy(10000,1000,2000), guard=guard,
                             monotonic=self.now,sleep=self.sleep)
 
-    def test_default_off_ignores_budget(self):
+    def test_default_quota_off_still_retries_network_responses(self):
         with patch.dict(os.environ, {'VIDEO_BACKPRESSURE_ENABLED':'false'}):
             self.assertIsNone(Policy.from_env())
         attempt=Mock(return_value=self.response(429))
-        retry_upload(attempt,policy=None);attempt.assert_called_once_with(20)
+        retry_upload(attempt,policy=None,monotonic=self.now,sleep=self.sleep)
+        self.assertEqual(attempt.call_count,8)
 
     def test_enabled_missing_explicit_budget_fails(self):
         with patch.dict(os.environ, {'VIDEO_BACKPRESSURE_ENABLED':'true'}, clear=True):
@@ -45,7 +46,7 @@ class BackpressureTests(TestCase):
         self.assertEqual(attempt.call_count,2);self.assertGreaterEqual(guard.call_count,10)
         self.assertAlmostEqual(self.clock,2)
 
-    def test_only_429_retried(self):
+    def test_non_transient_results_are_not_retried(self):
         for code in [401,403,409,422,500,202]:
             attempt=Mock(return_value=self.response(code));self.run_retry(attempt)
             attempt.assert_called_once()
@@ -53,10 +54,10 @@ class BackpressureTests(TestCase):
         with self.assertRaises(OSError):self.run_retry(attempt)
         attempt.assert_called_once()
 
-    def test_five_attempt_limit_and_large_retry_after_fail(self):
+    def test_eight_attempt_limit_and_large_retry_after_fail(self):
         attempt=Mock(return_value=self.response(429))
         self.assertEqual(self.run_retry(attempt).status_code,429)
-        self.assertEqual(attempt.call_count,5)
+        self.assertEqual(attempt.call_count,8)
         attempt=Mock(return_value=self.response(429,'61'))
         with self.assertRaises(TimeoutError):self.run_retry(attempt)
         attempt.assert_called_once()

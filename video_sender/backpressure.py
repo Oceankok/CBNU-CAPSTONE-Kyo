@@ -1,4 +1,4 @@
-"""Opt-in bounded retry and soft spool protection. Not an OS disk quota."""
+"""Bounded network retry and opt-in soft spool protection. Not an OS disk quota."""
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import time
+import requests
 
 
 @dataclass(frozen=True)
@@ -55,19 +56,33 @@ def retry_delay(header, now=None):
         raise ValueError('invalid_retry_after') from None
 
 
-def retry_upload(attempt, *, policy, guard=lambda: None, monotonic=time.monotonic, sleep=time.sleep):
-    if policy is None:
-        return attempt(20)
+def retry_upload(attempt, *, policy=None, guard=lambda: None, monotonic=None, sleep=None):
+    # Network resilience is required even when the optional spool quota is off.
+    # requests timeouts bound socket inactivity, not a hard wall-clock deadline.
+    monotonic = monotonic or time.monotonic
+    sleep = sleep or time.sleep
     started = monotonic()
-    for number in range(5):
+    for number in range(8):
         guard()  # Observes stop/budget while preserving permission to drain.
         remaining = 60-(monotonic()-started)
-        if remaining <= 0: raise TimeoutError('backpressure_retry_budget_exhausted')
-        response = attempt(min(20, remaining))
-        if response.status_code != 429:
-            return response
-        if number == 4: return response
-        delay = retry_delay(response.headers.get('Retry-After'))
+        if remaining <= 0: raise TimeoutError('network_retry_budget_exhausted')
+        response = None
+        try:
+            response = attempt(min(20, remaining))
+        except requests.exceptions.SSLError:
+            raise  # Certificate/configuration errors are not transient outages.
+        except (requests.ConnectionError, requests.Timeout):
+            if number == 7: raise
+        else:
+            if response.status_code not in (408, 429, 502, 503, 504) or number == 7:
+                return response
+        delay = min(8, 2**number)
+        if response is not None:
+            header = response.headers.get('Retry-After')
+            if header is not None:
+                delay = max(delay, retry_delay(header))
+            close = getattr(response, 'close', None)
+            if close is not None: close()
         remaining = 60-(monotonic()-started)
         if delay >= remaining:
             raise TimeoutError('retry_after_exceeds_remaining_budget')

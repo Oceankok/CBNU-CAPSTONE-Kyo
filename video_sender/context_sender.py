@@ -65,7 +65,9 @@ class ContextClient:
         self.http.headers.update({'Authorization':f'Bearer {token}'})
 
     def post(self,path,body):
-        r=self.http.post(self.origin+path,json=body,timeout=20,allow_redirects=False)
+        # These endpoints bind persisted session/stream IDs or retire that context.
+        r=retry_upload(lambda timeout:self.http.post(self.origin+path,json=body,
+            timeout=timeout,allow_redirects=False),policy=self.policy,guard=self.guard)
         if 300 <= r.status_code < 400: raise ValueError('redirect_forbidden')
         r.raise_for_status();return r.json()
 

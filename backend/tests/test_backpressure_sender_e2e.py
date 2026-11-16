@@ -41,5 +41,5 @@ class BackpressureSenderE2ETests(TestCase):
         self.assertEqual(p.read_bytes(),original)
         self.assertEqual(self.runner.state['acknowledged_sequence'],-1)
         self.assertFalse(self.runner.state['closed']);self.assertEqual(self.runner.state['context_id'],context)
-        self.assertEqual(len([p for p,_,_ in self.transport.calls if p.endswith('/chunks')]),5)
+        self.assertEqual(len([p for p,_,_ in self.transport.calls if p.endswith('/chunks')]),8)
         self.assertEqual(self.move().status_code,409)
