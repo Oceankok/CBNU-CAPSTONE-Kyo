@@ -9,13 +9,24 @@ from deploy.host_runtime.settings import arguments, load
 
 
 def watch_stop(path, pid, finished, internal):
+    reported_error = False
     while not finished.wait(.2):
+        stage = 'read'
         try:
             if path.read_text(encoding='utf-8-sig').strip() == str(pid):
+                stage = 'deliver'
+                # Only restore this run's allocated directory, never its ancestors.
+                internal.parent.mkdir(exist_ok=True)
                 internal.touch()
                 return
-        except OSError:
-            pass
+        except (OSError, UnicodeError) as error:
+            if stage == 'read' and isinstance(error, FileNotFoundError):
+                continue  # No external stop request yet.
+            if not reported_error:
+                print(f'[STOP SIGNAL ERROR] stage={stage} type={type(error).__name__}; '
+                      'cooperative stop not delivered; retrying; check runtime directory/access',
+                      flush=True)
+                reported_error = True
 
 
 def main(argv=None):

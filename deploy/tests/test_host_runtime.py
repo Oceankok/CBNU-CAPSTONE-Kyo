@@ -57,6 +57,42 @@ class HostRuntimeTests(unittest.TestCase):
             finally:
                 finished.set(); thread.join(timeout=2)
 
+    def test_stop_watcher_restores_deleted_private_directory_only_for_own_signal(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            private = root/'private'; private.mkdir()
+            internal = private/'stop'
+            signal = root/'signal'; signal.write_text('999')
+            polls = 0
+            def wait(_):
+                nonlocal polls
+                polls += 1
+                if polls == 1:
+                    private.rmdir()  # Removed after the watcher has started polling.
+                elif polls == 2:
+                    self.assertFalse(private.exists())  # Stale PID must not recreate it.
+                    signal.write_text('123')
+                return polls > 2
+            entry.watch_stop(signal, 123, Mock(wait=wait), internal)
+            self.assertTrue(internal.is_file())
+
+    def test_stop_watcher_reports_delivery_error_once_and_retries(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            signal = root/'signal'; signal.write_text('123')
+            internal = root/'private'/'stop'
+            finished = Mock(); finished.wait.side_effect = [False, False, False, True]
+            with patch.object(Path, 'touch', side_effect=[PermissionError('private detail'),
+                    PermissionError('private detail'), None]) as touch, patch('builtins.print') as output:
+                entry.watch_stop(signal, 123, finished, internal)
+            self.assertEqual(touch.call_count, 3)
+            self.assertEqual(output.call_count, 1)
+            message = output.call_args.args[0]
+            self.assertIn('stage=deliver', message)
+            self.assertIn('PermissionError', message)
+            self.assertNotIn('private detail', message)
+            self.assertNotIn(str(root), message)
+
     @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows PowerShell 7 wrapper test')
     def test_background_wrapper_preserves_real_child_exit_and_literal_paths(self):
         wrapper = Path(entry.__file__).parent/'Start-Inference.ps1'
