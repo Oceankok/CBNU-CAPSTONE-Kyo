@@ -103,8 +103,10 @@ function mediaChoiceLabel(choices: EventMedia[], m: EventMedia): string {
 
 // Image / clip to show for one camera. Normally one of each; after a merge a camera can hold
 // several clips (its own plus reference ones), so those are offered as choices (#219)
-function cameraMedia(items: EventMedia[], camera: string, pickedId?: string) {
-  const own = items.filter((m) => m.camera_id === camera);
+function cameraMedia(items: RequestMedia, camera: string, pickedId?: string, collection?: EventMediaCollection | null) {
+  const order = new Map(collection?.segments.map(s => [s.request_id, s.sequence ?? Infinity]));
+  const own = items.filter((m) => m.camera_id === camera).sort((a, b) =>
+    (order.get(a.clip_request_id ?? '') ?? Infinity) - (order.get(b.clip_request_id ?? '') ?? Infinity));
   const viewable = own.filter((m) => m.url);
   const videos = viewable.filter((m) => m.kind === 'video');
   const images = viewable.filter((m) => m.kind === 'image');
@@ -267,6 +269,7 @@ export default function EventMediaPanel({
     {},
   );
   const [playing, setPlaying] = useState(false);
+  const [playbackNotice, setPlaybackNotice] = useState('');
   const [consent, setConsent] = useState(false);
   const [consents, setConsents] = useState<ConsentRecord[]>([]);
   const [recordId, setRecordId] = useState('');
@@ -380,8 +383,28 @@ export default function EventMediaPanel({
     items,
     camera,
     pickedByCamera[camera],
+    collection,
   );
   const anyViewable = items.some((m) => m.url);
+  function playNextSegment() {
+    if (!video || !collection) return;
+    const current = collection.segments.find(s => s.request_id === video.clip_request_id && s.camera_id === camera);
+    if (!current || current.sequence == null) return;
+    const next = collection.segments.find(s => s.camera_id === camera && s.sequence === current.sequence! + 1);
+    if (!next) return;
+    const end = Date.parse(current.capture_end_at), start = Date.parse(next.capture_start_at);
+    if (!Number.isFinite(end) || !Number.isFinite(start) || Math.abs(start - end) > 1) {
+      setPlaybackNotice('다음 영상 사이에 시간 공백 또는 겹침이 있어 자동 재생을 멈췄습니다. 영상 선택에서 다음 구간을 확인해 주세요.');
+      return;
+    }
+    const following = items.find(m => m.clip_request_id === next.request_id && m.camera_id === camera && m.role === video.role && m.kind === 'video' && m.url);
+    if (!following) {
+      setPlaybackNotice('다음 구간은 아직 재생할 수 없어 자동 재생을 멈췄습니다. 영상 확보 상태를 확인해 주세요.');
+      return;
+    }
+    setPlaybackNotice('');
+    setPickedByCamera(p => ({ ...p, [camera]: following.media_id }));
+  }
 
   return (
     <>
@@ -417,7 +440,7 @@ export default function EventMediaPanel({
           </div>
         )}
         {video && (
-          <button className={styles.playBtn} onClick={() => setPlaying(true)}>
+          <button className={styles.playBtn} onClick={() => { setPlaybackNotice(''); setPlaying(true); }}>
             ▶ 클립 재생
           </button>
         )}
@@ -431,7 +454,7 @@ export default function EventMediaPanel({
               role="tab"
               aria-selected={c === camera}
               className={`${styles.cameraTab} ${c === camera ? styles.cameraTabOn : ''}`}
-              onClick={() => setCamera(c)}
+              onClick={() => { setPlaying(false); setPlaybackNotice(''); setCamera(c); }}
             >
               {c}
             </button>
@@ -453,6 +476,7 @@ export default function EventMediaPanel({
               className={`${styles.cameraTab} ${m.media_id === picked?.media_id ? styles.cameraTabOn : ''}`}
               onClick={() => {
                 setPlaying(false);
+                setPlaybackNotice('');
                 setPickedByCamera((p) => ({ ...p, [camera]: m.media_id }));
               }}
             >
@@ -555,12 +579,15 @@ export default function EventMediaPanel({
               ✕
             </button>
             <video
+              key={video.media_id}
               src={mediaUrl(video.url)}
               controls
               autoPlay
               playsInline
               className={styles.player}
+              onEnded={playNextSegment}
             />
+            {playbackNotice && <p role="status">{playbackNotice}</p>}
           </div>
         </div>
       )}

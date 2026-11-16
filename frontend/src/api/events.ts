@@ -382,6 +382,7 @@ export interface EventMediaCollection {
   }>;
   segments: Array<{
     camera_id: string;
+    sequence?: number;
     request_id: string;
     capture_start_at: string;
     capture_end_at: string;
