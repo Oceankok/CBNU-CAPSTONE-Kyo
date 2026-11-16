@@ -23,7 +23,7 @@ class TransportTests(TestCase):
                       SimpleNamespace(segment_id='S2',capture_start=(start+timedelta(seconds=2,microseconds=gap)).timestamp(),
                                       capture_end=end.timestamp())]
             runtime=object.__new__(ContinuousFrameRuntime)
-            runtime.capture=SimpleNamespace(events={'EVT_1':{'captures':{'CAM_1':SimpleNamespace(
+            runtime.capture=SimpleNamespace(manual_review=False,events={'EVT_1':{'captures':{'CAM_1':SimpleNamespace(
                 segments=segments,spool=SimpleNamespace(path_for_upload=lambda _:self.root/'clip.mp4'))}}})
             runtime.outbox=SimpleNamespace(db=db,session='a'*32,segment_status=lambda _:{'state':'present'})
             queued=[];runtime._enqueue=lambda event,kind,key,body:queued.append(body)
