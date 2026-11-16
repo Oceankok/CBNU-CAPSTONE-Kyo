@@ -101,7 +101,12 @@ class FaceRedactor:
             # Rotated passes may find the same face more than once. Keep the
             # strongest overlapping box so the reported count is not inflated.
             if getattr(self, 'verifier', None) is not None:
-                candidates.extend(self.verifier.detect(frame))
+                try:
+                    candidates.extend(self.verifier.detect(frame))
+                except MediaError as error:
+                    if hasattr(error, 'verification_failure'):
+                        error.annotate(stage='primary_detection')
+                    raise
             return self._deduplicate_faces(candidates)
         except cv2.error as exc:
             raise MediaError("face_detection_failed") from exc

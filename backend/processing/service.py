@@ -141,12 +141,20 @@ def renew(job_id, node_id, token):
         return public(job(conn, job_id))
 
 
-def finish_failure(job_id, node_id, token, code):
+def finish_failure(job_id, node_id, token, code, *, verification_failure=None):
+    from backend.media.verification_diagnostics import FailureDiagnostic
+    proof = None
+    if verification_failure is not None:
+        if code != 'face_verification_failed':
+            raise HTTPException(422, 'verification_diagnostic_requires_face_failure')
+        proof = FailureDiagnostic.model_validate(verification_failure).model_dump_json(exclude_none=True)
     with get_connection() as conn:
         begin_write(conn)
         row = authorized(conn, job_id, node_id, token)
         conn.execute("UPDATE processing_job SET status='failed',error_code=?,finished_at=?,updated_at=? WHERE job_id=?", (code, time.time(), time.time(), job_id))
         conn.execute("UPDATE event_media SET status='failed',redaction_status='failed',error_code=?,processing_started_at=NULL WHERE media_id=?", (code, row['media_id']))
+        if proof is not None:
+            conn.execute('UPDATE event_media SET verification_json=? WHERE media_id=?', (proof, row['media_id']))
         return public(job(conn, job_id))
 
 

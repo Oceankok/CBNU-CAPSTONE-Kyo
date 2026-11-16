@@ -10,6 +10,7 @@ from pathlib import Path
 import cv2
 
 from backend.media.redaction import MediaError
+from backend.media.verification_diagnostics import VerificationFailure
 
 MAX_REPAIRS = 2
 
@@ -19,11 +20,11 @@ def cover(frame, faces):
     height, width = frame.shape[:2]
     for x, y, w, h, score in faces:
         if not all(math.isfinite(v) for v in (x, y, w, h, score)) or w <= 0 or h <= 0:
-            raise MediaError('face_verification_failed')
+            raise VerificationFailure('invalid_repair_box')
         left, top = max(0, math.floor(x - .5*w)), max(0, math.floor(y - .5*h))
         right, bottom = min(width, math.ceil(x + 1.5*w)), min(height, math.ceil(y + 1.5*h))
         if right <= left or bottom <= top:
-            raise MediaError('face_verification_failed')
+            raise VerificationFailure('invalid_repair_box')
         result[top:bottom, left:right] = 0
     return result
 
@@ -41,7 +42,10 @@ def verify_image(output, detector):
                 break
             if not cv2.imwrite(str(output), cover(frame, faces)):
                 raise MediaError('image_encode_failed')
-        raise MediaError('face_verification_failed')
+        raise VerificationFailure('residual_detection_limit')
+    except VerificationFailure as error:
+        error.annotate(stage='encoded_verification', passes=attempt+1, frames_checked=1, expected_frames=1)
+        raise
     finally:
         if not success:
             output.unlink(missing_ok=True)
@@ -69,7 +73,7 @@ def verify_video(output, detector, work_dir, expected_frames):
                         break
                     frames += 1
                     if frames > expected_frames:
-                        raise MediaError('face_verification_failed')
+                        raise VerificationFailure('frame_count_exceeded')
                     current_size = (frame.shape[1], frame.shape[0])
                     if size is None:
                         size = current_size
@@ -94,7 +98,7 @@ def verify_video(output, detector, work_dir, expected_frames):
                     success = True
                     return {'model': 'retinaface-resnet50', 'status': 'passed', 'passes': attempt+1, 'repairs': attempt, 'frames': frames}
                 if attempt == MAX_REPAIRS:
-                    raise MediaError('face_verification_failed')
+                    raise VerificationFailure('residual_detection_limit')
                 try:
                     subprocess.run([_ffmpeg(), '-y', '-i', str(intermediate), '-an', '-c:v', 'libx264',
                                     '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(staged)],
@@ -107,7 +111,11 @@ def verify_video(output, detector, work_dir, expected_frames):
             finally:
                 intermediate.unlink(missing_ok=True)
                 staged.unlink(missing_ok=True)
-        raise MediaError('face_verification_failed')
+        raise VerificationFailure('residual_detection_limit')
+    except VerificationFailure as error:
+        error.annotate(stage='encoded_verification', passes=attempt+1,
+                       frames_checked=frames, expected_frames=expected_frames)
+        raise
     finally:
         for attempt in range(MAX_REPAIRS + 1):
             (Path(work_dir) / f'verification-{attempt}.avi').unlink(missing_ok=True)
