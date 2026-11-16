@@ -111,6 +111,33 @@ class CaptureSenderE2ETests(TestCase):
         chunks = [body for path, status, body in self.transport.calls if path.endswith('/chunks')]
         self.assertEqual(len(chunks), 2); self.assertTrue(chunks[-1]['duplicate'])
 
+    def test_transient_lost_ack_automatically_reuses_real_server_receipt(self):
+        import requests
+        from video_sender.backpressure import retry_upload
+        p = self.chunk(); self.proof()
+        original_post = self.transport.post
+        lost = False
+        clock = [0.0]
+        def post(url, **kwargs):
+            nonlocal lost
+            result = original_post(url, **kwargs)
+            if url.endswith('/chunks') and not lost:
+                lost = True
+                self.assertTrue(p.exists())
+                self.assertEqual(self.runner.state['acknowledged_sequence'], -1)
+                raise requests.ReadTimeout('synthetic lost acknowledgement after commit')
+            return result
+        def sleep(seconds): clock[0] += seconds
+        def retry(attempt, **kwargs):
+            return retry_upload(attempt, monotonic=lambda: clock[0], sleep=sleep, **kwargs)
+        self.transport.post = post
+        with patch('video_sender.context_sender.retry_upload', side_effect=retry):
+            self.runner.finish()
+        self.assertFalse(p.exists()); self.assertTrue(self.runner.state['closed'])
+        chunks = [body for path, _, body in self.transport.calls if path.endswith('/chunks')]
+        self.assertEqual(len(chunks), 2)
+        self.assertTrue(chunks[-1]['duplicate'])
+
     def test_lost_stop_response_retries_persisted_retirement(self):
         self.chunk(); self.proof(); self.transport.lose_once = '/stop'
         with self.assertRaises(TimeoutError): self.runner.finish()
