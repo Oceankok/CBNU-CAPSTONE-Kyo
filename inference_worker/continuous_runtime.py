@@ -140,6 +140,44 @@ class ContinuousFrameRuntime:
             count+=1;cursor=self._stamp(segment.capture_end)
         return count
 
+    def _reconcile_final_boundary(self,event,status):
+        # Future in-flight events only. Never revise advertised/terminal metadata.
+        if self.outbox.db.execute("SELECT 1 FROM requests WHERE event=? AND kind IN ('manifest','close','incomplete')",
+                                  (event,)).fetchone():return
+        from inference_worker.final_capture_boundary import frame_overlap,trim_segment
+        for camera,cap in self.capture.events[event]['captures'].items():
+            if getattr(cap,'final_boundary_checked',False):continue
+            cap.final_boundary_checked=True  # One bounded attempt; no encoder retry loop.
+            kept=[]
+            for segment in cap.segments:
+                if status['start']<=segment.capture_start<segment.capture_end<=status['end']:
+                    kept.append(segment);continue
+                try:
+                    if self.outbox.segment_status(segment.segment_id)['state']!='present':
+                        kept.append(segment);continue
+                    first,stop=frame_overlap(segment,status['start'],status['end'])
+                    if stop>first:
+                        derived=trim_segment(cap.spool,segment,first,stop,
+                            timeout=self.capture.wc['encoder_timeout_seconds'],
+                            max_pixels=self.capture.wc['max_frame_pixels'])
+                        # Persist derived ownership BEFORE retiring its original.
+                        self.outbox.bind_segment(event,camera=camera,segment=derived,
+                            relative_path=cap.spool.root.name+'/'+derived.segment_id+'.mp4')
+                        self.bound.add(derived.segment_id)
+                        kept.append(derived)
+                        reason='final_boundary_replaced_'+derived.segment_id
+                    else:
+                        reason='final_boundary_no_overlap'
+                    self.outbox.request_cleanup(segment.segment_id,reason=reason)
+                    self.bound.discard(segment.segment_id)
+                except Exception:
+                    # Original bytes/custody remain intact; advertise no false success.
+                    kept.append(segment)
+                    if 'final_boundary_trim_failed' not in cap.reasons:
+                        cap.reasons.append('final_boundary_trim_failed')
+                    self.outbox.mark_incomplete(event,reason='final_boundary_trim_failed')
+            cap.segments=kept
+
     def pump(self,*,now):
         self.capture.maintain(now=now);self._bind_sources();self._drain_metadata()
         for intent in self.outbox.pending_close_intents():
@@ -147,6 +185,9 @@ class ContinuousFrameRuntime:
             if intent['state']!='pending' or event not in self.capture.events:continue
             status=self.capture.status(event)
             if not all(row['done'] for row in status['cameras'].values()):continue
+            if self.capture.manual_review:
+                self._reconcile_final_boundary(event,status)
+                status=self.capture.status(event)
             if self.capture.manual_review or not status['complete'] or self.outbox.event_status(event)['state']=='incomplete':
                 if not status['complete'] or self.outbox.event_status(event)['state']=='incomplete':
                     self.outbox.mark_incomplete(event,reason='camera_capture_incomplete')
