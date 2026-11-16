@@ -89,6 +89,8 @@ class RunnerEOSBoundaryTests(unittest.TestCase):
         mux.drained_sources.return_value=set(mux.ended)
         reader=Mock(); reader.reference_failures={}; reader.poll.side_effect=[[],runner.SourceMuxError(reason)]
         reader.sequence={'main':4}; reader.end_reasons={'main':'source_ended','ref':'source_ended'}
+        reader.streams={'main':'stream-main','ref':'stream-ref'}
+        reader.primary_capture_context.return_value='ctx-main'
         detector=Mock(); detector.supports_no_helmet=False
         with ExitStack() as st:
             st.enter_context(patch.object(runner,'read_config',return_value=cfg))
@@ -99,7 +101,7 @@ class RunnerEOSBoundaryTests(unittest.TestCase):
             st.enter_context(patch('inference_worker.session_recovery.SessionRecovery'))
             st.enter_context(patch('inference_worker.session_recovery.dispose_previous_sources'))
             for name in ('VideoClient','InferenceLoad','CaptureOutbox','PrivateClipTransport',
-                         'ContinuousDispatcher','LifecycleJournal','PrivateChunkDecoder','CleanupSupervisor'):
+                         'ContinuousDispatcher','LifecycleJournal','PrivateChunkDecoder','CleanupSupervisor','PersonTracker'):
                 obj=Mock()
                 if name=='VideoClient': obj.get_ppe_policy.return_value={}
                 st.enter_context(patch.object(runner,name,return_value=obj))
