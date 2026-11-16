@@ -473,6 +473,17 @@ export default function EventMediaPanel({
           <p className={styles.text}>
             재생 가능한 영상이 있어도 다른 카메라의 영상은 누락될 수 있습니다.
           </p>
+          {collection?.cameras.map((row) => (
+            <p key={'evidence-' + row.camera_id} data-testid={'evidence-status-' + row.camera_id}>
+              {row.camera_id} · {row.role === 'clip' ? '발생 카메라 본 영상' : '다른 카메라 참고 영상'} ·{' '}
+              {row.evidence_status === 'partial' ? '일부 구간만 재생 가능' :
+                row.evidence_status === 'ready' ? '필요 구간 영상 준비 완료' :
+                row.evidence_status === 'redaction_failed' ? '비식별화 실패 · 영상 비공개' :
+                row.evidence_status === 'unavailable' ? '영상 확보 불가' :
+                row.evidence_status === 'processing' ? '비식별화 처리 중' : '영상 확보 대기'}
+              {row.capture_report?.time_basis === 'source_utc_unverified' && ' · 촬영 시각 오차 미검증'}
+            </p>
+          ))}
           {collection?.cameras
             .filter((row) => row.capture_report?.state === 'incomplete')
             .map((row) => (
