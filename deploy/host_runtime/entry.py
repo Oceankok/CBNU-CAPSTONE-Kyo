@@ -75,23 +75,55 @@ def main(argv=None):
                 raise RuntimeError('server_and_host_version_mismatch')
             if server.get('processing_mode') != 'remote':
                 raise RuntimeError('remote_processing_required')
-            if bootstrap:
-                stage = 'automatic_source_proof'
-                from deploy.host_runtime.automatic_profile import prepare
-                settings = prepare(settings, client)
-                command = arguments(settings)
         finally:
             client.close()
-        with tempfile.TemporaryDirectory(prefix='ppe_host_entry_') as folder:
-            stop = Path(folder)/'stop'
-            if args.stop_file:
-                watcher = threading.Thread(target=watch_stop,
-                    args=(args.stop_file, os.getpid(), finished, stop), daemon=True)
-                watcher.start()
-            stage = 'inference'
-            from inference_worker.run_multi import main as run
-            run([*command, '--stop-file', str(stop)])
-        return 0
+        base_settings = settings
+        def preparation_stopped():
+            if args.stop_file is None:
+                return False
+            try:
+                return args.stop_file.read_text(encoding='utf-8-sig').strip() == str(os.getpid())
+            except FileNotFoundError:
+                return False
+        while True:
+            if bootstrap:
+                stage = 'automatic_source_proof'
+                from deploy.host_runtime.automatic_profile import prepare, PreparationStopped
+                client = VideoClient()
+                try:
+                    try:
+                        settings = prepare(base_settings, client, stopped=preparation_stopped)
+                    except PreparationStopped:
+                        print('Automatic input preparation stopped; inference was not started.', flush=True)
+                        return 0
+                finally:
+                    client.close()
+                command = arguments(settings)
+            # Each real recording has its own cooperative signal and watcher.
+            # Supervisor cleanup must never become the next run's user stop.
+            finished = threading.Event()
+            watcher = None
+            try:
+                with tempfile.TemporaryDirectory(prefix='ppe_host_entry_') as folder:
+                    stop = Path(folder)/'stop'
+                    if args.stop_file:
+                        watcher = threading.Thread(target=watch_stop,
+                            args=(args.stop_file, os.getpid(), finished, stop), daemon=True)
+                        watcher.start()
+                    stage = 'inference'
+                    from inference_worker.run_multi import main as run
+                    if bootstrap:
+                        clean_end = run([*command, '--stop-file', str(stop)], return_after_clean_source=True)
+                    else:
+                        run([*command, '--stop-file', str(stop)])
+                        return 0
+            finally:
+                finished.set()
+                if watcher:
+                    watcher.join(timeout=2)
+            if clean_end is not True or preparation_stopped():
+                return 0
+            print('[AUTOMATIC INPUT] Source ended cleanly; waiting for a new source session.', flush=True)
     except KeyboardInterrupt:
         return 0
     except Exception as error:

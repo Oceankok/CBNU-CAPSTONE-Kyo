@@ -28,8 +28,12 @@ relabels historical manual evidence or invents a PPE confidence score.
    for both live source sessions and their authenticated fresh proofs, checks
    source ownership, context, epoch, API boot, error bounds and freshness, then
    builds separate session-bound profiles. No operator copies UUIDs or edits
-   clock expiry. A bounded timeout is a preparation failure, not inference
-   success. `--check-settings` validates only the static template.
+   clock expiry. An explicit `wait_seconds: null` waits without a deadline and
+   honors the existing server stop control before any model is loaded. A finite
+   timeout is a preparation failure, not inference success. After both cameras
+   end cleanly, bootstrap waits for new sessions; it does not restart failed
+   inference or reuse old tracking identities. `--check-settings` validates only
+   the static template.
 5. Start the separate laptop GUI and select both cameras. It samples and renews
    clock evidence automatically. A source clock step or changed identity does
    not silently restart tracking. Partial startup requests cooperative stop of

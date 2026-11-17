@@ -6,12 +6,13 @@ from tempfile import TemporaryDirectory
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 import httpx
 
 from clock_contract import ClockPolicy, sample_interval
-from deploy.host_runtime.automatic_profile import prepare, load_template
+from deploy.host_runtime.automatic_profile import prepare, load_template, PreparationStopped
 from inference_worker.manual_review_config import configuration
 
 
@@ -124,3 +125,54 @@ class AutomaticProfileTests(unittest.TestCase):
         self.path.write_text(json.dumps(self.template), encoding='utf-8')
         with self.assertRaisesRegex(ValueError, 'state_contains_source_or_template'):
             load_template(self.path, self.cameras)
+
+    def test_indefinite_wait_stops_cooperatively_without_creating_state(self):
+        self.template['wait_seconds'] = None
+        self.path.write_text(json.dumps(self.template), encoding='utf-8')
+        self.streams.clear()
+        polls = []
+        def wait(seconds):
+            polls.append(seconds)
+        with self.assertRaises(PreparationStopped):
+            prepare(self.settings, self.client, sleep=wait, stopped=lambda: len(polls) >= 2)
+        self.assertEqual(len(polls), 2)
+        self.assertFalse((self.root/'runtime').exists())
+
+    def run_entry(self, run):
+        from deploy.host_runtime.entry import main
+        settings = copy.deepcopy(self.settings)
+        model = self.root/'model.pt'
+        model.touch()
+        settings['model_path'] = str(model)
+        self.path.write_text(json.dumps(self.template), encoding='utf-8')
+        settings_path = self.root/'settings.json'
+        settings_path.write_text(json.dumps(settings), encoding='utf-8')
+        generated = copy.deepcopy(settings)
+        generated.pop('continuous_bootstrap')
+        generated['continuous_profiles'] = {c:str(self.path) for c in self.cameras}
+        client = SimpleNamespace(get_runtime_version=lambda:{'processing_mode':'remote'},close=lambda:None)
+        with patch('inference_worker.video_client.VideoClient', return_value=client), \
+             patch('backend.runtime_version.local_version', return_value={}), \
+             patch('backend.runtime_version.compare', return_value={'status':'matched'}), \
+             patch('deploy.host_runtime.automatic_profile.prepare', side_effect=[generated,generated,PreparationStopped()]) as prepare_mock, \
+             patch('inference_worker.run_multi.main', side_effect=run):
+            result = main(['--settings',str(settings_path),'--source',str(Path(__file__).resolve().parents[2]),
+                           '--stop-file',str(self.root/'external-stop')])
+        return result, prepare_mock.call_count
+
+    def test_clean_source_end_rearms_with_fresh_profiles_and_separate_stop_files(self):
+        stops=[]
+        def run(argv, *, return_after_clean_source):
+            self.assertTrue(return_after_clean_source)
+            path=Path(argv[argv.index('--stop-file')+1])
+            stops.append(str(path))
+            path.touch()  # Supervisor's private cleanup signal, not user stop.
+            return True
+        self.assertEqual(self.run_entry(run), (0,3))
+        self.assertEqual(len(set(stops)),2)
+        self.assertFalse((self.root/'external-stop').exists())
+
+    def test_inference_failure_does_not_silently_rearm_or_retry(self):
+        def run(argv, **kwargs):
+            raise RuntimeError('synthetic failure')
+        self.assertEqual(self.run_entry(run), (1,1))

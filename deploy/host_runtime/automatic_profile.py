@@ -14,6 +14,10 @@ from uuid import uuid4
 import httpx
 
 
+class PreparationStopped(Exception):
+    """Cooperative stop before any detector or tracking state is created."""
+
+
 def load_template(path, cameras):
     from clock_contract import ClockPolicy, number
     value = json.loads(Path(path).read_text(encoding='utf-8-sig'))
@@ -26,10 +30,11 @@ def load_template(path, cameras):
             or any(not isinstance(v, str) or not v for v in value['source_node_ids'].values())):
         raise ValueError('automatic_camera_scope_invalid')
     policy = ClockPolicy(**value['policy'])
-    for key in ('wait_seconds', 'poll_seconds', 'proof_poll_seconds', 'max_host_rtt_seconds'):
+    for key in ('poll_seconds', 'proof_poll_seconds', 'max_host_rtt_seconds'):
         if number(value[key]) <= 0:
             raise ValueError('automatic_wait_policy_invalid')
-    if (value['wait_seconds'] > 600 or value['poll_seconds'] > value['wait_seconds']
+    if ((value['wait_seconds'] is not None and
+         (not 0 < number(value['wait_seconds']) <= 600 or value['poll_seconds'] > value['wait_seconds']))
             or value['proof_poll_seconds'] >= policy.ttl_seconds / 2
             or value['max_host_rtt_seconds'] >= policy.ttl_seconds / 2):
         raise ValueError('automatic_wait_policy_invalid')
@@ -117,7 +122,7 @@ def _snapshot(client, template, cameras, *, mono):
     return clocks, bindings, proofs
 
 
-def prepare(settings, client, *, mono=time.monotonic, sleep=time.sleep):
+def prepare(settings, client, *, mono=time.monotonic, sleep=time.sleep, stopped=lambda: False):
     """Wait for new proved streams and return continuous settings, never mutate input."""
     if (settings.get('runner') != 'continuous' or settings.get('mode') != 'review'
             or {'continuous_profiles', 'continuous_config', 'primary_camera_id'} & set(settings)):
@@ -128,9 +133,11 @@ def prepare(settings, client, *, mono=time.monotonic, sleep=time.sleep):
             or len(set(cameras)) != len(cameras)):
         raise ValueError('automatic_camera_scope_invalid')
     template = load_template(settings['continuous_bootstrap'], cameras)
-    deadline = mono() + template['wait_seconds']
+    deadline = None if template['wait_seconds'] is None else mono() + template['wait_seconds']
     print('[AUTOMATIC INPUT] Waiting for fresh authenticated source proofs; inference has not started.', flush=True)
     while True:
+        if stopped():
+            raise PreparationStopped()
         try:
             snapshot = _snapshot(client, template, cameras, mono=mono)
         except httpx.TransportError:
@@ -139,11 +146,13 @@ def prepare(settings, client, *, mono=time.monotonic, sleep=time.sleep):
             if error.response.status_code not in (429, 500, 502, 504):
                 raise
             snapshot = None
-        if snapshot is not None and mono() < deadline:
+        if stopped():
+            raise PreparationStopped()
+        if snapshot is not None and (deadline is None or mono() < deadline):
             break
-        if mono() >= deadline:
+        if deadline is not None and mono() >= deadline:
             raise ValueError('automatic_source_proof_timeout')
-        sleep(min(template['poll_seconds'], max(0, deadline - mono())))
+        sleep(template['poll_seconds'] if deadline is None else min(template['poll_seconds'], max(0, deadline - mono())))
     clocks, bindings, _ = snapshot
     proof_config = {'version': 1, 'origin': client.server_url, 'server_epoch': template['server_epoch'],
                     'policy': template['policy'], 'bindings': bindings,
@@ -154,6 +163,8 @@ def prepare(settings, client, *, mono=time.monotonic, sleep=time.sleep):
     from inference_worker.clock_leases import ClockLeaseSet
     lease = ClockLeaseSet(client, proof_config, clocks)
     lease.refresh(force=True)
+    if stopped():
+        raise PreparationStopped()
     root = Path(template['state_root']) / uuid4().hex
     root.mkdir(parents=True, exist_ok=False)
     profile_dir = root / 'profiles'
