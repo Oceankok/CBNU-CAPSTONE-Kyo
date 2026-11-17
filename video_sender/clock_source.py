@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 import time
 from uuid import uuid4
+import requests
 from clock_contract import AnchoredClock, ClockPolicy, VERSION, covers, number, sample_interval
 
 
@@ -17,6 +18,10 @@ def configuration():
         if not epoch or not node or not 0 < refresh < policy.ttl_seconds/2: raise ValueError()
     except (KeyError, TypeError, ValueError): raise ValueError('source_clock_configuration_required') from None
     return policy, epoch, node, refresh
+
+
+class FreshSampleUnavailable(ValueError):
+    pass
 
 
 class ClockPublisher:
@@ -37,9 +42,34 @@ class ClockPublisher:
         self.path = runner.root/'.clock-current.json'; self.next_refresh = mono()
 
     def refresh(self, *, force=False):
-        recovering=self.state.get('pending') is not None
-        if not force and not recovering and self.mono() < self.next_refresh:
+        if not force and self.mono() < self.next_refresh:
             self.check(); return
+        old_proof=self.state.get('proof')
+        if not force:self.check()  # An expired lease cannot be revived by a new sample.
+        try:
+            self._refresh_exchange()
+        except (FreshSampleUnavailable, requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as error:
+            if force:raise
+            if isinstance(error,requests.exceptions.HTTPError) and getattr(error.response,'status_code',None) not in (429,500,502,503,504):
+                raise
+            # The exact prior on-disk proof is the only fallback. A recovered
+            # publication may advance the sequence, but cannot renew the lease.
+            try:published=json.loads(self.path.read_text(encoding='utf-8'))
+            except (OSError,ValueError):raise error
+            if (old_proof is None or published != dict(anchor=self.state['anchor'],
+                    policy=self.policy.public(),proof=old_proof)):
+                raise error
+            stamp=self.clock.now()
+            if stamp+old_proof['offset_high']+self.policy.drift() >= old_proof['valid_until']:
+                raise ValueError('source_clock_proof_expired') from error
+            if self.state.get('proof') != old_proof:
+                self.state['proof']=old_proof;self.runner.save()
+            self.next_refresh=self.mono()+1
+            return
+
+    def _refresh_exchange(self):
+        recovering=self.state.get('pending') is not None
         # A recovered receipt settles sequence ownership, never masquerades as
         # a new live measurement. Follow it with an actual fresh exchange.
         for attempt in range(2):
@@ -54,7 +84,7 @@ class ClockPublisher:
             atomic_json(self.path,dict(anchor=self.state['anchor'],policy=self.policy.public(),proof=proof))
             self.next_refresh=self.mono()+self.interval
             self.check();return
-        raise ValueError('source_clock_fresh_sample_required')
+        raise FreshSampleUnavailable('source_clock_fresh_sample_required')
 
     def _abandon(self):
         # Sequence was positively acknowledged by the challenge response.

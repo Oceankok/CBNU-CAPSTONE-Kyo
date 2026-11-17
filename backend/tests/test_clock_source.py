@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
+import requests
 from unittest.mock import patch
 from datetime import datetime,timezone
 from clock_contract import AnchoredClock,ClockPolicy,sample_interval
@@ -88,6 +89,45 @@ class SourceClockTests(unittest.TestCase):
             return result
         self.runner.client.post=forged;self.advance(6)
         with self.assertRaisesRegex(ValueError,'binding'):self.publisher.refresh()
+
+    def test_slow_renewal_keeps_published_proof_and_retries_after_cooldown(self):
+        self.publisher.refresh(force=True);old=deepcopy(self.publisher.state['proof']);published=self.publisher.path.read_bytes()
+        original=self.runner.client.post;calls=[]
+        def slow(path,body):
+            result=original(path,body);calls.append(path)
+            if path.endswith('clock-challenges'):self.advance(1.1)
+            return result
+        self.runner.client.post=slow;self.advance(6);self.publisher.refresh()
+        self.assertEqual(self.publisher.state['proof'],old);self.assertEqual(self.publisher.path.read_bytes(),published)
+        self.assertEqual(len(calls),2);self.advance(.2);self.publisher.refresh();self.assertEqual(len(calls),2)
+        self.runner.client.post=original;self.advance(1);self.publisher.refresh()
+        self.assertNotEqual(self.publisher.state['proof']['proof_id'],old['proof_id'])
+        self.assertEqual(self.publisher.state['anchor']['utc'],100.)
+
+    def test_transient_publication_retries_exact_pending_and_expiry_blocks(self):
+        self.publisher.refresh(force=True);old=deepcopy(self.publisher.state['proof']);self.advance(6)
+        original=self.runner.client.post;attempts=[]
+        def flaky(path,body):
+            if '/clock-proofs/' in path:
+                attempts.append((path,deepcopy(body)))
+                if len(attempts)==1:raise requests.exceptions.Timeout('temporary')
+            return original(path,body)
+        self.runner.client.post=flaky;self.publisher.refresh()
+        self.assertEqual(self.publisher.state['proof'],old);self.assertIsNotNone(self.publisher.state.get('pending'))
+        self.advance(.2);self.publisher.refresh();self.assertEqual(len(attempts),1)
+        self.advance(1);self.publisher.refresh();self.assertEqual(attempts[0],attempts[1])
+        self.assertNotEqual(self.publisher.state['proof']['proof_id'],old['proof_id'])
+        self.advance(31)
+        self.runner.client.post=lambda *args: (_ for _ in ()).throw(requests.exceptions.ConnectionError('offline'))
+        with self.assertRaisesRegex(ValueError,'expired'):self.publisher.refresh()
+
+    def test_transient_not_allowed_for_force_or_auth_errors(self):
+        self.runner.client.post=lambda *args: (_ for _ in ()).throw(requests.exceptions.Timeout('offline'))
+        with self.assertRaises(requests.exceptions.Timeout):self.publisher.refresh(force=True)
+        self.setUp();self.publisher.refresh(force=True);self.advance(6)
+        response=requests.Response();response.status_code=401
+        self.runner.client.post=lambda *args: (_ for _ in ()).throw(requests.exceptions.HTTPError(response=response))
+        with self.assertRaises(requests.exceptions.HTTPError):self.publisher.refresh()
 
     def test_clock_proof_expiry_and_monotonic_regression_fail_closed(self):
         self.publisher.refresh(force=True);self.advance(31)
