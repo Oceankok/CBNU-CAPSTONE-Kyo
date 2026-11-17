@@ -121,6 +121,12 @@ class FaceRedactor:
 
     def render(self, frame, faces):
         started = time.perf_counter()
+        # Keep the exact per-frame tracked masks for a video repair. A repair
+        # must not depend only on the few frames that cross the verifier's
+        # threshold before another lossy encoding changes its detections.
+        masks = getattr(self, '_verification_masks', None)
+        if masks is not None:
+            masks.append(tuple(tuple(face) for face in faces))
         result = self.pixelate(frame, faces)
         self.metrics["pixelation_seconds"] += time.perf_counter() - started
         return result
@@ -230,6 +236,8 @@ def _ffmpeg() -> str:
 def redact_video(source: Path, output: Path, work_dir: Path, mode="scrfd") -> dict:
     started = time.perf_counter()
     detector = FaceRedactor(mode)
+    if getattr(detector, 'verifier', None) is not None:
+        detector._verification_masks = []
     capture = cv2.VideoCapture(str(source))
     writer = None
     intermediate = work_dir / "redacted.avi"
@@ -290,7 +298,8 @@ def redact_video(source: Path, output: Path, work_dir: Path, mode="scrfd") -> di
         raise MediaError("video_encode_failed")
     if getattr(detector, 'verifier', None) is not None:
         from backend.media.verification import verify_video
-        detector.verification = verify_video(output, detector.verifier, work_dir, frames)
+        detector.verification = verify_video(output, detector.verifier, work_dir, frames,
+                                             repair_masks=detector._verification_masks)
         detector.verification['sha256'] = hashlib.sha256(output.read_bytes()).hexdigest()
     if mode in {"enhanced", "scrfd"}:
         detector.tracking_stats = processor.stats

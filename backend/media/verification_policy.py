@@ -19,6 +19,7 @@ class VerificationReport(BaseModel):
     passes: int = Field(ge=1, le=3)
     repairs: int = Field(ge=0, le=2)
     frames: int = Field(ge=1, le=100000)
+    residual_threshold: float | None = Field(default=None, ge=.5, le=1)
     sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
 
     @model_validator(mode='after')
