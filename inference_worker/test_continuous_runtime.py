@@ -30,9 +30,9 @@ class RuntimeTests(TestCase):
                 'accepted_command':dict(kind=kind,session_id=body['session_id'],sequence=body.get('sequence',0),camera_id=camera)})
         self.transport.client=httpx.Client(base_url='https://test',transport=httpx.MockTransport(handler))
         self.dispatcher=ContinuousDispatcher(self.box,self.transport,enabled=True,max_delivery_records=30,max_delivery_db_bytes=2000000)
-        self.capture=MultiCameraCapture(self.root/'raw',cameras={c:CameraClock(0,0,True) for c in getattr(self,'camera_ids',('main','ref'))},
+        self.capture=MultiCameraCapture(self.root/'raw',cameras={c:CameraClock(0,getattr(self,'clock_error',0),True) for c in getattr(self,'camera_ids',('main','ref'))},
             capture_output_fps=getattr(self,'capture_output_fps',None),
-            max_clock_error=0,pre_seconds=2,post_seconds=2,discovery_delay_limit=3.5,prebuffer_seconds=6,
+            max_clock_error=getattr(self,'clock_error',0),pre_seconds=2,post_seconds=2,discovery_delay_limit=3.5,prebuffer_seconds=6,
             prebuffer_bytes=100000,max_buffer_frames=50,max_events=2,global_spool_bytes=4000000,
             spool_config=dict(max_bytes=1000000,max_segments=20,max_age_seconds=100,max_attempts=3,clock=lambda:self.now),
             writer_config=dict(segment_seconds=2,output_fps=2,max_frame_pixels=256,max_input_gap_seconds=.6,encoder_timeout_seconds=5))

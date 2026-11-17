@@ -1,5 +1,6 @@
 # Allow only reviewed application source into the build context.
 *
+!clock_contract.py
 !backend/
 !backend/**/
 !backend/**/*.py

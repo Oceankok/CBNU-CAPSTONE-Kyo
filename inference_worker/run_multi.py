@@ -93,6 +93,19 @@ def continuous_profiles(cameras, *, entries=None, path=None, primary=None, valid
     return profiles
 
 
+def probe_clock_profiles(profiles):
+    """Opt-in proof compatibility is checked before model load; no static fallback."""
+    from inference_worker.run_continuous import read_config
+    from inference_worker.clock_leases import ClockLeaseSet
+    from inference_worker.video_client import VideoClient
+    for primary,path in profiles.items():
+        config=read_config(path,primary,now=time.time())
+        if 'clock_proof' not in config:continue
+        client=VideoClient()
+        try:ClockLeaseSet(client,config['clock_proof'],config['clocks'],primary_camera=primary).refresh(force=True)
+        finally:client.close()
+
+
 def child_main(module):
     """Preserve permanent request/config errors across the process boundary."""
     try:
@@ -367,8 +380,10 @@ def main(argv=None):
         try:
             if args.runner == 'continuous':
                 stage = 'continuous_clock_calibration_snapshot_state'
-                continuous_profiles(args.camera_id, entries=args.continuous_profile,
+                selected=continuous_profiles(args.camera_id, entries=args.continuous_profile,
                                     path=args.continuous_config, primary=args.primary_camera_id)
+                stage = 'continuous_clock_proof_protocol'
+                probe_clock_profiles(selected)
                 stage = 'shared_auth_model_dependencies'
             preflight(args.camera_id, args.model_path.resolve(), mode, continuous=args.runner == 'continuous')
         except Exception as error:

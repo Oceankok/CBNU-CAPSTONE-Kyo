@@ -64,7 +64,7 @@ jobs:
           python -m unittest discover -s inference_worker -t . -v
       - name: Owned POSIX process trees and host tooling
         timeout-minutes: 5
-        run: python -m unittest deploy.tests.test_runtime_processes deploy.tests.test_host_runtime -v
+        run: python -m unittest deploy.tests.test_runtime_processes deploy.tests.test_host_runtime deploy.tests.test_automatic_profile -v
 
   postgres:
     runs-on: ubuntu-latest

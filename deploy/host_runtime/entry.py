@@ -47,8 +47,17 @@ def main(argv=None):
     stage = 'settings'
     try:
         settings = load(args.settings)
-        command = arguments(settings)
+        bootstrap = 'continuous_bootstrap' in settings
+        if bootstrap:
+            from deploy.host_runtime.automatic_profile import validate_selection
+            validate_selection(settings)
+            command = None
+        else:
+            command = arguments(settings)
         if args.check_settings:
+            if bootstrap:
+                print('Automatic input template valid; live source proofs have not been checked.', flush=True)
+                return 0
             if settings.get('runner') == 'continuous':
                 from inference_worker.run_multi import continuous_profiles
                 continuous_profiles(settings.get('camera_ids', [settings.get('camera_id')]),
@@ -66,6 +75,11 @@ def main(argv=None):
                 raise RuntimeError('server_and_host_version_mismatch')
             if server.get('processing_mode') != 'remote':
                 raise RuntimeError('remote_processing_required')
+            if bootstrap:
+                stage = 'automatic_source_proof'
+                from deploy.host_runtime.automatic_profile import prepare
+                settings = prepare(settings, client)
+                command = arguments(settings)
         finally:
             client.close()
         with tempfile.TemporaryDirectory(prefix='ppe_host_entry_') as folder:

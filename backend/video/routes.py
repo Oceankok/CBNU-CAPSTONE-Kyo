@@ -42,6 +42,7 @@ async def upload_chunk(stream_id: str, request: Request,
                        sequence: int = Query(ge=0, le=2147483647),
                        x_capture_start: str = Header(max_length=50),
                        x_duration_ms: int = Header(ge=1, le=3000),
+                       x_clock_proof_id: str | None = Header(default=None, pattern=r'^[0-9a-f-]{36}$'),
                        node: dict = Depends(current_node)):
     if request.headers.get('content-type', '').split(';')[0].strip() != 'video/mp4':
         raise HTTPException(415, 'video_mp4_required')
@@ -70,7 +71,7 @@ async def upload_chunk(stream_id: str, request: Request,
         if size == 0:
             raise HTTPException(422, 'empty_video_chunk')
         await run_in_threadpool(service.validate_video, source, x_duration_ms)
-        return await run_in_threadpool(service.accept, stream_id, node['node_id'], sequence, captured, x_duration_ms, source)
+        return await run_in_threadpool(service.accept, stream_id, node['node_id'], sequence, captured, x_duration_ms, source, x_clock_proof_id)
     finally:
         try:
             if source:
@@ -116,7 +117,8 @@ def list_chunks(stream_id: str, after_sequence: int = Query(default=-1, ge=-1), 
                             (stream_id, after_sequence, service.time.time())).fetchall()
         from backend.capture_context.service import stream_fields
         extra=stream_fields(conn,stream_id)
-        items=[dict(row)|extra for row in rows]
+        from backend.capture_context.clock_proofs import chunk_fields
+        items=[dict(row)|extra|chunk_fields(conn,stream_id,row['sequence']) for row in rows]
     return {'items':items}
 
 
