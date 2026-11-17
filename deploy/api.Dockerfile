@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements-api.txt \
     && mkdir -p /app/runtime-db /app/storage /app/.private_media \
     && chown -R ppe:ppe /app
 COPY --chown=ppe:ppe backend /app/backend
+COPY --chown=ppe:ppe clock_contract.py /app/clock_contract.py
 ARG PPE_BUILD_REVISION=""
 ENV PPE_BUILD_REVISION=${PPE_BUILD_REVISION}
 USER ppe

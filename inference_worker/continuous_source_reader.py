@@ -42,7 +42,7 @@ def bounded_chunk(client,chunk_id,maximum):
 
 
 class ContinuousSourceReader:
-    def __init__(self,client,mux,*,offsets,decoder=decode_mp4,max_chunk_bytes,max_chunk_gap_seconds,downloader=None,require_capture_context=False,degrade_references=False,tolerate_source_gaps=False):
+    def __init__(self,client,mux,*,offsets,decoder=decode_mp4,max_chunk_bytes,max_chunk_gap_seconds,downloader=None,require_capture_context=False,degrade_references=False,tolerate_source_gaps=False,clock_verifier=None,allow_unverified_clock_proofs=False):
         if set(offsets)!=set(mux.cameras) or any(not math.isfinite(v) for v in offsets.values()):raise ValueError('camera clock mappings')
         if not math.isfinite(max_chunk_gap_seconds) or max_chunk_gap_seconds<0:raise ValueError('chunk gap policy')
         if type(degrade_references) is not bool:raise ValueError('reference failure mode')
@@ -58,6 +58,10 @@ class ContinuousSourceReader:
         self.require_capture_context=require_capture_context
         self.contexts={};self.finals={};self.cutoffs={};self.end_reasons={}
         self.streams={};self.sequence={};self.previous={}
+        if clock_verifier is not None and not callable(clock_verifier):raise ValueError('clock verifier required')
+        self.clock_verifier=clock_verifier
+        if type(allow_unverified_clock_proofs) is not bool:raise ValueError('invalid unverified proof mode')
+        self.allow_unverified_clock_proofs=allow_unverified_clock_proofs
 
     def poll(self):
         """At most one new chunk per camera; caller handles empty polls/stall TTL."""
@@ -111,6 +115,8 @@ class ContinuousSourceReader:
                     continue
                 if len(matches)!=1:raise SourceMuxError('camera_missing_or_ambiguous')
                 row=matches[0]
+                if self.clock_verifier is None and not self.allow_unverified_clock_proofs and row.get('clock_proof_version') is not None:
+                    raise SourceMuxError('clock_proof_profile_required')
                 stream=row['stream_id']
                 context=self._context(row)
                 if camera in self.contexts and self.contexts[camera]!=context:
@@ -164,12 +170,15 @@ class ContinuousSourceReader:
                     raise SourceUnavailableError('source_chunk_unavailable',camera=camera,
                         stream=stream,expected_sequence=expected)
                 chunk=chunks[0]
+                if self.clock_verifier is None and not self.allow_unverified_clock_proofs and chunk.get('clock_proof_id') is not None:
+                    raise SourceMuxError('clock_proof_profile_required')
                 if type(chunk['sequence']) is not int or (chunk['sequence']!=self.sequence[camera]+1 and not self.tolerate_source_gaps):
                     raise SourceMuxError('camera_chunk_discontinuity')
                 if final is not None and chunk['sequence']>final:
                     raise SourceMuxError('chunk_beyond_capture_final_sequence')
                 if self._context(chunk)!=context:
                     raise SourceMuxError('chunk_capture_context_mismatch')
+                if self.clock_verifier is not None:self.clock_verifier(camera,chunk)
                 if camera in self.previous:
                     previous=self.previous[camera]
                     if not self.tolerate_source_gaps and (chunk['sequence']!=self.sequence[camera]+1 or not is_continuous_chunk(
@@ -201,6 +210,7 @@ class ContinuousSourceReader:
         return self.mux.pop_ready()
 
     def _degrade(self,camera,error):
+        if str(error).startswith('clock_') and not str(error).startswith('clock_reference_'):return False
         if isinstance(error,httpx.HTTPStatusError) and error.response.status_code in (401,403):
             return False
         if (not self.degrade_references or camera==self.mux.primary
@@ -235,6 +245,11 @@ class ContinuousSourceReader:
                     self._degrade(camera,SourceMuxError("reference_initial_frame_timeout"))
             elif now-last>max_lag_seconds:
                 self._degrade(camera,SourceMuxError("reference_stalled"))
+
+    def fail_clock_references(self,failures):
+        for camera,reason in failures.items():
+            if camera not in self.mux.ended:
+                if not self._degrade(camera,SourceMuxError(reason)):raise SourceMuxError(reason)
 
     def waiting_first_references(self):
         return tuple(c for c in self.mux.cameras if c!=self.mux.primary

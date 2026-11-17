@@ -65,7 +65,11 @@ def owned(conn, context_id, node_id=None, camera_id=None, active=False):
 def stream_fields(conn,stream_id):
     row=conn.execute('''SELECT c.context_id,c.session_id,c.assignment_version FROM capture_context_registry c
         JOIN capture_context_stream m ON m.context_id=c.context_id WHERE m.stream_id=?''',(stream_id,)).fetchone()
-    return {} if row is None else dict(capture_context_id=row['context_id'],capture_session_id=row['session_id'],assignment_version=row['assignment_version'])
+    if row is None:return {}
+    result=dict(capture_context_id=row['context_id'],capture_session_id=row['session_id'],assignment_version=row['assignment_version'])
+    clock=conn.execute('SELECT version,epoch,run_id FROM capture_clock_stream WHERE stream_id=?',(stream_id,)).fetchone()
+    if clock:result.update(clock_proof_version=clock['version'],clock_epoch=clock['epoch'],clock_run_id=clock['run_id'])
+    return result
 
 
 def assert_reassignment_allowed(conn,camera_id):
@@ -90,6 +94,8 @@ def stop(context_id,node_id,final_sequences):
             server_now=datetime.now(timezone.utc),trusted_stop_acknowledged=True,policy=POLICY)
         except ValueError as e:raise HTTPException(409,str(e))
         for ident in expected:conn.execute("UPDATE video_stream SET status='closed' WHERE stream_id=?",(ident,))
+        from backend.capture_context.clock_proofs import prune_settled_context
+        prune_settled_context(conn,context_id)
         return public(result)|{'retired':True}
 
 

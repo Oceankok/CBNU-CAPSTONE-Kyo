@@ -75,7 +75,7 @@ def read_config(path,primary,*,now):
     config=json.loads(Path(path).read_text())
     required={'state_directory','clocks','capture','mux','outbox','delivery','transport',
               'lifecycle','source','decoder','metadata_steps_per_pump','max_lag_seconds'}
-    if not isinstance(config,dict) or set(config)!=required:raise ValueError('continuous config keys must be explicit')
+    if not isinstance(config,dict) or set(config) not in (required, required|{'clock_proof'}):raise ValueError('continuous config keys must be explicit')
     if (config['capture'].get('manual_review') or config['mux'].get('manual_review') or config['source'].get('tolerate_source_gaps')
             or config['lifecycle'].get('review_episode_continuity')
             or config['lifecycle'].get('evidence_mode','verified_continuous')!='verified_continuous'):
@@ -87,12 +87,17 @@ def read_config(path,primary,*,now):
         if (not isinstance(camera,str) or not camera or set(row)!=
                 {'offset','error_bound','verified','epoch','valid_until'} or row['verified'] is not True
                 or not isinstance(row['epoch'],str) or not row['epoch']
-                or parse_capture_time(row['valid_until']).timestamp()<=now
+                or (parse_capture_time(row['valid_until']).timestamp()<=now and 'clock_proof' not in config)
                 or any(isinstance(row[k],bool) or not isinstance(row[k],(int,float)) for k in ('offset','error_bound'))
                 or not math.isfinite(row['offset']) or not math.isfinite(row['error_bound']) or row['error_bound']<0):
             raise ValueError('explicit current camera calibration required')
     if len({row['epoch'] for row in clocks.values()})!=1:
         raise ValueError('camera timestamps require a shared declared epoch')
+    if 'clock_proof' in config:
+        from inference_worker.clock_leases import validate_config
+        validate_config(config['clock_proof'],clocks)
+        if any(row['error_bound']>min(config['capture']['max_clock_error'],config['mux']['max_clock_error']) for row in clocks.values()):
+            raise ValueError('clock proof envelope exceeds capture or mux policy')
     if type(config['metadata_steps_per_pump']) is not int or config['metadata_steps_per_pump']<=0:
         raise ValueError('explicit metadata dispatch budget required')
     directory=Path(config['state_directory'])
@@ -111,7 +116,7 @@ def read_config(path,primary,*,now):
             (SegmentSpool,dict(root=None),config['capture'].get('spool_config',{})),
             (TimestampSegmentWriter,dict(spool=None),config['capture'].get('writer_config',{}))]
     for cls,fixed,values in checks:
-        if not isinstance(values,dict) or set(values)&({'clock','transport','decoder','downloader','before_spool_create','capture_output_fps'}|set(fixed)):
+        if not isinstance(values,dict) or set(values)&({'clock','transport','decoder','downloader','before_spool_create','capture_output_fps','clock_verifier','allow_unverified_clock_proofs'}|set(fixed)):
             raise ValueError('configuration cannot override dependencies')
         try:inspect.signature(cls).bind(**fixed,**values)
         except TypeError as exc:raise ValueError('incomplete or unknown configuration fields') from exc
@@ -136,10 +141,15 @@ def run(args):
     if args.submit_events and getattr(detector,'supports_no_helmet',None) is False:
         raise ValueError('submission mode does not match existing detector capability')
     client=VideoClient();priority=InferenceLoad(client)
+    leases=None
     box=transport=dispatcher=capture=runtime=mux=decoder=None
     stop_reason='runner_stopped_or_failed';tail_done=False
     try:
         state=Path(config['state_directory']);clocks=config['clocks'];ids=list(clocks)
+        if 'clock_proof' in config:
+            from inference_worker.clock_leases import ClockLeaseSet
+            leases=ClockLeaseSet(client,config['clock_proof'],clocks,primary_camera=args.camera_id)
+            leases.refresh(force=True)
         box=CaptureOutbox(state/'journal',private_root=state/'raw',**config['outbox'])
         transport=PrivateClipTransport(server_url=client.server_url,token=os.environ['PPE_PROCESSING_NODE_TOKEN'],
             private_root=state/'raw',**config['transport'])
@@ -148,7 +158,8 @@ def run(args):
         box.bind_runtime({'endpoint':client.server_url,'primary':args.camera_id,
             'clocks':clocks,'model_version':detector.model_version,
             'assessment_mode':'review' if review else 'verified_helmet',
-            'detector_contract':getattr(detector,'contract_manifest',None)})
+            'detector_contract':getattr(detector,'contract_manifest',None),
+            **({'clock_proof_contract':config['clock_proof']} if leases else {})})
         SessionRecovery(box,dispatcher,endpoint=client.server_url).run()
         dispose_previous_sources(box,spool_config=config['capture']['spool_config'],
                                  verified_receipt=dispatcher.cleanup_receipt_verified)
@@ -167,15 +178,26 @@ def run(args):
             clock_error_by_camera={c:r['error_bound'] for c,r in clocks.items()},**config['mux'])
         decoder=PrivateChunkDecoder(box,**config['decoder'])
         reader=ContinuousSourceReader(client,mux,decoder=decoder,offsets={c:r['offset'] for c,r in clocks.items()},
+            clock_verifier=leases.validate_chunk if leases else None,
+            allow_unverified_clock_proofs=manual,
             **{**config['source'],'degrade_references':True})
+        def sync_clock_failures():
+            if leases:
+                reader.fail_clock_references(leases.failures)
+                for camera in leases.failures:runtime.end_source(camera,'source_failed')
+                for metadata in reader.reference_failures.values():box.record_reference_failure(metadata)
+        sync_clock_failures()
         tracker=PersonTracker(max_missing_seconds=max(lifecycle_config['missing_grace_seconds'],0.1));policy_signature=None;processed=0;primary_sequence=None
         source_started=time.monotonic()
         primary_arrival=source_started
         last_arrival_sequence=None
         while processed<args.max_chunks and not(args.stop_file and args.stop_file.exists()):
-            now=time.time()
-            if not manual and any(parse_capture_time(r['valid_until']).timestamp()<=now for r in clocks.values()):
-                raise ValueError('camera calibration expired')
+            if leases:
+                leases.refresh();sync_clock_failures();now=leases.server_now()
+            else:
+                now=time.time()
+                if not manual and any(parse_capture_time(r['valid_until']).timestamp()<=now for r in clocks.values()):
+                    raise SourceMuxError('clock_calibration_expired')
             if manual and last_arrival_sequence is not None and time.monotonic()-primary_arrival>config['max_lag_seconds']:
                 raise SourceMuxError('primary_arrival_timeout')
             try:
@@ -202,6 +224,7 @@ def run(args):
                 else:
                     batch=poll_source(reader,mux,now=now,elapsed=time.monotonic()-source_started,
                                       max_lag_seconds=config['max_lag_seconds'])
+                    if leases:leases.refresh();sync_clock_failures()
                 for metadata in reader.reference_failures.values():box.record_reference_failure(metadata)
             except httpx.HTTPError as error:
                 if not manual or not temporary_http(error):raise
@@ -227,12 +250,18 @@ def run(args):
             for camera in ended:
                 if not remaining[camera]:runtime.end_source(camera,reader.end_reasons[camera])
             for camera,timestamp,frame in batch:
+                if leases:
+                    leases.check();sync_clock_failures()
+                    if camera in leases.failures:
+                        remaining[camera]-=1
+                        continue
                 assessments=None
                 if camera==args.camera_id:
                     priority.refresh()
                     rows=tracker.update(detect_assess(detector,frame,
                         mode="review" if review else "verified_helmet"),timestamp)
                     assessments=policy_assessments(rows,policy,frame.shape,review_only=review)
+                if leases:leases.check();sync_clock_failures()
                 runtime.frame(camera,timestamp,frame,assessments=assessments)
                 remaining[camera]-=1
                 if camera in ended and not remaining[camera]:runtime.end_source(camera,reader.end_reasons[camera])

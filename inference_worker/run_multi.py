@@ -93,6 +93,19 @@ def continuous_profiles(cameras, *, entries=None, path=None, primary=None, valid
     return profiles
 
 
+def probe_clock_profiles(profiles):
+    """Opt-in proof compatibility is checked before model load; no static fallback."""
+    from inference_worker.run_continuous import read_config
+    from inference_worker.clock_leases import ClockLeaseSet
+    from inference_worker.video_client import VideoClient
+    for primary,path in profiles.items():
+        config=read_config(path,primary,now=time.time())
+        if 'clock_proof' not in config:continue
+        client=VideoClient()
+        try:ClockLeaseSet(client,config['clock_proof'],config['clocks'],primary_camera=primary).refresh(force=True)
+        finally:client.close()
+
+
 def child_main(module):
     """Preserve permanent request/config errors across the process boundary."""
     try:
@@ -201,7 +214,8 @@ def commands(cameras, model, stop_file, *, mode=None, buffer_mib=256,
 
 def supervise(command_list, stop_file, *, camera_count=0, restart_limit=0, restart_delay=0,
               reference_restart_limit=0, reference_restart_delay=0, failure_policy='fail-fast',
-              process_trees=False, temporary_root=None, shutdown_grace_seconds=70):
+              process_trees=False, temporary_root=None, shutdown_grace_seconds=70,
+              return_after_clean_source=False):
     if not math.isfinite(shutdown_grace_seconds) or shutdown_grace_seconds < 0:
         raise ValueError('Invalid shutdown grace')
     if failure_policy not in {'isolate', 'fail-fast'}:
@@ -225,6 +239,7 @@ def supervise(command_list, stop_file, *, camera_count=0, restart_limit=0, resta
     retries = [0] * len(command_list)
     restart_at = {}
     inactive = set()
+    failed_exit = False
     environment = os.environ.copy()
     # Keep all decoder/clip temporary files within this supervisor's lifetime.
     environment.update(TEMP=str(temporary_root or stop_file.parent), TMP=str(temporary_root or stop_file.parent))
@@ -241,6 +256,7 @@ def supervise(command_list, stop_file, *, camera_count=0, restart_limit=0, resta
                     break
                 if trees:
                     trees.release(child)
+                if child.returncode != 0:failed_exit = True
                 is_camera = index < camera_count
                 limit = restart_limit if is_camera else reference_restart_limit
                 delay = restart_delay if is_camera else reference_restart_delay
@@ -276,6 +292,8 @@ def supervise(command_list, stop_file, *, camera_count=0, restart_limit=0, resta
                     # A subsequent loop either schedules a bounded retry or fails.
                     print(f'[{role} RESTART] slot={index} launch failed', flush=True)
             if failure_policy == 'isolate' and all(index in inactive for index in range(camera_count)):
+                if return_after_clean_source and not failed_exit:
+                    return True
                 raise RuntimeError('No active camera slots remain; all peers are stopping')
             time.sleep(0.5)
     except KeyboardInterrupt:
@@ -301,7 +319,7 @@ def supervise(command_list, stop_file, *, camera_count=0, restart_limit=0, resta
                 trees.close()
 
 
-def main(argv=None):
+def main(argv=None, *, return_after_clean_source=False):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--camera-id', action='append', required=True)
     parser.add_argument('--model-path', type=Path, required=True)
@@ -367,8 +385,10 @@ def main(argv=None):
         try:
             if args.runner == 'continuous':
                 stage = 'continuous_clock_calibration_snapshot_state'
-                continuous_profiles(args.camera_id, entries=args.continuous_profile,
+                selected=continuous_profiles(args.camera_id, entries=args.continuous_profile,
                                     path=args.continuous_config, primary=args.primary_camera_id)
+                stage = 'continuous_clock_proof_protocol'
+                probe_clock_profiles(selected)
                 stage = 'shared_auth_model_dependencies'
             preflight(args.camera_id, args.model_path.resolve(), mode, continuous=args.runner == 'continuous')
         except Exception as error:
@@ -394,7 +414,7 @@ def main(argv=None):
         print(f'[SUPERVISOR] runner={args.runner} policy={args.failure_policy} '
               f'camera_retries={0 if continuous else args.camera_restart_limit} '
               f'reference_retries={0 if continuous or mode=="--submit-review-candidates" else args.reference_restart_limit}', flush=True)
-        supervise(commands(args.camera_id, args.model_path.resolve(), stop,
+        return supervise(commands(args.camera_id, args.model_path.resolve(), stop,
                             mode=mode, buffer_mib=args.buffer_mib,
                             profiles=profiles), stop,
                   camera_count=len(args.camera_id),
@@ -402,7 +422,8 @@ def main(argv=None):
                   restart_delay=args.camera_restart_delay or 0,
                   reference_restart_limit=0 if continuous or mode=='--submit-review-candidates' else args.reference_restart_limit,
                   reference_restart_delay=args.reference_restart_delay or 0,
-                  failure_policy=args.failure_policy, process_trees=True, temporary_root=Path(folder))
+                  failure_policy=args.failure_policy, process_trees=True, temporary_root=Path(folder),
+                  return_after_clean_source=return_after_clean_source)
 
 
 if __name__ == '__main__':

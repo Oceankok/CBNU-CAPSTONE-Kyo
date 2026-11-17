@@ -35,7 +35,10 @@ class ReleaseContinuousEnvironmentTests(TestCase):
                 env=env, check=True, capture_output=True, text=True, timeout=30)
         services = json.loads(result.stdout)['services']
         keys = ['PPE_CONTINUOUS_EVENTS_ENABLED', 'PPE_CAPTURE_CONTEXT_ENABLED',
-                'PPE_CONTINUOUS_MAX_CLOCK_UNCERTAINTY_SECONDS']
+                'PPE_CONTINUOUS_MAX_CLOCK_UNCERTAINTY_SECONDS', 'PPE_CLOCK_PROOF_ENABLED',
+                'PPE_CLOCK_SERVER_EPOCH', 'PPE_CLOCK_TTL_SECONDS', 'PPE_CLOCK_MAX_RTT_SECONDS',
+                'PPE_CLOCK_DRIFT_PPM', 'PPE_CLOCK_SAMPLE_ERROR_SECONDS', 'PPE_CLOCK_MAX_ERROR_SECONDS',
+                'PPE_CLOCK_STEP_TOLERANCE_SECONDS']
         forwarded = {key:services['api']['environment'][key] for key in keys}
         for service in ['maintenance', 'db-init']:
             self.assertEqual({key:services[service]['environment'][key] for key in keys}, forwarded)
@@ -75,6 +78,17 @@ class ReleaseContinuousEnvironmentTests(TestCase):
         start, stop, _ = self.exercise(env)
         self.assertEqual(start.status_code,503,start.text)
         self.assertEqual(stop.status_code,503,stop.text)
+
+    def test_clock_proof_release_environment_is_explicit_and_default_off(self):
+        self.assertEqual(self.environment()['PPE_CLOCK_PROOF_ENABLED'],'false')
+        from clock_contract import ClockPolicy
+        policy=ClockPolicy(30,1,100,.02,.25,.05)
+        expected={'PPE_CLOCK_'+key.upper():str(value) for key,value in policy.public().items()}
+        expected.update(PPE_CLOCK_PROOF_ENABLED='true',PPE_CLOCK_SERVER_EPOCH='review-only-epoch')
+        actual=self.environment(**expected)
+        for key,value in expected.items():self.assertEqual(actual[key],value,key)
+        self.assertIn('!clock_contract.py',(ROOT/'.dockerignore').read_text())
+        self.assertIn('COPY --chown=ppe:ppe clock_contract.py /app/clock_contract.py',(ROOT/'deploy/api.Dockerfile').read_text())
 
     def test_explicit_protocol_opt_in_reaches_api_but_never_enables_automatic_review(self):
         env = self.environment(PPE_CONTINUOUS_EVENTS_ENABLED='true', PPE_CAPTURE_CONTEXT_ENABLED='true',

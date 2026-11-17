@@ -16,6 +16,7 @@ from backend.education.models import MaterialContent
 from backend.db.event_repository import get_connection
 from backend.db.init_db import init_database
 from backend.db.connection import schema_version
+from backend.db.migrations import LATEST_VERSION
 
 
 OUTPUT = MaterialContent(title='AI helmet', body='Inspect before work.', checklist=['Check fit'])
@@ -295,7 +296,7 @@ runpy.run_module('backend.education.auto_translation',run_name='__main__')
             before=[dict(r) for r in conn.execute('SELECT * FROM education_translation_budget ORDER BY bucket')]
         init_database()
         with get_connection() as conn:
-            self.assertEqual(schema_version(conn),36)
+            self.assertEqual(schema_version(conn),LATEST_VERSION)
             self.assertEqual([dict(r) for r in conn.execute('SELECT * FROM education_translation_budget ORDER BY bucket')],before)
             conn.execute('UPDATE education_material SET version=version+1 WHERE material_id=?',(self.original['material_id'],))
         self.original['version'] += 1
@@ -362,7 +363,7 @@ runpy.run_module('backend.education.auto_translation',run_name='__main__')
                 conn.execute('PRAGMA user_version=35')
         init_database(); init_database()
         with get_connection() as conn:
-            self.assertEqual(schema_version(conn),36)
+            self.assertEqual(schema_version(conn),LATEST_VERSION)
             for table, rows in before.items():
                 self.assertEqual([dict(r) for r in conn.execute('SELECT * FROM '+table)], rows)
         self.assertEqual(self.item()['translation']['status'],'missing')

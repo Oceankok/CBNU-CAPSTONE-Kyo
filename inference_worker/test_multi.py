@@ -168,6 +168,19 @@ class MultiCameraTests(unittest.TestCase):
             self.run_recovery([self.child(1), self.child(1), reference], limit=0, policy='isolate')
         reference.wait.assert_called()
 
+    def test_clean_source_return_is_opt_in_and_failure_still_raises(self):
+        for codes,success in (((0,0),True),((0,1),False),((1,0),False)):
+            with self.subTest(codes=codes), TemporaryDirectory() as folder:
+                children=[self.child(code) for code in codes]
+                with patch('inference_worker.run_multi.subprocess.Popen',side_effect=children):
+                    kwargs=dict(camera_count=2,failure_policy='isolate',return_after_clean_source=True)
+                    if success:
+                        self.assertIs(supervise([['a'],['b']],Path(folder)/'stop',**kwargs),True)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError,'No active camera'):
+                            supervise([['a'],['b']],Path(folder)/'stop',**kwargs)
+                for child in children:child.wait.assert_called()
+
     def test_fatal_errors_stop_every_policy_without_retry(self):
         for code in (2, FATAL_EXIT):
             for policy in ('isolate', 'fail-fast'):

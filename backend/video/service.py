@@ -173,7 +173,7 @@ def validate_video(path, duration_ms):
         cap.release()
 
 
-def accept(ident, node_id, sequence, capture_start, duration_ms, source):
+def accept(ident, node_id, sequence, capture_start, duration_ms, source, clock_proof_id=None):
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     size = source.stat().st_size
     moved = None
@@ -187,6 +187,8 @@ def accept(ident, node_id, sequence, capture_start, duration_ms, source):
                 context=owned(conn,extra['capture_context_id'],node_id,current['camera_id'],active=True)
                 if datetime.fromisoformat(capture_start)<datetime.fromisoformat(context['valid_from']) or datetime.fromisoformat(capture_start).timestamp()+duration_ms/1000>time.time():
                     raise HTTPException(422,'capture_before_session')
+            from backend.capture_context.clock_proofs import bind_chunk
+            bind_chunk(conn,ident,sequence,clock_proof_id,capture_start,duration_ms)
             if extra:
                 receipt=conn.execute('SELECT * FROM capture_chunk_receipt WHERE stream_id=? AND sequence=?',(ident,sequence)).fetchone()
                 if receipt:

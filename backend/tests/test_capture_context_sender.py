@@ -71,6 +71,15 @@ class ContextSenderTests(TestCase):
             with self.assertRaises(OSError):self.runner.drain()
         self.assertEqual(SessionRunner(self.runner.root,self.client).state['acknowledged_sequence'],0)
         self.runner.finish();self.assertEqual(len(self.client.uploads),1)
+    def test_archive_capacity_failure_keeps_unacknowledged_source(self):
+        self.runner.state['automatic_archive_dir']=str(Path(self.tmp)/'archive')
+        self.runner.state['automatic_archive_max_bytes']='2'
+        self.runner.save();p=self.chunk()
+        with self.assertRaisesRegex(OSError,'archive_capacity'):self.runner.drain()
+        self.assertTrue(p.exists())
+        self.assertEqual(self.runner.state['acknowledged_sequence'],-1)
+        self.assertFalse(self.runner.state['closed'])
+
     def test_final_sequence_missing_blocks_stop(self):
         self.chunk();self.proof(frames=30)
         with self.assertRaisesRegex(ValueError,'final_outbox'):self.runner.finish()

@@ -136,7 +136,7 @@ def is_stale_chunk(capture_start):
 def delete_chunk_files(path):
     """Delete acknowledged/discarded footage, retaining a restart-safe intent."""
     marker = path.with_suffix(".cleanup")
-    files = (path, path.with_suffix(".txt"), path.with_suffix(".ready"))
+    files = (path, path.with_suffix(".txt"), path.with_suffix(".ready"), path.with_suffix('.clock.json'))
     try:
         # Persist intent before removing anything, including the capture time.
         # Sequence allocation reserves this number until cleanup completes.
