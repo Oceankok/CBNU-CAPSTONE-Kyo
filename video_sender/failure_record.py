@@ -43,3 +43,11 @@ def record_failure(root,run_id,component,error):
         finally:tmp.unlink(missing_ok=True)
     except Exception:
         return
+
+
+def record_runner_failure(runner, error):
+    """Runner lookup is diagnostic too and must not mask the original error."""
+    try:
+        record_failure(runner.root,runner.state['run_id'],'sender',error)
+    except Exception:
+        return

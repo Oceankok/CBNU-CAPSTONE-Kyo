@@ -275,8 +275,8 @@ def main():
             with runner_lock(runner.root):
                 runner.run_capture(a.camera_index)
         except Exception as error:
-            from video_sender.failure_record import record_failure
-            record_failure(runner.root,runner.state['run_id'],'sender',error)
+            from video_sender.failure_record import record_runner_failure
+            record_runner_failure(runner,error)
             raise
         return 0
     client=ContextClient(os.environ['VIDEO_SERVER_URL'],os.environ['VIDEO_NODE_TOKEN'])
@@ -287,8 +287,8 @@ def main():
             with runner_lock(runner.root):
                 runner.finish()  # no camera restart and no discarded outbox
         except Exception as error:
-            from video_sender.failure_record import record_failure
-            record_failure(runner.root,runner.state['run_id'],'sender',error)
+            from video_sender.failure_record import record_runner_failure
+            record_runner_failure(runner,error)
             raise
     else:
         runner=(SessionRunner(a.directory,client) if a.resume_start else
@@ -297,8 +297,8 @@ def main():
             with runner_lock(runner.root):
                 runner.run_capture(a.camera_index)
         except Exception as error:
-            from video_sender.failure_record import record_failure
-            record_failure(runner.root,runner.state['run_id'],'sender',error)
+            from video_sender.failure_record import record_runner_failure
+            record_runner_failure(runner,error)
             raise
 
 
