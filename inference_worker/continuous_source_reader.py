@@ -166,8 +166,9 @@ class ContinuousSourceReader:
                 return self.mux.pop_ready()
         cameras=self.mux.cameras
         if self.degrade_references and not self.tolerate_source_gaps:
-            cameras=tuple(sorted(cameras,key=lambda c:(self.mux.latest.get(c,float('-inf')),c==self.mux.primary)))
             blockers=self.mux.pressure_blockers()
+            if self.reserve_chunk_frames is not None or blockers:
+                cameras=tuple(sorted(cameras,key=lambda c:(self.mux.latest.get(c,float('-inf')),c==self.mux.primary)))
             # Give blocking sources first opportunity to catch up. Never label
             # a source stalled while its advertised next chunk is available.
             available=[c for c in blockers if c in selected and c in self.sequence
@@ -249,7 +250,7 @@ class ContinuousSourceReader:
                 if not raw or len(raw)>self.maximum:raise SourceMuxError('chunk_size_limit')
                 frames=iter(self.decoder(raw,with_timing=True,duration_ms=chunk['duration_ms']))
                 self.pending_decode=dict(camera=camera,chunk=chunk,final=final,frames=frames,count=0,frame=None)
-                batch=self._advance_decode(selected)
+                batch=self._advance_decode(selected,defer_ready=True)
                 if self.pending_decode is not None:return batch
                 # Keep released frames in the mux until all selected sources
                 # are handled, except when pressure requires an early return.
@@ -258,7 +259,7 @@ class ContinuousSourceReader:
                 if not self._degrade(camera,error):raise
         return self.mux.pop_ready()
 
-    def _advance_decode(self,selected):
+    def _advance_decode(self,selected,*,defer_ready=False):
         pending=self.pending_decode;frames=pending['frames'];camera=pending['camera'];chunk=pending['chunk']
         try:
             while True:
@@ -271,7 +272,7 @@ class ContinuousSourceReader:
                         if pending['final'] is not None and chunk['sequence']==pending['final']:
                             self._end(camera,'reference_drain_cutoff' if camera in self.cutoffs else 'source_ended')
                         self.pending_decode=None
-                        return self.mux.pop_ready()
+                        return [] if defer_ready else self.mux.pop_ready()
                 index,fps,frame=pending['frame']
                 stamp=frame_timestamp(chunk['capture_start_at'],index,fps).timestamp()+self.offsets[camera]
                 if self.mux.would_overflow(frame):
