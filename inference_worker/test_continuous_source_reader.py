@@ -1,4 +1,5 @@
 from unittest import TestCase
+from unittest.mock import patch
 import numpy as np
 from inference_worker.continuous_source_mux import SourceMux,SourceMuxError
 from inference_worker.continuous_source_reader import ContinuousSourceReader
@@ -40,6 +41,109 @@ class ReaderTests(TestCase):
         for stream in c.streams:stream['last_sequence']=0
         self.assertEqual(r.poll(),[])
         c.seq=1;self.assertEqual(len(r.poll()),4)
+
+    def test_pressure_fails_only_blocking_reference_preserves_buffer_and_capacity(self):
+        for kind in ('frames','bytes'):
+            with self.subTest(kind=kind):
+                c,r=self.make();m=r.mux;r.degrade_references=True
+                m.max_frames=20 if kind=='frames' else 100
+                m.max_bytes=10000 if kind=='frames' else 240
+                frame=np.zeros((2,2,3),np.uint8)
+                r.streams={'main':'a','ref':'b'};r.sequence={'main':-1,'ref':-1}
+                m.push('ref',0,frame);m.push('main',0,frame);m.pop_ready()
+                m.push('ref',.25,frame)
+                for i in range(1,15):m.push('main',float(i),frame)
+                self.assertLessEqual(len(m.queue),m.max_frames);self.assertLessEqual(m.bytes,m.max_bytes)
+                batch=r.poll()
+                self.assertEqual(r.reference_failures['ref']['failure_code'],'reference_watermark_pressure')
+                self.assertIn(('ref',.25),[(cam,t) for cam,t,_ in batch])
+                self.assertEqual(m.bytes,0);self.assertFalse(m.failure)
+                self.assertEqual(r.end_reasons['ref'],'source_failed')
+                self.assertNotIn('main',m.ended)
+
+    def test_pressure_prioritizes_advertised_reference_chunk(self):
+        c,r=self.make();m=r.mux;r.degrade_references=True
+        frame=np.zeros((2,2,3),np.uint8)
+        r.streams={'main':'a','ref':'b'};r.sequence={'main':-1,'ref':-1}
+        c.streams[1]['last_sequence']=0
+        m.push('ref',0,frame);m.push('main',0,frame);m.pop_ready()
+        for i in range(1,16):m.push('main',1767225600.+i,frame)
+        result=r.poll()
+        self.assertFalse(r.reference_failures)
+        self.assertEqual(r.sequence['ref'],0)
+        self.assertEqual(r.sequence['main'],-1)
+        self.assertTrue(any(cam=='ref' for cam,_,_ in result))
+
+    def test_pressure_does_not_hide_reference_authentication_failure(self):
+        import httpx
+        c,r=self.make();m=r.mux;r.degrade_references=True
+        frame=np.zeros((2,2,3),np.uint8)
+        r.streams={'main':'a','ref':'b'};r.sequence={'main':-1,'ref':-1}
+        c.streams[1]['last_sequence']=0
+        m.push('ref',0,frame);m.push('main',0,frame);m.pop_ready()
+        for i in range(1,16):m.push('main',float(i),frame)
+        request=httpx.Request('GET','https://test')
+        def unauthorized(*args):raise httpx.HTTPStatusError('denied',request=request,response=httpx.Response(401,request=request))
+        c.list_chunks=unauthorized
+        with self.assertRaises(httpx.HTTPStatusError):r.poll()
+        self.assertEqual(r.reference_failures,{})
+
+    def test_mid_chunk_pressure_resumes_exact_decoder_without_sequence_loss(self):
+        for limit in ('frames','bytes'):
+            with self.subTest(limit=limit):
+                c,r=self.make();m=r.mux;r.degrade_references=True
+                m.max_frames=20 if limit=='frames' else 100
+                m.max_bytes=10000 if limit=='frames' else 240
+                r.streams={'main':'a','ref':'b'};r.sequence={'main':-1,'ref':-1}
+                c.streams[0]['last_sequence']=0
+                original_chunks=c.list_chunks
+                c.list_chunks=lambda stream,after: [] if stream=='b' else original_chunks(stream,after)
+                frame=np.zeros((2,2,3),np.uint8);closed=[]
+                m.push('ref',0,frame);m.push('main',0,frame);m.pop_ready()
+                def decode(*args,**kwargs):
+                    try:
+                        for i in range(45):yield i,45,frame
+                    finally:closed.append(True)
+                r.decoder=decode
+                output=[]
+                for _ in range(10):
+                    output.extend(r.poll())
+                    self.assertLessEqual(len(m.queue),m.max_frames)
+                    self.assertLessEqual(m.bytes,m.max_bytes)
+                    if r.sequence['main']==0 and r.pending_decode is None:break
+                output.extend(m.pop_ready())
+                self.assertEqual(len(output),45)
+                self.assertEqual([t for _,t,_ in output],sorted(t for _,t,_ in output))
+                self.assertEqual(r.sequence['main'],0);self.assertEqual(closed,[True])
+                self.assertEqual(r.reference_failures['ref']['failure_code'],'reference_watermark_pressure')
+                self.assertNotIn('main',m.ended)
+
+    def test_reserve_checked_again_before_second_chunk_in_same_poll(self):
+        c,r=self.make();m=r.mux;r.degrade_references=True
+        r.reserve_chunk_frames=5;r.reserve_chunk_bytes=60
+        m.max_frames=20;m.max_bytes=10000
+        c.streams[0]['last_sequence']=0;c.streams[1]['last_sequence']=0
+        r.streams={'main':'a','ref':'b'};r.sequence={'main':-1,'ref':-1}
+        frame=np.zeros((2,2,3),np.uint8)
+        for i in range(14):m.push('main',float(i),frame)
+        seen=[];original=r.decoder
+        def decode(*args,**kwargs):seen.append(True);return original(*args,**kwargs)
+        r.decoder=decode
+        with patch.object(m,'pressure_blockers',return_value=()), patch.object(m,'pop_ready',return_value=[]):
+            with self.assertRaisesRegex(SourceMuxError,'chunk_reserve_unavailable'):r.poll()
+        self.assertEqual(len(seen),1)
+        self.assertEqual(r.sequence['ref'],0)
+        self.assertEqual(r.sequence['main'],-1)
+        self.assertEqual(len(m.queue),16)
+        self.assertEqual(r.reference_failures,{})
+
+    def test_pressure_stalled_primary_fails_primary_without_masking(self):
+        c,r=self.make();m=r.mux;r.degrade_references=True
+        frame=np.zeros((2,2,3),np.uint8)
+        m.push('ref',0,frame);m.push('main',0,frame);m.pop_ready()
+        for i in range(1,16):m.push('ref',float(i),frame)
+        with self.assertRaisesRegex(SourceMuxError,'primary_source_pressure_stalled'):r.poll()
+        self.assertEqual(r.reference_failures,{})
 
     def test_bounded_http_rejects_oversized_or_encoded_sources(self):
         import httpx

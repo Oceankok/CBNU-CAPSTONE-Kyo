@@ -98,7 +98,7 @@ class SourceMux:
         self.ended.add(camera)
 
     @locked
-    def fail_reference(self,camera,reason):
+    def fail_reference(self,camera,reason,*,preserve_queued=False):
         """A failure removes a watermark dependency, never grants clean EOS."""
         if camera==self.primary or camera not in self.cameras:
             raise ValueError("reference failure owner")
@@ -107,9 +107,26 @@ class SourceMux:
         self.failure=None
         self.failed_sources[camera]=reason
         self.ended.add(camera)
-        self.queue=[row for row in self.queue if row[3]!=camera]
-        heapq.heapify(self.queue)
-        self.bytes=sum(row[4].nbytes for row in self.queue)
+        if not preserve_queued:
+            self.queue=[row for row in self.queue if row[3]!=camera]
+            heapq.heapify(self.queue)
+            self.bytes=sum(row[4].nbytes for row in self.queue)
+
+    @locked
+    def would_overflow(self,frame):
+        if self.failure:raise SourceMuxError(self.failure)
+        return len(self.queue)>=self.max_frames or self.bytes+frame.nbytes>self.max_bytes
+
+    @locked
+    def pressure_blockers(self):
+        """Identify only watermark blockers with actual queued frames ahead."""
+        if self.failure:raise SourceMuxError(self.failure)
+        if self.manual_review or not self.queue:return ()
+        if len(self.queue)*4 < self.max_frames*3 and self.bytes*4 < self.max_bytes*3:return ()
+        active=[c for c in self.cameras if c not in self.ended]
+        if self.primary not in self.latest:return ()
+        high=max(row[0] for row in self.queue)
+        return tuple(c for c in active if c not in self.latest or self.latest[c]<high)
 
     @locked
     def drained_sources(self):

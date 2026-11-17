@@ -138,7 +138,11 @@ try:
             process.stdin.write(frame.tobytes())
             frame_count += 1
 
-        except BrokenPipeError:
+        except BrokenPipeError as error:
+            if CONTROL_RUN_ID:
+                if __package__:from .failure_record import record_failure
+                else:from failure_record import record_failure
+                record_failure(OUTPUT_DIR,CONTROL_RUN_ID,'capture',error)
             print("FFmpeg 프로세스가 종료되었습니다.")
             break
 
@@ -152,8 +156,12 @@ try:
 
 except KeyboardInterrupt:
     print("\n영상 저장 종료")
-
-
+except Exception as error:
+    if CONTROL_RUN_ID:
+        if __package__:from .failure_record import record_failure
+        else:from failure_record import record_failure
+        record_failure(OUTPUT_DIR,CONTROL_RUN_ID,'capture',error)
+    raise
 
 finally:
     reader_failure = None
@@ -169,6 +177,10 @@ finally:
     publish_completed_segments(OUTPUT_DIR, SEGMENT_LIST)
     SEGMENT_LIST.unlink(missing_ok=True)
     if reader_failure is not None:
+        if CONTROL_RUN_ID:
+            if __package__:from .failure_record import record_failure
+            else:from failure_record import record_failure
+            record_failure(OUTPUT_DIR,CONTROL_RUN_ID,'capture',reader_failure)
         # Encoding can finish while a camera read is still blocked. That is not
         # successful capture-stop proof; keep context recovery fail-closed.
         raise reader_failure

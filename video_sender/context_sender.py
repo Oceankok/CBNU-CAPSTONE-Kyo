@@ -271,20 +271,35 @@ def main():
             runner=SessionRunner.create(a.directory,client,os.environ['VIDEO_CAMERA_ID'])
         except Exception:
             return PRE_SESSION_FAILURE_EXIT
-        with runner_lock(runner.root):
-            runner.run_capture(a.camera_index)
+        try:
+            with runner_lock(runner.root):
+                runner.run_capture(a.camera_index)
+        except Exception as error:
+            from video_sender.failure_record import record_failure
+            record_failure(runner.root,runner.state['run_id'],'sender',error)
+            raise
         return 0
     client=ContextClient(os.environ['VIDEO_SERVER_URL'],os.environ['VIDEO_NODE_TOKEN'])
     if a.resume_drain:
         runner=SessionRunner(a.directory,client)
         if runner.state['closed']:return
-        with runner_lock(runner.root):
-            runner.finish()  # no camera restart and no discarded outbox
+        try:
+            with runner_lock(runner.root):
+                runner.finish()  # no camera restart and no discarded outbox
+        except Exception as error:
+            from video_sender.failure_record import record_failure
+            record_failure(runner.root,runner.state['run_id'],'sender',error)
+            raise
     else:
         runner=(SessionRunner(a.directory,client) if a.resume_start else
                 SessionRunner.create(a.directory,client,os.environ['VIDEO_CAMERA_ID']))
-        with runner_lock(runner.root):
-            runner.run_capture(a.camera_index)
+        try:
+            with runner_lock(runner.root):
+                runner.run_capture(a.camera_index)
+        except Exception as error:
+            from video_sender.failure_record import record_failure
+            record_failure(runner.root,runner.state['run_id'],'sender',error)
+            raise
 
 
 if __name__=='__main__':raise SystemExit(main())

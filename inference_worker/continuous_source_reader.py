@@ -42,11 +42,14 @@ def bounded_chunk(client,chunk_id,maximum):
 
 
 class ContinuousSourceReader:
-    def __init__(self,client,mux,*,offsets,decoder=decode_mp4,max_chunk_bytes,max_chunk_gap_seconds,downloader=None,require_capture_context=False,degrade_references=False,tolerate_source_gaps=False,clock_verifier=None,allow_unverified_clock_proofs=False):
+    def __init__(self,client,mux,*,offsets,decoder=decode_mp4,max_chunk_bytes,max_chunk_gap_seconds,downloader=None,require_capture_context=False,degrade_references=False,tolerate_source_gaps=False,clock_verifier=None,allow_unverified_clock_proofs=False,reserve_chunk_frames=None,reserve_chunk_bytes=None):
         if set(offsets)!=set(mux.cameras) or any(not math.isfinite(v) for v in offsets.values()):raise ValueError('camera clock mappings')
         if not math.isfinite(max_chunk_gap_seconds) or max_chunk_gap_seconds<0:raise ValueError('chunk gap policy')
         if type(degrade_references) is not bool:raise ValueError('reference failure mode')
         self.degrade_references=degrade_references;self.reference_failures={};self.reference_wait_since={}
+        if (reserve_chunk_frames is None)!=(reserve_chunk_bytes is None):raise ValueError('incomplete chunk reserve')
+        if reserve_chunk_frames is not None and (type(reserve_chunk_frames) is not int or reserve_chunk_frames<=0 or type(reserve_chunk_bytes) is not int or reserve_chunk_bytes<=0):raise ValueError('invalid chunk reserve')
+        self.reserve_chunk_frames,self.reserve_chunk_bytes=reserve_chunk_frames,reserve_chunk_bytes
         self.gap=max_chunk_gap_seconds
         self.tolerate_source_gaps=tolerate_source_gaps
         self.arrival_by_camera={}
@@ -58,6 +61,7 @@ class ContinuousSourceReader:
         self.require_capture_context=require_capture_context
         self.contexts={};self.finals={};self.cutoffs={};self.end_reasons={}
         self.streams={};self.sequence={};self.previous={}
+        self.pending_decode=None
         if clock_verifier is not None and not callable(clock_verifier):raise ValueError('clock verifier required')
         self.clock_verifier=clock_verifier
         if type(allow_unverified_clock_proofs) is not bool:raise ValueError('invalid unverified proof mode')
@@ -145,8 +149,55 @@ class ContinuousSourceReader:
                 selected[camera]=(row,stream,context,final)
             except (SourceMuxError,httpx.HTTPError,ValueError) as error:
                 if not self._degrade(camera,error):raise
-        for camera in self.mux.cameras:
+        # Return already buffered frames before decoding another whole chunk.
+        # Only proven watermark blockers are failed; queued reference frames
+        # remain chronological and the failure keeps its evidence incomplete.
+        if self.pending_decode is not None:
+            camera=self.pending_decode['camera']
+            try:
+                maintain=getattr(self.decoder,'maintain',None)
+                if maintain is not None:maintain()
+                return self._advance_decode(selected)
+            except (SourceMuxError, ValueError, RuntimeError, OSError, httpx.HTTPError) as error:
+                if self.pending_decode is not None:
+                    frames=self.pending_decode['frames'];self.pending_decode=None
+                    if hasattr(frames,'close'):frames.close()
+                if not self._degrade(camera,error):raise
+                return self.mux.pop_ready()
+        cameras=self.mux.cameras
+        if self.degrade_references and not self.tolerate_source_gaps:
+            cameras=tuple(sorted(cameras,key=lambda c:(self.mux.latest.get(c,float('-inf')),c==self.mux.primary)))
+            blockers=self.mux.pressure_blockers()
+            # Give blocking sources first opportunity to catch up. Never label
+            # a source stalled while its advertised next chunk is available.
+            available=[c for c in blockers if c in selected and c in self.sequence
+                       and selected[c][0].get('last_sequence',-1)>self.sequence[c]]
+            if available:
+                cameras=tuple(available)
+            elif self.mux.primary in blockers:
+                raise SourceMuxError('primary_source_pressure_stalled')
+            elif blockers:
+                if any(c not in self.sequence for c in blockers):
+                    raise SourceMuxError('reference_pressure_before_first_binding')
+                for camera in blockers:
+                    self._degrade(camera,SourceMuxError('reference_watermark_pressure'),preserve_queued=True)
+                return self.mux.pop_ready()
+        for camera in cameras:
             if camera not in selected:continue
+            # A previous camera may have consumed most of the reserve in this
+            # same poll. Re-evaluate watermark ownership before each chunk.
+            if self.reserve_chunk_frames is not None:
+                blockers=self.mux.pressure_blockers()
+                if blockers:
+                    available=[c for c in blockers if c in selected and c in self.sequence
+                               and selected[c][0].get('last_sequence',-1)>self.sequence[c]]
+                    if available and camera not in available:
+                        return self.mux.pop_ready()
+                    if not available:
+                        if self.mux.primary in blockers:raise SourceMuxError('primary_source_pressure_stalled')
+                        if any(c not in self.sequence for c in blockers):raise SourceMuxError('reference_pressure_before_first_binding')
+                        for c in blockers:self._degrade(c,SourceMuxError('reference_watermark_pressure'),preserve_queued=True)
+                        return self.mux.pop_ready()
             try:
                 row,stream,context,final=selected[camera]
                 self.contexts[camera]=context
@@ -185,6 +236,10 @@ class ContinuousSourceReader:
                             previous['capture_start_at'],previous['duration_ms'],chunk['capture_start_at'],
                             max_gap_seconds=self.gap)):
                         raise SourceMuxError('camera_chunk_discontinuity')
+                if self.reserve_chunk_frames is not None and (len(self.mux.queue)+self.reserve_chunk_frames>self.mux.max_frames or self.mux.bytes+self.reserve_chunk_bytes>self.mux.max_bytes):
+                    ready=self.mux.pop_ready()
+                    if ready:return ready
+                    raise SourceMuxError('chunk_reserve_unavailable')
                 try:
                     raw=self.downloader(chunk['chunk_id'])
                 except SourceMuxError as error:
@@ -192,29 +247,61 @@ class ContinuousSourceReader:
                     raise SourceUnavailableError('source_chunk_unavailable',camera=camera,
                         stream=stream,expected_sequence=expected) from error
                 if not raw or len(raw)>self.maximum:raise SourceMuxError('chunk_size_limit')
-                frames=self.decoder(raw,with_timing=True,duration_ms=chunk['duration_ms'])
-                count=0
-                try:
-                    for index,fps,frame in frames:
-                        stamp=frame_timestamp(chunk['capture_start_at'],index,fps).timestamp()+self.offsets[camera]
-                        self.mux.push(camera,stamp,frame);count+=1
-                finally:
-                    if hasattr(frames,'close'):frames.close()
-                if not count:raise SourceMuxError('empty_video_chunk')
-                self.previous[camera]=dict(chunk);self.sequence[camera]=chunk['sequence']
-                self.arrival_by_camera[camera]=time.monotonic()
-                if final is not None and chunk['sequence']==final:
-                    self._end(camera,'reference_drain_cutoff' if camera in self.cutoffs else 'source_ended')
+                frames=iter(self.decoder(raw,with_timing=True,duration_ms=chunk['duration_ms']))
+                self.pending_decode=dict(camera=camera,chunk=chunk,final=final,frames=frames,count=0,frame=None)
+                batch=self._advance_decode(selected)
+                if self.pending_decode is not None:return batch
+                # Keep released frames in the mux until all selected sources
+                # are handled, except when pressure requires an early return.
+                if batch:return batch
             except (SourceMuxError, ValueError, RuntimeError, OSError, httpx.HTTPError) as error:
                 if not self._degrade(camera,error):raise
         return self.mux.pop_ready()
 
-    def _degrade(self,camera,error):
+    def _advance_decode(self,selected):
+        pending=self.pending_decode;frames=pending['frames'];camera=pending['camera'];chunk=pending['chunk']
+        try:
+            while True:
+                if pending['frame'] is None:
+                    try:pending['frame']=next(frames)
+                    except StopIteration:
+                        if not pending['count']:raise SourceMuxError('empty_video_chunk')
+                        self.previous[camera]=dict(chunk);self.sequence[camera]=chunk['sequence']
+                        self.arrival_by_camera[camera]=time.monotonic()
+                        if pending['final'] is not None and chunk['sequence']==pending['final']:
+                            self._end(camera,'reference_drain_cutoff' if camera in self.cutoffs else 'source_ended')
+                        self.pending_decode=None
+                        return self.mux.pop_ready()
+                index,fps,frame=pending['frame']
+                stamp=frame_timestamp(chunk['capture_start_at'],index,fps).timestamp()+self.offsets[camera]
+                if self.mux.would_overflow(frame):
+                    ready=self.mux.pop_ready()
+                    if ready:return ready
+                    blockers=self.mux.pressure_blockers()
+                    if not self.degrade_references or not blockers or self.mux.primary in blockers:
+                        raise SourceMuxError('primary_source_pressure_stalled' if self.mux.primary in blockers else 'mux_budget_exhausted')
+                    # An advertised unread blocker must be handled fairly; one
+                    # active decoder cannot safely switch chunks mid-frame.
+                    if any(c not in self.sequence or c not in selected or
+                           selected[c][0].get('last_sequence',-1)>self.sequence[c] for c in blockers):
+                        raise SourceMuxError('reference_pressure_pending_chunk')
+                    for c in blockers:
+                        self._degrade(c,SourceMuxError('reference_watermark_pressure'),preserve_queued=True)
+                    batch=self.mux.pop_ready()
+                    if not batch:raise SourceMuxError('mux_budget_exhausted')
+                    return batch
+                self.mux.push(camera,stamp,frame);pending['count']+=1;pending['frame']=None
+        except BaseException:
+            self.pending_decode=None
+            if hasattr(frames,'close'):frames.close()
+            raise
+
+    def _degrade(self,camera,error,*,preserve_queued=False):
         if str(error).startswith('clock_') and not str(error).startswith('clock_reference_'):return False
         if isinstance(error,httpx.HTTPStatusError) and error.response.status_code in (401,403):
             return False
         if (not self.degrade_references or camera==self.mux.primary
-                or str(error) in ("mux_budget_exhausted","chunk_http_401","chunk_http_403")):
+                or str(error) in ("mux_budget_exhausted","chunk_reserve_unavailable","chunk_http_401","chunk_http_403")):
             return False
         metadata=dict(reason="reference_source_failed",camera=camera,
             stream=self.streams.get(camera,"unbound_"+camera),
@@ -223,7 +310,7 @@ class ContinuousSourceReader:
             failure_code=str(error) if re.fullmatch("[a-z0-9_]{1,80}",str(error)) else type(error).__name__)
         self.reference_failures[camera]=metadata
         self.end_reasons[camera]="source_failed"
-        self.mux.fail_reference(camera,str(error))
+        self.mux.fail_reference(camera,str(error),preserve_queued=preserve_queued)
         return True
 
     def expire_reference_stalls(self,*,now,max_lag_seconds):

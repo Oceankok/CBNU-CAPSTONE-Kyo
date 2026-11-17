@@ -146,6 +146,28 @@ class RuntimeTests(TestCase):
         self.assertFalse(self.capture.status(event)['complete'])
         self.assertEqual(len(self.box.pending_close_intents()),1)
 
+    def test_reference_pressure_is_durable_incomplete_capture_evidence(self):
+        from inference_worker import test_continuous_source_reader as fixtures
+        c,r=fixtures.ReaderTests().make();r.degrade_references=True
+        r.streams={'main':'a','ref':'b'};r.sequence={'main':-1,'ref':-1}
+        frame=np.zeros((2,2,3),np.uint8)
+        r.mux.push('main',0,frame);r.mux.push('ref',0,frame);r.mux.pop_ready()
+        for i in range(1,16):r.mux.push('main',i,frame)
+        r.poll();metadata=r.reference_failures['ref']
+        for step in range(11):
+            self.now=step/2
+            self.runtime.frame('ref',self.now,self.frame)
+            self.runtime.frame('main',self.now,self.frame,assessments=[{
+                'tracking_id':'t','ppe':{'helmet':{'status':'suspected_no_helmet'}}}])
+        self.box.record_reference_failure(metadata)
+        self.runtime.end_source('ref','source_failed')
+        event=self.box.db.execute('SELECT id FROM events').fetchone()[0]
+        status=self.capture.status(event)
+        self.assertFalse(status['complete'])
+        self.assertIn('source_failed',status['cameras']['ref']['reasons'])
+        stored=json.loads(self.box.db.execute('SELECT metadata FROM reference_failures').fetchone()[0])
+        self.assertEqual(stored['failure_code'],'reference_watermark_pressure')
+
     def test_expired_bound_source_keeps_durable_incomplete_and_failure_metadata(self):
         from inference_worker import test_processor_capture_context as context_tests
         from inference_worker.continuous_source_reader import SourceUnavailableError
