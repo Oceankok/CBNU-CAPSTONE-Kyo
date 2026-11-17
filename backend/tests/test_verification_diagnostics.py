@@ -105,7 +105,7 @@ class DiagnosticTests(unittest.TestCase):
             self.assertEqual(caught.exception.verification_failure['reason'], 'frame_count_exceeded')
             self.assertEqual(caught.exception.verification_failure['frames_checked'], 2)
             capture.release.assert_called_once()
-            writer.release.assert_called_once()
+            writer.release.assert_not_called()  # Invalid inputs never enter repair encoding.
             self.assertEqual(list(Path(folder).iterdir()), [])
 
 
