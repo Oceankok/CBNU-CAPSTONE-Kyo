@@ -1,7 +1,7 @@
 from uuid import UUID
 from typing import Literal
 from fastapi import APIRouter,Depends
-from pydantic import BaseModel,ConfigDict,Field,StrictBool,StrictInt
+from pydantic import BaseModel,ConfigDict,Field,StrictBool,StrictInt,model_validator
 from backend.field.routes import current_node
 from . import service
 router=APIRouter(prefix='/api/video/capture-sessions',tags=['capture sessions'])
@@ -16,6 +16,25 @@ class Stop(BaseModel):
 @router.post('',status_code=201)
 def start(body:Start,node:dict=Depends(current_node)):
     return service.start(body.camera_id,str(body.session_id),node['node_id'])
+class ObservationStop(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    stream_id:UUID
+    run_id:UUID
+    sequence:StrictInt=Field(ge=0,le=2147483647)
+    frame_index:StrictInt=Field(ge=0)
+    fps:StrictInt=Field(ge=1,le=120)
+    proof_id:UUID
+
+    @model_validator(mode='after')
+    def frame_bound(self):
+        if self.frame_index>=self.fps:raise ValueError('frame_index_out_of_range')
+        return self
+
+@router.post('/{context_id}/observation-stop')
+def observation_stop(context_id:UUID,body:ObservationStop,node:dict=Depends(current_node)):
+    from .observation_stop import install
+    return install(str(context_id),body.model_dump(mode='json'),node['node_id'])
+
 @router.post('/{context_id}/stop')
 def stop(context_id:UUID,body:Stop,node:dict=Depends(current_node)):
     from fastapi import HTTPException

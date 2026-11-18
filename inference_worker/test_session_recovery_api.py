@@ -141,7 +141,7 @@ class SettledProducerAPITests(unittest.TestCase):
     close=RecoveryAPITests.close
     open=RecoveryAPITests.open
 
-    def produce(self,*,incomplete=False,lost_complete=False,interrupted_healthy=False,expire_after_collecting=False):
+    def produce(self,*,incomplete=False,lost_complete=False,interrupted_healthy=False,expire_after_collecting=False,normal_stop=False):
         import numpy as np
         from inference_worker.cleanup_supervisor import CleanupSupervisor
         from inference_worker.continuous_runtime import ContinuousFrameRuntime
@@ -191,6 +191,7 @@ class SettledProducerAPITests(unittest.TestCase):
         starts=[]
         for step in range(19):
             now=p.epoch+step*.5
+            if normal_stop and step==11:runtime.set_observation_cutoff('CAM_001',now)
             if not incomplete:runtime.frame("CAM_002",now,frame)
             transitions=runtime.frame("CAM_001",now,frame,assessments=[{"tracking_id":"native-track",
                 "ppe":{"helmet":{"status":"suspected_no_helmet" if step<12 else "helmet"}}}])
@@ -293,6 +294,22 @@ class SettledProducerAPITests(unittest.TestCase):
         reports=[json.loads(r[0]) for r in self.box.db.execute("SELECT body FROM requests WHERE kind='capture_report' ORDER BY seq")]
         self.assertEqual([r['state'] for r in reports].count('complete'),2)
         self.assertNotIn('incomplete',[r['state'] for r in reports])
+        self.restart_without_io()
+
+    def test_normal_stop_with_complete_postroll_restarts_and_still_requires_automatic_review(self):
+        self.produce(normal_stop=True)
+        reports=[json.loads(r[0]) for r in self.box.db.execute("SELECT body FROM requests WHERE kind='capture_report'")]
+        self.assertEqual(len(reports),2)
+        self.assertEqual({r['state'] for r in reports},{'complete'})
+        self.assertTrue(all(not r['missing_ranges'] for r in reports))
+        close=json.loads(self.box.db.execute("SELECT body FROM requests WHERE kind='close'").fetchone()[0])
+        self.assertEqual(close['close_reason'],'operator_stop')
+        self.assertTrue(close['complete'])
+        self.process_synthetic_sources()
+        self.pipe.ident=self.event
+        result=self.pipe.preview()['rule_evaluation']
+        self.assertFalse(result['eligible'])
+        self.assertIn('abnormal_event_close_requires_review',result['blocking_reasons'])
         self.restart_without_io()
 
     def test_partial_report_missing_ack_or_tampered_body_is_not_certified(self):

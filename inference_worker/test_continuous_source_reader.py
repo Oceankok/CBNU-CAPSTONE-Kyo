@@ -5,6 +5,48 @@ from inference_worker.continuous_source_mux import SourceMux,SourceMuxError
 from inference_worker.continuous_source_reader import ContinuousSourceReader
 
 class ReaderTests(TestCase):
+    def stop_fixture(self):
+        c,r=self.make();r.clock_verifier=lambda camera,chunk:None
+        run='00000000-0000-4000-8000-000000000001';proof='00000000-0000-4000-8000-000000000002'
+        marker=dict(stream_id='a',run_id=run,sequence=0,frame_index=1,fps=2,proof_id=proof)
+        for row in c.streams:
+            row.update(clock_run_id=run,capture_context_id='ctx'+row['camera_id'],capture_session_id='session',assignment_version=1)
+        c.streams[0]['observation_stop']=marker
+        original=c.list_chunks
+        def chunks(stream,after):
+            context=next(x for x in c.streams if x['stream_id']==stream)
+            return [dict(x,**{k:v for k,v in context.items() if k not in ('stream_id','last_sequence','camera_id')},clock_proof_id=proof) for x in original(stream,after)]
+        c.list_chunks=chunks
+        return c,r,marker
+
+    def test_observation_boundary_uses_actual_decoded_frame(self):
+        c,r,marker=self.stop_fixture()
+        batch=r.poll()
+        self.assertEqual(len(batch),4)
+        self.assertEqual(r.observation_cutoffs['main'],1767225600.5)
+        self.assertEqual(sum(cam=='main' and t>=r.observation_cutoffs['main'] for cam,t,_ in batch),1)
+        self.assertEqual(r.poll(),[])
+
+    def test_observation_marker_cannot_change_revert_or_arrive_late(self):
+        for fault in ('changed','reverted','late','binding'):
+            with self.subTest(fault=fault):
+                c,r,marker=self.stop_fixture()
+                if fault=='late':
+                    del c.streams[0]['observation_stop'];r.poll();c.streams[0]['observation_stop']=marker
+                elif fault=='binding':marker['run_id']='00000000-0000-4000-8000-000000000003'
+                else:
+                    r.poll()
+                    if fault=='changed':c.streams[0]['observation_stop']=dict(marker,frame_index=0)
+                    else:del c.streams[0]['observation_stop']
+                with self.assertRaises(SourceMuxError):r.poll()
+
+    def test_observation_boundary_rejects_fps_mismatch_and_missing_frame(self):
+        c,r,marker=self.stop_fixture();marker['fps']=3
+        with self.assertRaisesRegex(SourceMuxError,'observation_stop_frame_binding_mismatch'):r.poll()
+        c,r,marker=self.stop_fixture()
+        r.decoder=lambda *args,**kwargs:iter([(0,2,np.zeros((2,2,3),np.uint8))])
+        with self.assertRaisesRegex(SourceMuxError,'observation_stop_frame_missing'):r.poll()
+
     def make(self):
         class Client:
             seq=0

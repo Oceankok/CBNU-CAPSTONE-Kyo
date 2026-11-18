@@ -12,12 +12,12 @@ from uuid import uuid4
 if __package__:
     from .backpressure import Policy
     from .chunks import next_sequence, publish_completed_segments
-    from .capture_control import run_id_from_env, stop_requested, publish_result
+    from .capture_control import PostRoll, normal_stop_requested, run_id_from_env, stop_requested, publish_result
     from .frame_reader import LatestFrameReader
 else:
     from backpressure import Policy
     from chunks import next_sequence, publish_completed_segments
-    from capture_control import run_id_from_env, stop_requested, publish_result
+    from capture_control import PostRoll, normal_stop_requested, run_id_from_env, stop_requested, publish_result
     from frame_reader import LatestFrameReader
 
 CAMERA_INDEX = int(os.getenv("VIDEO_CAMERA_INDEX", "0"))
@@ -37,9 +37,13 @@ if CLOCK_ANCHOR_FILE:
     from clock_contract import AnchoredClock,ClockPolicy
     clock_data=json.loads(Path(CLOCK_ANCHOR_FILE).read_text(encoding='utf-8'))
     capture_clock=AnchoredClock(clock_data['anchor'],ClockPolicy(**clock_data['policy']))
+NORMAL_STOP_STREAM_ID = os.environ.get('VIDEO_NORMAL_STOP_STREAM_ID')
+post_roll = (PostRoll(OUTPUT_DIR, CONTROL_RUN_ID, NORMAL_STOP_STREAM_ID, START_SEQUENCE, FPS)
+             if CLOCK_ANCHOR_FILE and CONTROL_RUN_ID and NORMAL_STOP_STREAM_ID else None)
 SPOOL_POLICY = Policy.from_env() if CONTROL_RUN_ID else None
 stopped_by_request = False
 protective_stop_reason = None
+normal_stop_completed = False
 frame_count = 0
 SEGMENT_LIST = OUTPUT_DIR / f".capture-{uuid4().hex}.list"
 
@@ -82,6 +86,14 @@ command = [
     str(OUTPUT_DIR / "chunk_%05d.mp4.part"),
 ]
 
+def immediate_stop():
+    if stop_requested(OUTPUT_DIR, CONTROL_RUN_ID):
+        return True
+    if post_roll is not None:
+        post_roll.check_deadline()
+    return False
+
+
 process = subprocess.Popen(command, stdin=subprocess.PIPE)
 reader = LatestFrameReader(cap)
 
@@ -107,7 +119,7 @@ try:
             stopped_by_request = True
             break
         publish_completed_segments(OUTPUT_DIR, SEGMENT_LIST)
-        result = reader.next_frame(next_frame_time, lambda: stop_requested(OUTPUT_DIR, CONTROL_RUN_ID))
+        result = reader.next_frame(next_frame_time, immediate_stop)
         if result.status == 'stopped':
             stopped_by_request = True
             break
@@ -130,13 +142,20 @@ try:
                 else:capture_start = result.sample.observed_utc
                 timestamp_file = OUTPUT_DIR / f"chunk_{sequence:05d}.txt"
 
-                timestamp_file.write_text(
-                    capture_start.isoformat(timespec="milliseconds").replace("+00:00","Z"),
-                    encoding="utf-8"
-                )
+                timestamp = capture_start.isoformat(timespec="milliseconds")
+                timestamp_file.write_text(timestamp.replace("+00:00","Z"), encoding="utf-8")
+                if post_roll is not None:
+                    chunk_source_time = datetime.fromisoformat(timestamp).timestamp()
 
+            if post_roll is not None:
+                source_time = chunk_source_time + (frame_count % FPS) / FPS
+                post_roll.before_frame(frame_count, result.sample.observed_monotonic, proof_id, source_time)
             process.stdin.write(frame.tobytes())
             frame_count += 1
+            if post_roll is not None and post_roll.complete(frame_count, result.sample.observed_monotonic, source_time):
+                normal_stop_completed = True
+                stopped_by_request = True
+                break
 
         except BrokenPipeError as error:
             if CONTROL_RUN_ID:
@@ -185,6 +204,10 @@ finally:
         # successful capture-stop proof; keep context recovery fail-closed.
         raise reader_failure
     print(f'[CAPTURE] read={reader.frames_read} superseded={reader.superseded} submitted={frame_count}')
+    if post_roll is not None and not normal_stop_completed:
+        if post_roll.first_frame is not None or normal_stop_requested(OUTPUT_DIR, CONTROL_RUN_ID):
+            stopped_by_request = False
     publish_result(OUTPUT_DIR, CONTROL_RUN_ID, stopped_by_request=stopped_by_request,
-                   ffmpeg_exit=ffmpeg_exit, start_sequence=START_SEQUENCE, frame_count=frame_count, fps=FPS, protective_stop_reason=protective_stop_reason)
+                   ffmpeg_exit=ffmpeg_exit, start_sequence=START_SEQUENCE, frame_count=frame_count, fps=FPS, protective_stop_reason=protective_stop_reason,
+                   normal_stop_completed=normal_stop_completed)
     print("프로그램 종료")

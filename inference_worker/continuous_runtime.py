@@ -5,6 +5,7 @@ Network pumping is explicit and bounded per call. Detector/ROI policy is externa
 """
 import hashlib
 import json
+import math
 from pathlib import Path
 from datetime import datetime, timezone
 from copy import deepcopy
@@ -30,6 +31,20 @@ class ContinuousFrameRuntime:
         capture.before_spool_create=lambda event,camera,spool:self.outbox.begin_capture(
             event,camera=camera,spool_directory=spool)
         self.bound=set();self.manifests={};self.reports=set();self.provisional_reports=set();self.closed=False;self.media_watermark=None
+        self.observation_cutoffs={};self.observation_closed=False;self.last_observation_timestamp=None
+
+    def set_observation_cutoff(self,camera,timestamp):
+        if camera not in self.cameras or isinstance(timestamp,bool) or not isinstance(timestamp,(int,float)) or not math.isfinite(timestamp):
+            raise ValueError('observation cutoff')
+        if camera in self.observation_cutoffs:
+            if self.observation_cutoffs[camera]!=timestamp:raise ValueError('observation cutoff changed')
+            return
+        if camera==self.journal.lifecycle.camera_id and self.last_observation_timestamp is not None and self.last_observation_timestamp>=timestamp:
+            raise ValueError('observation cutoff arrived late')
+        self.observation_cutoffs[camera]=timestamp
+
+    def observing(self,camera,timestamp):
+        return camera==self.journal.lifecycle.camera_id and timestamp<self.observation_cutoffs.get(camera,math.inf)
 
     def frame(self,camera,timestamp,frame,*,assessments=None):
         if self.closed:raise ValueError('runtime closed')
@@ -43,14 +58,20 @@ class ContinuousFrameRuntime:
         self.capture.ingest(camera,timestamp-self.capture.cameras[camera].offset,capture_frame)
         self.media_watermark=max(timestamp,self.media_watermark) if self.media_watermark is not None else timestamp
         transitions=[]
-        if camera==self.journal.lifecycle.camera_id:
+        if self.observing(camera,timestamp):
             if assessments is None:raise ValueError('primary assessments required')
             transitions=self.journal.update(assessments,timestamp)
+            self.last_observation_timestamp=timestamp
             for row in transitions:
                 if row['kind']=='start':
                     self.capture.discover(row['event_id'],start=row['start_time'],
                         discovered_at=timestamp,camera_snapshot=self.cameras)
                 elif row['kind']=='close':self.capture.end(row['event_id'],violation_end=row['end_time'])
+        elif camera==self.journal.lifecycle.camera_id and not self.observation_closed:
+            transitions=self.journal.close_all('operator_stop')
+            for row in transitions:
+                if row['kind']=='close':self.capture.end(row['event_id'],violation_end=row['end_time'])
+            self.observation_closed=True
         self._bind_sources()
         return transitions
 

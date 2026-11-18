@@ -19,33 +19,10 @@ from uuid import uuid4, UUID
 
 import requests
 
-from video_sender.capture_control import stop_requested
+from video_sender.capture_control import atomic_json, observation_stop_path, stop_requested
 from video_sender.backpressure import Policy, retry_upload
 from video_sender.chunks import completed_chunks
 from video_sender.live_sender import get_video_duration_ms, delete_chunk_files
-
-
-def atomic_json(path, value):
-    # Independent writers must never share a partially written temporary file.
-    temporary=path.with_name(f'.{path.name}.{uuid4().hex}.tmp')
-    try:
-        with temporary.open('x',encoding='utf-8') as f:
-            json.dump(value,f);f.flush();os.fsync(f.fileno())
-        for attempt in range(3):
-            try:
-                os.replace(temporary,path)
-                break
-            except OSError as error:
-                # Windows sharing/lock violations can clear when a reader closes.
-                if getattr(error,'winerror',None) not in (32,33) or attempt == 2:
-                    raise
-                time.sleep(.05 * (attempt+1))
-    except OSError as error:
-        error.sender_stage='atomic_json'
-        raise
-    finally:
-        try:temporary.unlink(missing_ok=True)
-        except OSError:pass  # Never mask the original failure.
 
 
 @contextmanager
@@ -115,6 +92,7 @@ class SessionRunner:
         if self.policy is not None and isinstance(client,ContextClient):client.guard=self.check_spool
         self.path=self.root/'session.json'
         self.clock=None
+        self.observation_stop_acknowledged=False
         self.state=json.loads(self.path.read_text(encoding='utf-8'))
         if self.state.get('server_origin') != client.origin:raise ValueError('session_server_origin_mismatch')
         requested_archive=os.environ.get('VIDEO_AUTOMATIC_ARCHIVE_DIR')
@@ -139,7 +117,9 @@ class SessionRunner:
         if archive and (not archive_limit or not archive_limit.isdigit() or int(archive_limit)<=0):raise ValueError('archive_limit_required')
         atomic_json(root/'session.json',{'automatic_archive_max_bytes':archive_limit,'automatic_archive_dir':archive,'server_origin':client.origin,'camera_id':camera_id,'session_id':str(uuid4()),
             'stream_id':str(uuid4()),'run_id':str(uuid4()),'capture_started':False,
-            'context_id':None,'acknowledged_sequence':-1,'closed':False})
+            'context_id':None,'acknowledged_sequence':-1,'closed':False,
+            'normal_stop_enabled':os.environ.get('VIDEO_NORMAL_STOP_ENABLED')=='true' and
+                                  os.environ.get('VIDEO_CLOCK_PROOF_ENABLED')=='true'})
         return cls(root,client)
 
     def save(self):atomic_json(self.path,self.state)
@@ -178,8 +158,25 @@ class SessionRunner:
             archive_chunk(root,self.state['run_id'],path,clock_required='clock' in self.state,
                           max_bytes=int(self.state['automatic_archive_max_bytes']))
 
+    def acknowledge_observation_stop(self):
+        if self.observation_stop_acknowledged or self.state.get('normal_stop_enabled') is not True:
+            return
+        marker=observation_stop_path(self.root,self.state['run_id'])
+        try:
+            body=json.loads(marker.read_text(encoding='utf-8'))
+        except FileNotFoundError:
+            return
+        if not isinstance(body,dict) or body.get('run_id')!=self.state['run_id'] or body.get('stream_id')!=self.state['stream_id']:
+            raise ValueError('observation_stop_marker_binding_mismatch')
+        result=self.client.post(f"/api/video/capture-sessions/{self.state['context_id']}/observation-stop",body)
+        acknowledged=result.get('observation_stop')
+        if acknowledged!=body or any(type(acknowledged[key]) is not type(value) for key,value in body.items()):
+            raise ValueError('observation_stop_acknowledgement_mismatch')
+        self.observation_stop_acknowledged=True
+
     def drain(self):
         self.check_spool()
+        self.acknowledge_observation_stop()
         for path in completed_chunks(self.root):
             self.check_spool()
             n=int(path.stem.removeprefix('chunk_'))
@@ -189,6 +186,8 @@ class SessionRunner:
                 if not delete_chunk_files(path):raise OSError('acknowledged_clip_cleanup_pending')
                 continue
             if n!=ack+1:raise ValueError('outbox_sequence_gap')
+            # Recheck after seeing the ready file, which can appear after the first check.
+            self.acknowledge_observation_stop()
             captured=path.with_suffix('.txt').read_text(encoding='utf-8').strip()
             if self.clock:
                 from datetime import datetime
@@ -216,6 +215,8 @@ class SessionRunner:
             proof.get('ffmpeg_exit')!=0 or proof.get('start_sequence')!=0 or
             type(proof.get('final_sequence')) is not int):
             raise ValueError('capture_completion_unverified')
+        if proof.get('normal_stop_completed') is True and not observation_stop_path(self.root,s['run_id']).is_file():
+            raise ValueError('observation_stop_marker_missing')
         reason=proof.get('protective_stop_reason')
         if reason in ('spool_soft_stop_threshold','spool_free_space_reserve'):
             s['protective_stop_reason']=reason;self.save()
@@ -223,6 +224,8 @@ class SessionRunner:
             from video_sender.clock_source import HistoricalClockDrain
             self.clock=HistoricalClockDrain(self)
         self.drain()
+        if proof.get('normal_stop_completed') is True and not self.observation_stop_acknowledged:
+            raise ValueError('observation_stop_acknowledgement_missing')
         if s['acknowledged_sequence']!=proof['final_sequence']:
             raise ValueError('final_outbox_acknowledgement_missing')
         if any(self.root.glob('chunk_*')):raise ValueError('outbox_not_empty')
@@ -237,13 +240,18 @@ class SessionRunner:
         if self.check_spool():raise RuntimeError('capture_start_blocked_by_spool_protection')
         from video_sender.clock_source import configuration,ClockPublisher
         clock_configuration=configuration()
+        if self.state.get('normal_stop_enabled') is True and clock_configuration is None:
+            raise ValueError('source_clock_configuration_required')
         self.connect()
         env=os.environ.copy();env.pop('VIDEO_NODE_TOKEN',None)
+        env.pop('VIDEO_NORMAL_STOP_STREAM_ID',None)
         if clock_configuration:
             from datetime import datetime
             self.clock=ClockPublisher(self,clock_configuration);self.clock.refresh(force=True)
             self.clock.wait(valid_from=datetime.fromisoformat(self.state['valid_from']).timestamp())
             env['VIDEO_CLOCK_ANCHOR_FILE']=str(self.clock.path)
+            if self.state.get('normal_stop_enabled') is True:
+                env['VIDEO_NORMAL_STOP_STREAM_ID']=self.state['stream_id']
         else:env.pop('VIDEO_CLOCK_ANCHOR_FILE',None)
         env.update(VIDEO_OUTPUT_DIR=str(self.root),VIDEO_CAMERA_INDEX=str(camera_index),VIDEO_CAPTURE_RUN_ID=self.state['run_id'])
         self.state['capture_started']=True;self.save()

@@ -11,6 +11,8 @@ import subprocess
 import sys
 from uuid import UUID, uuid4
 
+from video_sender.capture_control import atomic_json, normal_stop_path
+
 
 class Starter:
     def __init__(self, root, *, executable=None, spawn=None, repository=None):
@@ -22,6 +24,7 @@ class Starter:
         self.directory = None
         self.mode = None
         self.stop_pending = False
+        self.stop_immediate = False
 
     def journal(self):
         if self.directory is None:
@@ -84,6 +87,7 @@ class Starter:
                                       creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
             self.mode = mode
             self.stop_pending = False
+            self.stop_immediate = False
         except Exception:
             self.directory = previous
             raise
@@ -96,18 +100,28 @@ class Starter:
                 and self.directory is not None
                 and not (self.directory / 'session.json').exists())
 
-    def request_stop(self):
+    def request_stop(self, *, immediate=False):
         if not self.active():
             raise ValueError('현재 이 창에서 실행한 프로세스가 없습니다. 종료 ACK를 확인하세요.')
         self.stop_pending = True
+        self.stop_immediate = self.stop_immediate or immediate
         self._publish_stop()
 
-    def _publish_stop(self):
+    def _publish_stop(self, *, immediate=False, peer=None):
         try:
             state = self.journal()
         except FileNotFoundError:
             return  # Startup can still be persisting the journal; poll retries.
-        (self.directory / f".stop-{state['run_id']}").touch(exist_ok=True)
+        if state['closed']:
+            return
+        normal = state.get('normal_stop_enabled') is True and not (self.stop_immediate or immediate)
+        if normal:
+            request = normal_stop_path(self.directory,state['run_id'])
+            if not request.exists():
+                if peer is None:request.touch(exist_ok=True)
+                else:atomic_json(request,peer)
+        else:
+            (self.directory / f".stop-{state['run_id']}").touch(exist_ok=True)
 
     def status(self):
         if self.directory is None:
@@ -128,6 +142,14 @@ class Starter:
             if state['closed'] and self.process is not None and self.process.returncode == 0:
                 return f'보호 중지: {reason}. 종료 ACK 확인. 설정·저장 공간 확인 후 다시 시작하세요.'
             return f'보호 중지: {reason}. 종료 ACK 미확인, 구역 변경 금지. 전송 복구가 필요합니다.'
+        if state.get('normal_stop_enabled') is True:
+            if state['closed']:
+                return '종료 ACK 확인. 관리자 웹에서 구역 변경 후 새 세션을 시작하세요.'
+            run_id = state['run_id']
+            normal_requested = (self.directory / f'.normal-stop-{run_id}').is_file()
+            failure_recorded = any(self.directory.glob(f'.failure-*-{run_id}.json'))
+            if normal_requested and (active or not failure_recorded):
+                return '종료 처리 중. 후속 영상 촬영과 전송, 서버 종료 ACK를 기다리는 중입니다.'
         if active:
             return ('종료 요청 중: 파일 전송과 서버 ACK 대기. 아직 구역 변경 불가.' if self.stop_pending else
                     '작업 중: 촬영/전송/연결 단계. 구역 변경 불가.')

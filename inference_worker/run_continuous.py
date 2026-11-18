@@ -253,6 +253,8 @@ def run(args):
             # An idle poll has no source binding; None here is not a legacy stream.
             if args.camera_id in reader.streams:
                 journal.bind_capture_context(reader.primary_capture_context())
+            for camera,timestamp in reader.observation_cutoffs.items():
+                runtime.set_observation_cutoff(camera,timestamp)
             remaining={c:sum(1 for row in batch if row[0]==c) for c in ids}
             ended=mux.drained_sources()
             for camera in ended:
@@ -264,7 +266,7 @@ def run(args):
                         remaining[camera]-=1
                         continue
                 assessments=None
-                if camera==args.camera_id:
+                if runtime.observing(camera,timestamp):
                     priority.refresh()
                     rows=tracker.update(detect_assess(detector,frame,
                         mode="review" if review else "verified_helmet"),timestamp)

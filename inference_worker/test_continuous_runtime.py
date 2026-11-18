@@ -48,6 +48,39 @@ class RuntimeTests(TestCase):
 
     def tearDown(self):
         self.runtime.stop('test_stop');self.dispatcher.close();self.transport.client.close();self.box.close();self.temp.cleanup()
+
+    def test_normal_stop_closes_observations_but_captures_real_postroll(self):
+        starts=[]
+        for step in range(18):
+            timestamp=step/2;self.now=timestamp
+            if step==11:self.runtime.set_observation_cutoff('main',timestamp)
+            self.runtime.frame('ref',timestamp,self.frame)
+            rows=self.runtime.frame('main',timestamp,self.frame,assessments=[{'tracking_id':'after' if step>=11 else 'before',
+                'ppe':{'helmet':{'status':'suspected_no_helmet'}}}])
+            starts.extend(row for row in rows if row['kind']=='start')
+            self.runtime.pump(now=timestamp)
+        self.assertEqual(len(starts),1)
+        event=starts[0]['event_id']
+        self.assertFalse(self.runtime.observing('main',8.5))
+        for camera in ('main','ref'):self.runtime.end_source(camera)
+        for _ in range(20):self.runtime.pump(now=self.now)
+        rows=self.box.db.execute('SELECT kind,body FROM requests WHERE event=?',(event,)).fetchall()
+        close=json.loads(next(r['body'] for r in rows if r['kind']=='close'))
+        self.assertEqual(close['close_reason'],'operator_stop')
+        from datetime import datetime
+        self.assertEqual(datetime.fromisoformat(close['timestamp_end']).timestamp(),5)
+        self.assertTrue(close['complete'])
+        reports=[json.loads(r['body']) for r in rows if r['kind']=='capture_report']
+        self.assertEqual({r['state'] for r in reports},{'complete'})
+        self.assertTrue(all(not r['missing_ranges'] for r in reports))
+        self.assertFalse(self.box.pending())
+
+    def test_observation_cutoff_cannot_backdate_or_change(self):
+        self.runtime.frame('main',0,self.frame,assessments=[])
+        with self.assertRaisesRegex(ValueError,'arrived late'):self.runtime.set_observation_cutoff('main',0)
+        self.runtime.set_observation_cutoff('main',1)
+        self.runtime.set_observation_cutoff('main',1)
+        with self.assertRaisesRegex(ValueError,'changed'):self.runtime.set_observation_cutoff('main',2)
     def feed(self,fail_ref=False):
         starts=[]
         for step in range(18):

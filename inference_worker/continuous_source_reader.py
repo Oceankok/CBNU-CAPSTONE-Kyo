@@ -6,6 +6,7 @@ before constructing a new reader. No track identities survive reconnects.
 import math
 import re
 import time
+from uuid import UUID
 import httpx
 from inference_worker.time_utils import frame_timestamp,is_continuous_chunk
 from inference_worker.video_decoder import decode_mp4
@@ -62,6 +63,7 @@ class ContinuousSourceReader:
         self.contexts={};self.finals={};self.cutoffs={};self.end_reasons={}
         self.streams={};self.sequence={};self.previous={}
         self.pending_decode=None
+        self.observation_stops={};self.observation_cutoffs={}
         if clock_verifier is not None and not callable(clock_verifier):raise ValueError('clock verifier required')
         self.clock_verifier=clock_verifier
         if type(allow_unverified_clock_proofs) is not bool:raise ValueError('invalid unverified proof mode')
@@ -207,6 +209,7 @@ class ContinuousSourceReader:
                     boundary=row.get('last_sequence')
                     if type(boundary) is not int or boundary < -1:raise SourceMuxError('invalid_live_boundary')
                     self.sequence[camera]=boundary
+                self._observation_stop(camera,row)
                 boundary=row.get('last_sequence')
                 if type(boundary) is not int or boundary < -1:
                     raise SourceMuxError('invalid_live_boundary')
@@ -222,6 +225,7 @@ class ContinuousSourceReader:
                     raise SourceUnavailableError('source_chunk_unavailable',camera=camera,
                         stream=stream,expected_sequence=expected)
                 chunk=chunks[0]
+                self._observation_stop(camera,chunk)
                 if self.clock_verifier is None and not self.allow_unverified_clock_proofs and chunk.get('clock_proof_id') is not None:
                     raise SourceMuxError('clock_proof_profile_required')
                 if type(chunk['sequence']) is not int or (chunk['sequence']!=self.sequence[camera]+1 and not self.tolerate_source_gaps):
@@ -267,6 +271,9 @@ class ContinuousSourceReader:
                     try:pending['frame']=next(frames)
                     except StopIteration:
                         if not pending['count']:raise SourceMuxError('empty_video_chunk')
+                        stop=self.observation_stops.get(camera)
+                        if stop and chunk['sequence']==stop['sequence'] and camera not in self.observation_cutoffs:
+                            raise SourceMuxError('observation_stop_frame_missing')
                         self.previous[camera]=dict(chunk);self.sequence[camera]=chunk['sequence']
                         self.arrival_by_camera[camera]=time.monotonic()
                         if pending['final'] is not None and chunk['sequence']==pending['final']:
@@ -275,6 +282,12 @@ class ContinuousSourceReader:
                         return [] if defer_ready else self.mux.pop_ready()
                 index,fps,frame=pending['frame']
                 stamp=frame_timestamp(chunk['capture_start_at'],index,fps).timestamp()+self.offsets[camera]
+                stop=self.observation_stops.get(camera)
+                if stop and chunk['sequence']==stop['sequence']:
+                    if fps!=stop['fps'] or chunk.get('clock_proof_id')!=stop['proof_id']:
+                        raise SourceMuxError('observation_stop_frame_binding_mismatch')
+                    if index==stop['frame_index']:
+                        self.observation_cutoffs[camera]=stamp
                 if self.mux.would_overflow(frame):
                     ready=self.mux.pop_ready()
                     if ready:return ready
@@ -368,6 +381,31 @@ class ContinuousSourceReader:
     def _end(self,camera,reason):
         self.end_reasons[camera]=reason
         self.mux.end_source(camera)
+
+    def _observation_stop(self,camera,row):
+        """Pin a source's authenticated first excluded frame, never backdate it."""
+        stop=row.get('observation_stop')
+        previous=self.observation_stops.get(camera)
+        if stop is None:
+            if previous is not None:raise SourceMuxError('observation_stop_reverted')
+            return
+        fields={'stream_id','run_id','sequence','frame_index','fps','proof_id'}
+        if (not isinstance(stop,dict) or set(stop)!=fields
+                or stop['stream_id']!=self.streams[camera]
+                or stop['run_id']!=row.get('clock_run_id')
+                or type(stop['sequence']) is not int or stop['sequence']<0
+                or type(stop['fps']) is not int or not 1<=stop['fps']<=120
+                or type(stop['frame_index']) is not int or not 0<=stop['frame_index']<stop['fps']):
+            raise SourceMuxError('invalid_observation_stop')
+        try:
+            if any(str(UUID(stop[k]))!=stop[k] for k in ('run_id','proof_id')):raise ValueError('identifier')
+        except (ValueError,TypeError,AttributeError):
+            raise SourceMuxError('invalid_observation_stop') from None
+        if previous is not None:
+            if previous!=stop:raise SourceMuxError('observation_stop_changed')
+        else:
+            if self.sequence[camera]>=stop['sequence']:raise SourceMuxError('observation_stop_arrived_late')
+            self.observation_stops[camera]=dict(stop)
 
     def _context(self,row):
         fields=('capture_context_id','capture_session_id','assignment_version')

@@ -49,6 +49,7 @@ class Tests(unittest.TestCase):
             self.assertEqual(os.environ.get('VIDEO_NODE_TOKEN'),before)
             for i,slot in enumerate(dual.slots,1):
                 target,kwargs,env=slot['starter'].calls[0]
+                self.assertEqual(env['VIDEO_NORMAL_STOP_ENABLED'],'true')
                 self.assertEqual(env['VIDEO_CAMERA_ID'],'cam'+str(i));self.assertEqual(env['VIDEO_CLOCK_SOURCE_NODE_ID'],'node'+str(i))
                 self.assertEqual(kwargs['camera_index'],i);self.assertEqual(env['VIDEO_AUTOMATIC_ARCHIVE_MAX_BYTES'],'1024')
                 with self.assertRaises(FileNotFoundError):dual.start(slot)
@@ -87,8 +88,8 @@ class Tests(unittest.TestCase):
             other=dual.slots[1]
             other['starter'].directory=root/'unresolved'
             stopped=[]
-            with patch.object(dual,'start',side_effect=[None,ValueError('failed')]), patch.object(dual,'stop',side_effect=lambda item:stopped.append(item)):
+            with patch.object(dual,'start',side_effect=[None,ValueError('failed')]), patch.object(dual,'stop',side_effect=lambda item, **kwargs:stopped.append((item, kwargs))):
                 with self.assertRaisesRegex(RuntimeError,'partial_start_stopping'):dual.start_all()
-            self.assertEqual(stopped,[slot])
+            self.assertEqual(stopped,[(slot, {'immediate': True})])
 
 if __name__=='__main__':unittest.main()
