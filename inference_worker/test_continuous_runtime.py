@@ -65,6 +65,51 @@ class RuntimeTests(TestCase):
         self.assertTrue(all(row['state']=='accepted' for row in self.dispatcher.status()))
         self.assertEqual(self.box.pending(),[])
         self.assertEqual(self.box.pending_close_intents()[0]['state'],'finalized')
+    def test_missing_preroll_reports_before_scoped_partial_media(self):
+        for queue in self.capture.buffers.values():queue.clear()
+        # Relative to the observed main event start, the first reference frame
+        # arrived 0.273824s earlier; both still miss the required -2s pre-roll.
+        starts=[]
+        for step in range(18):
+            self.now=step/2
+            self.runtime.frame('ref',self.now-.273824,self.frame)
+            starts += [row for row in self.runtime.frame('main',self.now,self.frame,assessments=[{'tracking_id':'t',
+                'ppe':{'helmet':{'status':'suspected_no_helmet' if step<12 else 'helmet'}}}]) if row['kind']=='start']
+            self.runtime.pump(now=self.now)
+        self.assertEqual(len(starts),1);event=starts[0]['event_id']
+        for _ in range(20):self.runtime.pump(now=self.now)
+        rows=self.box.db.execute("SELECT seq,kind,body,ack FROM requests WHERE event=? ORDER BY seq",(event,)).fetchall()
+        reports=[r for r in rows if r['kind']=='capture_report']
+        manifests=[r for r in rows if r['kind']=='manifest']
+        self.assertEqual(len(reports),2);self.assertTrue(manifests)
+        self.assertLess(max(r['seq'] for r in reports),min(r['seq'] for r in manifests))
+        self.assertTrue(all(r['ack'] is not None for r in reports))
+        self.assertEqual({json.loads(r['body'])['camera_id'] for r in manifests},{'main','ref'})
+        self.assertEqual({row['camera_id'] for row in self.transport.receipts.values()},{'main','ref'})
+        for report in reports:
+            body=json.loads(report['body']);self.assertEqual(body['state'],'incomplete')
+            self.assertTrue(body['captured_ranges']);self.assertTrue(body['missing_ranges'])
+            self.assertEqual(body['missing_ranges'][0]['start_at'],'1969-12-31T23:59:58.000000+00:00')
+            self.assertEqual(body['missing_ranges'][0]['end_at'],body['captured_ranges'][0]['start_at'])
+        close=json.loads(next(r['body'] for r in rows if r['kind']=='incomplete'))
+        self.assertFalse(close['complete'])
+        self.assertEqual(close['final_segment_count'],sum(json.loads(r['body'])['camera_id']=='main' for r in manifests))
+
+    def test_unacknowledged_incomplete_report_never_publishes_partial_manifest(self):
+        for queue in self.capture.buffers.values():queue.clear()
+        handler=self.transport.client._transport.handler
+        def unavailable(request):
+            if request.url.path.endswith('/capture-reports'):
+                return httpx.Response(503,json={'detail':'temporarily unavailable'})
+            return handler(request)
+        self.transport.client._transport.handler=unavailable
+        starts=self.feed();self.assertEqual(len(starts),1)
+        for _ in range(5):self.runtime.pump(now=self.now)
+        event=starts[0]['event_id']
+        self.assertTrue(self.box.db.execute("SELECT 1 FROM requests WHERE event=? AND kind='capture_report'",(event,)).fetchone())
+        self.assertFalse(self.box.db.execute("SELECT 1 FROM requests WHERE event=? AND kind IN ('manifest','close','incomplete')",(event,)).fetchone())
+        self.assertEqual(self.box.pending_close_intents()[0]['state'],'pending')
+
     def test_reference_source_gap_preserves_valid_fragments_without_complete_success(self):
         starts=self.feed(fail_ref=True);self.assertEqual(len(starts),1)
         self.assertEqual(self.box.event_status(starts[0]['event_id'])['state'],'incomplete')
@@ -73,12 +118,81 @@ class RuntimeTests(TestCase):
         event=starts[0]['event_id']
         close=json.loads(self.box.db.execute("SELECT body FROM requests WHERE event=? AND kind='incomplete'",(event,)).fetchone()[0])
         self.assertFalse(close['complete'])
-        reports=[json.loads(r[0]) for r in self.box.db.execute("SELECT body FROM requests WHERE event=? AND kind='capture_report'",(event,))]
-        self.assertEqual(len(reports),2)
-        self.assertTrue(all(r['state']=='incomplete' for r in reports))
-        self.assertTrue(all(r['captured_ranges'] for r in reports))
-        self.assertTrue(any(r['missing_ranges'] for r in reports))
-        self.assertTrue(any(not r['missing_ranges'] for r in reports))
+        reports=[(r[0].split(':',1)[0],json.loads(r[1])) for r in self.box.db.execute(
+            "SELECT idem,body FROM requests WHERE event=? AND kind='capture_report' ORDER BY seq",(event,))]
+        main=[body for camera,body in reports if camera=='main']
+        reference=[body for camera,body in reports if camera=='ref']
+        self.assertEqual([body['state'] for body in main],['collecting','complete'])
+        self.assertEqual([body['sequence'] for body in main],[1,2])
+        final_ack=self.box.db.execute("SELECT ack FROM requests WHERE event=? AND idem=?",(event,'main:'+event+':report2')).fetchone()
+        self.assertIsNotNone(final_ack['ack'])
+        self.assertEqual([body['state'] for body in reference],['incomplete'])
+        self.assertTrue(all(body['captured_ranges'] for _,body in reports))
+        self.assertTrue(reference[0]['missing_ranges'])
+        self.assertFalse(main[-1]['missing_ranges'])
+        self.assertTrue(self.transport.uploads)
+    def test_expired_source_after_collecting_preserves_history_and_reports_unavailable(self):
+        handler=self.transport.client._transport.handler;allow_close=[False]
+        def hold_close(request):
+            body=json.loads(request.read())
+            if request.url.path.endswith('/updates') and body.get('kind')=='close' and not allow_close[0]:
+                return httpx.Response(503,json={'detail':'temporary'})
+            return handler(request)
+        self.transport.client._transport.handler=hold_close
+        starts=self.feed(fail_ref=True);event=starts[0]['event_id']
+        first=self.box.db.execute("SELECT body,ack FROM requests WHERE event=? AND idem=?",(event,'main:'+event+':report1')).fetchone()
+        self.assertIsNotNone(first);self.assertIsNotNone(first['ack'])
+        first=json.loads(first['body']);self.assertEqual(first['state'],'collecting')
+        self.now=200;allow_close[0]=True
+        for _ in range(20):self.runtime.pump(now=self.now)
+        final=self.box.db.execute("SELECT body,ack FROM requests WHERE event=? AND idem=?",(event,'main:'+event+':report2')).fetchone()
+        self.assertIsNotNone(final);self.assertIsNotNone(final['ack'])
+        final=json.loads(final['body']);self.assertEqual(final['state'],'incomplete')
+        self.assertEqual(final['captured_ranges'],first['captured_ranges'])
+        self.assertTrue(final['missing_ranges'])
+        self.assertTrue(all(r['reason']=='source_segment_unavailable' for r in final['missing_ranges']))
+        self.assertFalse(self.transport.uploads)
+        self.assertEqual(self.box.event_status(event)['state'],'incomplete')
+
+    def test_incomplete_event_with_two_healthy_cameras_reports_both_complete(self):
+        starts=[]
+        for step in range(18):
+            self.now=step/2
+            self.runtime.frame('ref',self.now,self.frame)
+            rows=self.runtime.frame('main',self.now,self.frame,assessments=[{'tracking_id':'t',
+                'ppe':{'helmet':{'status':'suspected_no_helmet' if step<12 else 'helmet'}}}])
+            for row in rows:
+                if row['kind']=='start':
+                    starts.append(row);self.box.mark_incomplete(row['event_id'],reason='observation_interrupted')
+            self.runtime.pump(now=self.now)
+        self.assertEqual(len(starts),1);event=starts[0]['event_id']
+        for _ in range(20):self.runtime.pump(now=self.now)
+        rows=self.box.db.execute("SELECT idem,kind,body,ack FROM requests WHERE event=? ORDER BY seq",(event,)).fetchall()
+        for camera in ('main','ref'):
+            reports=[json.loads(r['body']) for r in rows if r['kind']=='capture_report' and r['idem'].startswith(camera+':')]
+            self.assertEqual([r['state'] for r in reports],['collecting','complete'])
+            self.assertTrue(all(not r['missing_ranges'] for r in reports))
+            self.assertTrue(all(r['ack'] is not None for r in rows if r['kind']=='capture_report' and r['idem'].startswith(camera+':')))
+        manifests=[json.loads(r['body']) for r in rows if r['kind']=='manifest']
+        self.assertTrue(manifests);self.assertTrue(all('camera_id' not in m for m in manifests))
+        close=json.loads(next(r['body'] for r in rows if r['kind']=='incomplete'))
+        self.assertFalse(close['complete']);self.assertEqual(self.box.event_status(event)['state'],'incomplete')
+
+    def test_partial_complete_dispatch_rejects_missing_ack_prerequisites(self):
+        from unittest.mock import patch
+        starts=self.feed(fail_ref=True);event=starts[0]['event_id']
+        for _ in range(20):self.runtime.pump(now=self.now)
+        target=self.box.db.execute("SELECT * FROM requests WHERE event=? AND idem=?",(event,'main:'+event+':report2')).fetchone()
+        self.assertIsNotNone(target['ack'])
+        prerequisites=[self.box.db.execute("SELECT seq,ack FROM requests WHERE event=? AND idem=?",(event,'main:'+event+':report1')).fetchone(),
+                       self.box.db.execute("SELECT seq,ack FROM requests WHERE event=? AND kind='incomplete'",(event,)).fetchone()]
+        for prerequisite in prerequisites:
+            with self.subTest(sequence=prerequisite['seq']):
+                with self.box.transaction():self.box.db.execute('UPDATE requests SET ack=NULL WHERE event=? AND seq=?',(event,prerequisite['seq']))
+                with patch.object(self.box,'pending',return_value=[target]):
+                    self.assertEqual(self.dispatcher.metadata_once(),[(event,'capture_completion_blocked')])
+                with self.box.transaction():self.box.db.execute('UPDATE requests SET ack=? WHERE event=? AND seq=?',(prerequisite['ack'],event,prerequisite['seq']))
+
     def test_stop_journals_interruption_and_releases_raw_prebuffers(self):
         for step in range(11):
             self.now=step/2

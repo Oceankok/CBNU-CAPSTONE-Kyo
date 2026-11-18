@@ -171,7 +171,8 @@ def _record_report(event_id,camera_id,body,node_id):
             if body.clock_uncertainty_seconds>maximum:
                 raise HTTPException(422,'capture_clock_uncertain')
         if body.state=='complete':
-            if (owner['phase']!='closed' or body.missing_ranges
+            permitted_phase=owner['phase'] in {'closed','interrupted'}
+            if (not permitted_phase or body.missing_ranges
                     or not _covers(body.captured_ranges,start,end,endpoint_epsilon=lc.WIRE_TIME_EPSILON)
                     or (body.earliest_available_at is not None and body.earliest_available_at>start+lc.WIRE_TIME_EPSILON)):
                 raise HTTPException(409,'continuous_capture_incomplete')

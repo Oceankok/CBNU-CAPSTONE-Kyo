@@ -238,11 +238,15 @@ class CompletedRuntimeTests(unittest.TestCase):
         event=starts[0]["event_id"]
         self.assertEqual(json.loads(f.box.event_status(event)["snapshot"]),["main","ref"])
         self.assertEqual(f.box.event_status(event)["state"],"incomplete")
-        reports=[json.loads(r[0]) for r in f.box.db.execute("SELECT body FROM requests WHERE kind='capture_report'")]
-        self.assertEqual(len(reports),2)
-        self.assertTrue(all(r["state"]=="incomplete" for r in reports))
-        self.assertTrue(any(r["missing_ranges"] for r in reports))
-        self.assertTrue(any(not r["missing_ranges"] for r in reports))
+        reports={"main":[],"ref":[]}
+        for key,body in f.box.db.execute("SELECT idem,body FROM requests WHERE kind='capture_report' ORDER BY seq"):
+            reports[key.split(':',1)[0]].append(json.loads(body))
+        self.assertEqual([r["state"] for r in reports["main"]],["collecting","complete"])
+        self.assertEqual([r["state"] for r in reports["ref"]],["incomplete"])
+        self.assertFalse(reports["main"][-1]["missing_ranges"])
+        self.assertTrue(reports["ref"][-1]["missing_ranges"])
+        close=json.loads(f.box.db.execute("SELECT body FROM requests WHERE kind='incomplete'").fetchone()[0])
+        self.assertFalse(close["complete"])
         self.assertTrue(f.transport.uploads)  # healthy primary fragments still delivered
     def test_no_preroll_does_not_erase_event_or_fabricate_complete_evidence(self):
         f=self.make(("main",));starts=self.feed(f,missing_preroll=True)

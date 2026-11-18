@@ -64,7 +64,13 @@ class TerminalEvidenceProjectionTests(unittest.TestCase):
             self.assertEqual(sum(row['status']=='pending' for row in result['clip_requests']), 3)
             self.assertEqual(sum(row['status']=='received' for row in result['clip_requests']), 1)
             self.assertEqual(result['items'][0]['url'], '/'+key)
-            self.assertFalse(result['review_availability']['can_review'])
+            # A usable redacted fragment permits an administrator's review;
+            # interrupted capture still cannot pass automatic finalization.
+            self.assertTrue(result['review_availability']['can_review'])
+            from backend.processing.lifecycle import require_finalizable
+            with get_connection() as conn:
+                with self.assertRaisesRegex(ValueError, 'continuous_event_not_closed'):
+                    require_finalizable(conn,self.ident)
             self.assertEqual(self.snapshot(), before, 'GET projection must not write evidence/review state')
             self.assertEqual(self.client.get('/api/events/'+self.ident+'/media').status_code, 401)
             if os.environ.get('PPE_TERMINAL_DISPLAY_FIXTURE'):

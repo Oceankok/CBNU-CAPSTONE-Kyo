@@ -46,6 +46,58 @@ class FailureRecords(unittest.TestCase):
             self.assertEqual(json.loads(first)['code'],'clock_wall_step')
             self.assertFalse(list(root.glob('*.tmp')))
 
+    def test_os_error_details_are_safe_and_first_record_is_immutable(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);run=str(uuid4());(root/'session.json').write_text(json.dumps({'run_id':run}))
+            error=PermissionError(13,'secret path and token')
+            error.winerror=32;error.sender_stage='atomic_json'
+            record_failure(root,run,'sender',error)
+            path=root/f'.failure-sender-{run}.json';first=path.read_bytes()
+            data=json.loads(first)
+            self.assertEqual((data['exception_type'],data['errno'],data['winerror'],data['stage']),
+                             ('PermissionError',13,32,'atomic_json'))
+            self.assertNotIn('secret',str(data))
+            record_failure(root,run,'sender',OSError(28,'disk full'))
+            self.assertEqual(path.read_bytes(),first)
+
+    def test_atomic_json_retries_only_sharing_violations(self):
+        from video_sender.context_sender import atomic_json
+        import os
+        with tempfile.TemporaryDirectory() as d:
+            target=Path(d)/'session.json';target.write_text('original')
+            real_replace=os.replace;calls=[]
+            def transient(source,dest):
+                calls.append(source)
+                if len(calls)<3:
+                    error=PermissionError(13,'private');error.winerror=32;raise error
+                real_replace(source,dest)
+            with patch('video_sender.context_sender.os.replace',side_effect=transient), \
+                 patch('video_sender.context_sender.time.sleep'):
+                atomic_json(target,{'ok':True})
+            self.assertEqual(json.loads(target.read_text()),{'ok':True})
+            self.assertEqual(len(calls),3);self.assertFalse(list(Path(d).glob('*.tmp')))
+            target.write_text('original')
+            with patch('video_sender.context_sender.os.replace',side_effect=OSError(28,'private')) as replace, \
+                 patch('video_sender.context_sender.time.sleep') as sleep:
+                with self.assertRaises(OSError) as raised:atomic_json(target,{'ok':True})
+            self.assertEqual(raised.exception.sender_stage,'atomic_json')
+            self.assertEqual(replace.call_count,1);sleep.assert_not_called()
+            self.assertEqual(target.read_text(),'original');self.assertFalse(list(Path(d).glob('*.tmp')))
+
+    def test_cleanup_codes_and_network_types_are_recorded_safely(self):
+        for error, name, code in (
+                (OSError('acknowledged_clip_cleanup_pending'), 'OSError', 'acknowledged_clip_cleanup_pending'),
+                (OSError('cleanup_pending'), 'OSError', 'cleanup_pending'),
+                (requests.exceptions.ChunkedEncodingError('secret'), 'ChunkedEncodingError', None),
+                (requests.exceptions.ContentDecodingError('secret'), 'ContentDecodingError', None),
+                (requests.exceptions.RequestException('secret'), 'RequestException', None)):
+            with self.subTest(name=name, code=code), tempfile.TemporaryDirectory() as d:
+                root=Path(d);run=str(uuid4());(root/'session.json').write_text(json.dumps({'run_id':run}))
+                record_failure(root,run,'sender',error)
+                data=json.loads((root/f'.failure-sender-{run}.json').read_text())
+                self.assertEqual((data['exception_type'],data['code']),(name,code))
+                self.assertNotIn('secret',str(data))
+
     def test_failure_to_record_never_raises(self):
         with tempfile.TemporaryDirectory() as d:
             record_failure(Path(d)/'missing',str(uuid4()),'sender',ValueError('clock_wall_step'))

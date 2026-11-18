@@ -141,7 +141,7 @@ class SettledProducerAPITests(unittest.TestCase):
     close=RecoveryAPITests.close
     open=RecoveryAPITests.open
 
-    def produce(self,*,incomplete=False,lost_complete=False):
+    def produce(self,*,incomplete=False,lost_complete=False,interrupted_healthy=False,expire_after_collecting=False):
         import numpy as np
         from inference_worker.cleanup_supervisor import CleanupSupervisor
         from inference_worker.continuous_runtime import ContinuousFrameRuntime
@@ -152,10 +152,17 @@ class SettledProducerAPITests(unittest.TestCase):
         self.box=self.open()
         self.box.bind_runtime({"endpoint":"http://localhost","primary":"CAM_001",
             "clocks":{c:{"offset":0,"error_bound":0} for c in ("CAM_001","CAM_002")}})
-        self.calls=[];self.lose_complete=lost_complete;self.complete_response_lost=False
+        self.calls=[];self.lose_complete=lost_complete;self.complete_response_lost=False;self.expired_segment=None
         def handle(request):
             self.calls.append((request.method,request.url.path))
             response=p.handle(request)
+            if (expire_after_collecting and self.expired_segment is None
+                    and request.url.path.endswith('/capture-reports')
+                    and json.loads(request.read()).get('state')=='collecting' and response.status_code==200):
+                row=self.box.db.execute("SELECT id FROM segments WHERE camera='CAM_001' AND state='present' ORDER BY start LIMIT 1").fetchone()
+                self.assertIsNotNone(row)
+                self.expired_segment=row['id']
+                self.box.request_cleanup(row['id'],reason='source_expired_or_clock_rollback')
             if (self.lose_complete and request.url.path.endswith("/updates")
                     and json.loads(request.read()).get("complete") is True and response.status_code==200):
                 self.complete_response_lost=True
@@ -185,8 +192,12 @@ class SettledProducerAPITests(unittest.TestCase):
         for step in range(19):
             now=p.epoch+step*.5
             if not incomplete:runtime.frame("CAM_002",now,frame)
-            starts+=runtime.frame("CAM_001",now,frame,assessments=[{"tracking_id":"native-track",
+            transitions=runtime.frame("CAM_001",now,frame,assessments=[{"tracking_id":"native-track",
                 "ppe":{"helmet":{"status":"suspected_no_helmet" if step<12 else "helmet"}}}])
+            starts+=transitions
+            if interrupted_healthy:
+                for row in transitions:
+                    if row['kind']=='start':self.box.mark_incomplete(row['event_id'],reason='observation_interrupted')
             runtime.pump(now=now)
             if self.complete_response_lost:break
         self.event=next(r["event_id"] for r in starts if r["kind"]=="start")
@@ -256,13 +267,65 @@ class SettledProducerAPITests(unittest.TestCase):
         with get_connection() as conn:
             self.assertEqual(conn.execute("SELECT count(*) FROM event_review WHERE event_id=?",(self.event,)).fetchone()[0],1)
 
-    def test_normal_incomplete_producer_is_settled_but_review_policy_stays_closed_only(self):
+    def test_normal_incomplete_producer_is_settled_and_hold_does_not_confirm_unredacted_media(self):
         self.produce(incomplete=True)
+        reports=[json.loads(r[0]) for r in self.box.db.execute("SELECT body FROM requests WHERE kind='capture_report' ORDER BY seq")]
+        self.assertEqual([r['state'] for r in reports].count('collecting'),1)
+        self.assertEqual({r['state'] for r in reports},{'collecting','complete','incomplete'})
         p=self.pipe
         response=p.client.post("/api/events/"+self.event+"/review",headers=p.admin,
-            json={"review_result":"hold","review_reason_code":"unclear"})
+            json={"review_result":"confirmed","review_reason_code":"confirmed_no_helmet"})
         self.assertEqual(response.status_code,409,response.text)
-        self.assertIn("continuous_event_not_closed",response.text)
+        self.assertIn("usable_redacted_media_required",response.text)
+        response=p.client.post("/api/events/"+self.event+"/review",headers=p.admin,
+            json={"review_result":"hold","review_reason_code":"unclear"})
+        self.assertEqual(response.status_code,200,response.text)
+        from backend.db.event_repository import get_connection
+        from backend.processing.lifecycle import require_finalizable
+        with get_connection() as conn:
+            self.assertEqual(conn.execute("SELECT review_result FROM event_review WHERE event_id=?",(self.event,)).fetchone()[0],"hold")
+            with self.assertRaisesRegex(ValueError,"continuous_event_not_closed"):
+                require_finalizable(conn,self.event)
+        self.restart_without_io()
+
+    def test_interrupted_lifecycle_with_healthy_cameras_restarts_without_io(self):
+        self.produce(interrupted_healthy=True)
+        reports=[json.loads(r[0]) for r in self.box.db.execute("SELECT body FROM requests WHERE kind='capture_report' ORDER BY seq")]
+        self.assertEqual([r['state'] for r in reports].count('complete'),2)
+        self.assertNotIn('incomplete',[r['state'] for r in reports])
+        self.restart_without_io()
+
+    def test_partial_report_missing_ack_or_tampered_body_is_not_certified(self):
+        self.produce(incomplete=True)
+        recovery=SessionRecovery(self.box,self.dispatcher,endpoint='http://localhost')
+        event=self.box.db.execute('SELECT * FROM events WHERE id=?',(self.event,)).fetchone()
+        self.assertTrue(recovery._settled_history(event))
+        row=self.box.db.execute("SELECT seq,body,ack FROM requests WHERE kind='capture_report' ORDER BY seq LIMIT 1").fetchone()
+        self.box.db.execute('UPDATE requests SET ack=NULL WHERE event=? AND seq=?',(self.event,row['seq']))
+        self.assertFalse(recovery._settled_history(event))
+        self.box.db.execute('UPDATE requests SET ack=?,body=? WHERE event=? AND seq=?',(row['ack'],b'{}',self.event,row['seq']))
+        self.assertFalse(recovery._settled_history(event))
+
+    def test_expired_collecting_source_is_settled_after_hold_without_io(self):
+        self.produce(incomplete=True,expire_after_collecting=True)
+        self.assertIsNotNone(self.expired_segment)
+        rows=self.box.db.execute("SELECT body FROM requests WHERE kind='capture_report' AND idem LIKE 'CAM_001:%' ORDER BY seq").fetchall()
+        reports=[json.loads(r[0]) for r in rows]
+        self.assertEqual([r['state'] for r in reports],['collecting','incomplete'])
+        self.assertEqual(reports[0]['captured_ranges'],reports[1]['captured_ranges'])
+        self.assertTrue(reports[1]['missing_ranges'])
+        self.assertTrue(all(r['reason']=='source_segment_unavailable' for r in reports[1]['missing_ranges']))
+        self.assertEqual(self.box.db.execute('SELECT state FROM segments WHERE id=?',(self.expired_segment,)).fetchone()[0],'unavailable')
+        self.assertIsNone(self.dispatcher.db.execute('SELECT 1 FROM uploads WHERE segment=?',(self.expired_segment,)).fetchone())
+        self.pipe.client.post('/api/events/'+self.event+'/review',headers=self.pipe.admin,
+            json={'review_result':'hold','review_reason_code':'unclear'}).raise_for_status()
+        recovery=SessionRecovery(self.box,self.dispatcher,endpoint='http://localhost')
+        event=self.box.db.execute('SELECT * FROM events WHERE id=?',(self.event,)).fetchone()
+        self.assertTrue(recovery._settled_history(event))
+        segment=self.box.db.execute('SELECT reason FROM segments WHERE id=?',(self.expired_segment,)).fetchone()
+        self.box.db.execute('UPDATE segments SET reason=NULL WHERE id=?',(self.expired_segment,))
+        self.assertFalse(recovery._settled_history(event))
+        self.box.db.execute('UPDATE segments SET reason=? WHERE id=?',(segment['reason'],self.expired_segment))
         self.restart_without_io()
 
     def test_committed_lost_complete_recovers_then_reviewed_second_restart_is_a_noop(self):

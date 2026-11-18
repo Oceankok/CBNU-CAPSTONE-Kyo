@@ -296,13 +296,17 @@ class SessionRecovery:
                 if (body.get("session_id")!=session or ack.get("event_id")!=event
                         or ack.get("accepted_command")!=expected):return False
                 if row["kind"]=="capture_report":
-                    if camera not in cameras or body.get("state") not in ("complete","incomplete"):return False
-                    reports[camera]=body
+                    if camera not in cameras or body.get("state") not in ("collecting","complete","incomplete"):return False
+                    chain=reports.setdefault(camera,[])
+                    if type(body.get("sequence")) is not int or body["sequence"]!=len(chain)+1:return False
+                    chain.append(body)
                 commands.append((row["kind"],body,ack))
             starts=[b for k,b,a in commands if k=="start"]
             closes=[(k,b,a) for k,b,a in commands if k in ("close","incomplete")]
             if len(starts)!=1 or len(closes)!=1 or rows[0]["kind"]!="start":return False
             start=starts[0];kind,close,close_ack=closes[0]
+            if any(chain[-1]["state"] not in ("complete","incomplete") for chain in reports.values()):return False
+            reports={camera:chain[-1] for camera,chain in reports.items()}
             count=close.get("final_segment_count")
             phase=close_ack.get("lifecycle",{}).get("phase")
             if phase is None:
@@ -326,7 +330,6 @@ class SessionRecovery:
                     or set(reports)!=set(cameras) or close.get("sequence")!=intent["next_api_seq"]
                     or phase!=("closed" if complete else "interrupted")):return False
             if complete and any(r["state"]!="complete" for r in reports.values()):return False
-            if not complete and not any(r["state"]=="incomplete" for r in reports.values()):return False
             required_start=stamp(start["timestamp_start"])-timedelta(seconds=2)
             required_end=required_capture_end(stamp(start['timestamp_start']),stamp(close['timestamp_end']),
                 start.get('capture_output_fps'))
@@ -340,8 +343,8 @@ class SessionRecovery:
                         or (report["state"]=="complete" and missing[camera])
                         or (report["state"]=="incomplete" and not report.get("reason"))):return False
             manifests=[(b,a) for k,b,a in commands if k=="manifest"]
-            manual=start.get('evidence_mode')=='manual_review'
-            if manual:
+            scoped=bool(manifests) and all(b.get('camera_id') is not None for b,a in manifests)
+            if scoped:
                 groups={c:[b['sequence'] for b,a in manifests if b.get('camera_id')==c] for c in cameras}
                 if len(groups[start['camera_id']])!=count:return False
                 if any(v!=list(range(len(v))) for v in groups.values()):return False
@@ -352,8 +355,8 @@ class SessionRecovery:
             for index,(body,ack) in enumerate(manifests):
                 left,right=stamp(body["capture_start_at"]),stamp(body["capture_end_at"])
                 adjacent=abs(left-cursor)<=epsilon if index==0 else left==cursor
-                targets={body['camera_id']} if manual else set(cameras)
-                if manual:
+                targets={body['camera_id']} if scoped else set(cameras)
+                if scoped:
                     if left<cursors[body['camera_id']]-epsilon:return False
                     if complete and abs(left-cursors[body['camera_id']])>epsilon:return False
                     cursors[body['camera_id']]=right
@@ -368,7 +371,7 @@ class SessionRecovery:
                             or stamp(remote["capture_start_at"])!=left
                             or stamp(remote["capture_end_at"])!=right):return False
                     bindings[(camera,left,right)]=remote
-            if complete and (any(abs(v-required_end)>epsilon for v in cursors.values()) if manual else abs(cursor-required_end)>epsilon):return False
+            if complete and (any(abs(v-required_end)>epsilon for v in cursors.values()) if scoped else abs(cursor-required_end)>epsilon):return False
             owners=self.box.db.execute("SELECT * FROM captures WHERE event=?",(event,)).fetchall()
             if len({r["camera"] for r in owners})!=len(owners) or any(r["camera"] not in cameras for r in owners):return False
             if complete and {r["camera"] for r in owners}!=set(cameras):return False
@@ -379,7 +382,7 @@ class SessionRecovery:
                 if owner["state"] not in ("active","interrupted") or directory.exists():return False
             segments=self.box.db.execute("SELECT * FROM segments WHERE event=?",(event,)).fetchall()
             uploads=self.dispatcher.db.execute("SELECT * FROM uploads WHERE event=?",(event,)).fetchall()
-            plans={r["segment"]:r for r in uploads};delivered={c:[] for c in cameras};seen=set();used=set()
+            plans={r["segment"]:r for r in uploads};delivered={c:[] for c in cameras};unavailable={c:[] for c in cameras};seen=set();used=set()
             for segment in segments:
                 camera=segment["camera"]
                 if (camera not in cameras or spools.get(segment["path"].split("/")[0])!=camera
@@ -389,6 +392,7 @@ class SessionRecovery:
                     if (complete or not segment["reason"] or segment["id"] in plans
                             or reports[camera]["state"]!="incomplete"
                             or (right>left and not covers(missing[camera],left,right))):return False
+                    if right>left:unavailable[camera].append((left,right))
                     continue
                 key=(camera,stamp(_time(segment["start"])),stamp(_time(segment["end"])))
                 remote=bindings.get(key);upload=plans.get(segment["id"])
@@ -408,7 +412,11 @@ class SessionRecovery:
                 seen.add(key);used.add(segment["id"]);delivered[camera].append((wire(segment["start"]),wire(segment["end"])))
             if used!=set(plans):return False
             for camera in cameras:
-                if any(not covers(delivered[camera],a,b) for a,b in captured[camera]):return False
+                # Cumulative reports retain previously captured ranges even if
+                # their local sources expired after the collecting report.
+                # Only the independently checked unavailable dispositions above
+                # may account for that historical coverage.
+                if any(not covers(delivered[camera]+unavailable[camera],a,b) for a,b in captured[camera]):return False
             for camera,left,right in bindings:
                 if (camera,left,right) not in seen and (reports[camera]["state"]!="incomplete"
                         or not covers(missing[camera],left,right)):return False

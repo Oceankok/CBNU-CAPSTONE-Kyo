@@ -212,7 +212,8 @@ class CaptureOutbox:
             manifests=self.db.execute("SELECT body,ack FROM requests WHERE event=? AND kind='manifest' ORDER BY seq",(event,)).fetchall()
             start=self.db.execute("SELECT body FROM requests WHERE event=? AND kind='start'",(event,)).fetchone()
             start_body=json.loads(start['body']) if start else {}
-            scoped=start_body.get('evidence_mode')=='manual_review'
+            scoped=(start_body.get('evidence_mode')=='manual_review' or
+                    (not complete and all(json.loads(m['body']).get('camera_id') is not None for m in manifests)))
             if not scoped and len(manifests)!=final_segment_count:
                 raise OutboxError('manifest count mismatch')
             sequences=[];by_camera={}
@@ -293,7 +294,7 @@ class CaptureOutbox:
             sql+=' AND camera=?';params.append(camera)
         return self.db.execute(sql,params).fetchone() is not None
 
-    def enqueue(self,event,*,seq,kind,idempotency_key,body,_lifecycle_final_progress=False,_recovered_manual_manifest=False):
+    def enqueue(self,event,*,seq,kind,idempotency_key,body,_lifecycle_final_progress=False,_recovered_manual_manifest=False,_final_collecting_report=False):
         """Canonical bytes are persisted once; retries never reconstruct payloads."""
         _key(idempotency_key)
         if type(seq) is not int or seq<0 or kind not in ('start','progress','close','incomplete','manifest','capture_report'):
@@ -314,7 +315,20 @@ class CaptureOutbox:
                 recovered=(original is not None and json.loads(original['body']).get('evidence_mode')=='manual_review'
                     and body.get('session_id')==row['session'] and row['state'] in ('interrupted','incomplete')
                     and body.get('camera_id') in self._camera_ids(json.loads(row['snapshot'])))
-            if (not recovered and row['state']!='active' and kind!='incomplete'
+            report_camera=idempotency_key.split(':',1)[0] if kind=='capture_report' else None
+            provisional=(kind=='capture_report' and isinstance(body,dict) and body.get('state')=='collecting'
+                         and body.get('session_id')==self.session and body.get('sequence')==1
+                         and report_camera in self._camera_ids(json.loads(row['snapshot']))
+                         and self._incomplete_capture_open(row,camera=report_camera))
+            final_collecting=False
+            if _final_collecting_report and kind=='capture_report' and isinstance(body,dict):
+                first=self.db.execute("SELECT body,ack FROM requests WHERE event=? AND idem=? AND kind='capture_report'",
+                    (event,report_camera+':'+event+':report1')).fetchone()
+                terminal=self.db.execute("SELECT 1 FROM requests WHERE event=? AND kind='incomplete' AND ack IS NOT NULL",(event,)).fetchone()
+                final_collecting=(row['state']=='incomplete' and body.get('state') in ('complete','incomplete') and body.get('sequence')==2
+                    and body.get('session_id')==self.session and first is not None and first['ack'] is not None
+                    and json.loads(first['body']).get('state')=='collecting' and terminal is not None)
+            if (not recovered and not provisional and not final_collecting and row['state']!='active' and kind!='incomplete'
                     and not (row['state']=='closed' and kind=='capture_report')
                     and not (row['state']=='incomplete' and kind=='progress' and _lifecycle_final_progress is True)
                     and not (kind=='manifest' and isinstance(body,dict) and body.get('session_id')==self.session
