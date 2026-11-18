@@ -88,6 +88,7 @@ class RunnerEOSBoundaryTests(unittest.TestCase):
         mux.cameras=('main','ref'); mux.ended={'main','ref'} if verified else {'main'}; mux.queue=[]
         mux.drained_sources.return_value=set(mux.ended)
         reader=Mock(); reader.reference_failures={}; reader.poll.side_effect=[[],runner.SourceMuxError(reason)]
+        reader.observation_cutoffs={}
         reader.sequence={'main':4}; reader.end_reasons={'main':'source_ended','ref':'source_ended'}
         reader.streams={'main':'stream-main','ref':'stream-ref'}
         reader.primary_capture_context.return_value='ctx-main'
