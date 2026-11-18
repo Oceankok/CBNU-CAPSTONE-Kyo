@@ -4,6 +4,7 @@ Stop is an authenticated sender acknowledgement plus exact accepted-sequence
 manifest, not proof of physical camera hardware state. Timeout never retires it.
 """
 import os
+import json
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from .registry import POLICY, issue, retire
@@ -69,6 +70,8 @@ def stream_fields(conn,stream_id):
     result=dict(capture_context_id=row['context_id'],capture_session_id=row['session_id'],assignment_version=row['assignment_version'])
     clock=conn.execute('SELECT version,epoch,run_id FROM capture_clock_stream WHERE stream_id=?',(stream_id,)).fetchone()
     if clock:result.update(clock_proof_version=clock['version'],clock_epoch=clock['epoch'],clock_run_id=clock['run_id'])
+    stop=conn.execute('SELECT payload FROM capture_observation_stop WHERE stream_id=?',(stream_id,)).fetchone()
+    if stop:result['observation_stop']=json.loads(stop['payload'])
     return result
 
 

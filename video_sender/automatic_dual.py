@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from clock_contract import ClockPolicy
-from video_sender.context_sender import atomic_json
+from video_sender.capture_control import atomic_json, normal_stop_path, read_stop_peer
 from video_sender.context_starter import Starter, launcher_lock
 
 
@@ -83,7 +83,7 @@ class AutomaticDual:
     def environment(self,slot):
         return {'PATH':slot['path'],'VIDEO_SERVER_URL':slot['settings']['server_url'],
             'VIDEO_CAMERA_ID':slot['camera'],'VIDEO_NODE_TOKEN':self.loader.read_token(slot['config']),
-            'VIDEO_CLOCK_PROOF_ENABLED':'true','VIDEO_CLOCK_SERVER_EPOCH':self.policy['server_epoch'],
+            'VIDEO_NORMAL_STOP_ENABLED':'true','VIDEO_CLOCK_PROOF_ENABLED':'true','VIDEO_CLOCK_SERVER_EPOCH':self.policy['server_epoch'],
             'VIDEO_CLOCK_SOURCE_NODE_ID':slot['node'],
             'VIDEO_CLOCK_POLICY_JSON':json.dumps(self.policy['clock_policy'],separators=(',',':')),
             'VIDEO_CLOCK_REFRESH_SECONDS':str(self.policy['refresh_seconds']),
@@ -126,18 +126,62 @@ class AutomaticDual:
                 self.start(slot);started.append(slot)
         except Exception as error:
             for slot in started:
-                try:self.stop(slot)
+                try:self.stop(slot, immediate=True)
                 except Exception:pass
             raise RuntimeError('partial_start_stopping' if started else 'start_failed') from error
 
-    def stop(self,slot):
+    def stop(self,slot, *, immediate=False):
         starter=slot['starter']
-        if starter.active():starter.request_stop()
+        if starter.active():starter.request_stop(immediate=immediate)
         elif starter.directory is not None:
             # A GUI restart loses the child handle, not the cooperative run ID.
             if starter.journal()['closed']:raise ValueError('already_closed')
-            starter._publish_stop()
+            if immediate:starter._publish_stop(immediate=True)
+            else:starter._publish_stop()
         else:raise ValueError('no_session')
+
+
+    def stop_all(self):
+        """Dispatch to both cameras before surfacing per-camera errors."""
+        open_slots=[]
+        failures=[]
+        for slot in self.slots:
+            starter=slot['starter']
+            try:
+                state=starter.journal() if starter.directory is not None else None
+            except FileNotFoundError:
+                if starter.active():
+                    return None  # Retry once the startup journal is visible.
+                failures.append(slot['camera'])
+                continue
+            except Exception:
+                failures.append(slot['camera'])
+                continue
+            if state is not None and not state['closed']:
+                open_slots.append((slot,state))
+
+        peers=[None]*len(open_slots)
+        if len(open_slots)==2 and all(state.get('normal_stop_enabled') is True for _,state in open_slots):
+            references=[{'directory':str(slot['starter'].directory.resolve()),'run_id':state['run_id']}
+                        for slot,state in open_slots]
+            peers=references[::-1]
+            for index, reference in enumerate(references):
+                directory, run_id=reference['directory'],reference['run_id']
+                if not normal_stop_path(directory,run_id).exists():
+                    continue
+                try:previous=read_stop_peer(directory,run_id)
+                except (OSError, ValueError):
+                    failures.append(open_slots[index][0]['camera'])
+                    previous=None
+                if previous!=peers[index]:
+                    # A prior independent request has already fixed that run's stop mode.
+                    peers=[None,None]
+                    break
+
+        for (slot,_),peer in zip(open_slots,peers):
+            try:slot['starter']._publish_stop(peer=peer)
+            except Exception:failures.append(slot['camera'])
+        return failures
 
 
 def main():
@@ -159,25 +203,43 @@ def main():
         statuses=[tk.StringVar() for _ in controller.slots]
         for slot,status in zip(controller.slots,statuses):
             ttk.Label(window,text=slot['camera']).pack();ttk.Label(window,textvariable=status,wraplength=600).pack()
+        stop_pending=False
+
+        def dispatch_stop():
+            nonlocal stop_pending
+            try:
+                failures=controller.stop_all()
+            except (OSError, ValueError, KeyError):
+                failures=[slot['camera'] for slot in controller.slots]
+            stop_pending=failures is None
+            if failures:
+                messagebox.showerror('처리 불가',', '.join(failures)+' 설정과 세션 상태를 확인하세요. 기존 영상은 보존됩니다.')
+
         def action(operation):
+            if operation=='stop':
+                dispatch_stop()
+                return
             if operation=='new':
                 try:controller.start_all()
                 except RuntimeError as error:
                     messagebox.showerror('시작 실패', '일부 카메라 시작 후 종료 요청 중입니다. 종료 ACK와 세션 복구를 확인하세요.' if str(error)=='partial_start_stopping' else '설정과 세션 상태를 확인하세요.')
                 return
+            failures=[]
             for slot in controller.slots:
                 try:
-                    if operation=='stop':controller.stop(slot)
-                    else:controller.start(slot,mode=operation)
-                except Exception:messagebox.showerror('처리 불가',slot['camera']+' 설정과 세션 상태를 확인하세요. 기존 영상은 보존됩니다.')
+                    controller.start(slot,mode=operation)
+                except Exception:failures.append(slot['camera'])
+            if failures:
+                messagebox.showerror('처리 불가',', '.join(failures)+' 설정과 세션 상태를 확인하세요. 기존 영상은 보존됩니다.')
         buttons=ttk.Frame(window);buttons.pack(pady=12)
         for label,operation in [('두 카메라 시작','new'),('모두 종료 요청','stop'),('남은 전송 복구','resume-drain')]:
             ttk.Button(buttons,text=label,command=lambda op=operation:action(op)).pack(side='left')
         def refresh():
+            if stop_pending:dispatch_stop()
             for slot,status in zip(controller.slots,statuses):
                 try:
                     controller.record_pre_session_failure(slot)
-                    status.set(slot['starter'].status())
+                    status.set('종료 처리 중. 세션 발급을 기다리는 중입니다.' if stop_pending else slot['starter'].status())
                 except Exception:status.set('세션 상태를 확인할 수 없습니다. 새 시작 전 복구가 필요합니다.')
             window.after(500,refresh)
         refresh();window.mainloop()

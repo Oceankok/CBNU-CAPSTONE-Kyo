@@ -158,6 +158,8 @@ def read(stream_id: UUID, proof_id: UUID | None = None, node: dict = Depends(pro
 
 
 def bind_chunk(conn, stream_id, sequence, proof_id, capture_start, duration_ms):
+    from backend.capture_context.observation_stop import verify_chunk_binding
+    verify_chunk_binding(conn,stream_id,sequence,proof_id)
     binding = conn.execute('SELECT * FROM capture_clock_stream WHERE stream_id=?', (stream_id,)).fetchone()
     if binding is None:
         if proof_id is not None: raise HTTPException(409, 'clock_stream_binding_required')

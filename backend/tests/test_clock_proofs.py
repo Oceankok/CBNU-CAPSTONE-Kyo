@@ -348,7 +348,8 @@ class ClockProofApiTests(unittest.TestCase):
             from backend.db.migrations import apply_migrations
             with get_connection() as conn:apply_migrations(conn)
         with get_connection() as conn:
-            self.assertEqual(schema_version(conn),37)
+            from backend.db.migrations import LATEST_VERSION
+            self.assertEqual(schema_version(conn),LATEST_VERSION)
             for name in tables:
                 self.assertEqual(sorted(repr(tuple(r)) for r in conn.execute('SELECT * FROM '+name)),before[name],name)
         if postgres:initialize(seed=False)
