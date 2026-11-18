@@ -98,6 +98,14 @@ def read_config(path,primary,*,now):
         validate_config(config['clock_proof'],clocks)
         if any(row['error_bound']>min(config['capture']['max_clock_error'],config['mux']['max_clock_error']) for row in clocks.values()):
             raise ValueError('clock proof envelope exceeds capture or mux policy')
+    source=config['source'];decoder_config=config['decoder'];mux_config=config['mux']
+    frames=source.get('reserve_chunk_frames');reserve=source.get('reserve_chunk_bytes')
+    if frames is not None or reserve is not None:
+        pixels=decoder_config.get('max_frame_pixels')
+        if (type(frames) is not int or not 0<frames<=45 or type(pixels) is not int or not 0<pixels<=640*480
+                or decoder_config.get('max_frames')!=frames or type(reserve) is not int or reserve!=frames*pixels*3
+                or mux_config.get('max_frames',0)<4*frames or mux_config.get('max_bytes',0)<4*reserve):
+            raise ValueError('bounded chunk reserve contract invalid')
     if type(config['metadata_steps_per_pump']) is not int or config['metadata_steps_per_pump']<=0:
         raise ValueError('explicit metadata dispatch budget required')
     directory=Path(config['state_directory'])

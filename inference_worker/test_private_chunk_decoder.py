@@ -2,7 +2,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from uuid import uuid4
 import cv2
 import numpy as np
@@ -109,6 +109,18 @@ class PrivateDecoderTests(unittest.TestCase):
         self.decoder.max_frames=20;self.decoder.max_records=1
         with self.assertRaises(PrivateDecodeError):list(self.decoder(self.data))
 
+    def test_invalid_metadata_fails_before_first_frame(self):
+        for field,value in ((cv2.CAP_PROP_FRAME_COUNT,46),(cv2.CAP_PROP_FPS,16),
+                            (cv2.CAP_PROP_FRAME_WIDTH,641)):
+            with self.subTest(field=field):
+                fake=Mock();fake.isOpened.return_value=True
+                metadata={cv2.CAP_PROP_FRAME_WIDTH:640,cv2.CAP_PROP_FRAME_HEIGHT:480,
+                          cv2.CAP_PROP_FPS:15,cv2.CAP_PROP_FRAME_COUNT:45}
+                metadata[field]=value;fake.get.side_effect=lambda key:metadata[key]
+                self.decoder.max_frames=45;self.decoder.max_pixels=640*480;self.decoder.max_fps=15
+                with patch('inference_worker.private_chunk_decoder.cv2.VideoCapture',return_value=fake):
+                    with self.assertRaises(PrivateDecodeError):next(self.decoder(self.data,with_timing=True,duration_ms=3000))
+                fake.read.assert_not_called()
     def test_write_failure_is_audited_and_cleaned(self):
         with patch('inference_worker.private_chunk_decoder.os.write',side_effect=OSError('disk error')):
             with self.assertRaises(OSError):list(self.decoder(self.data))

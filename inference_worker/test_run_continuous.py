@@ -24,6 +24,20 @@ class RunnerBoundaryTests(TestCase):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/'config.json';path.write_text(json.dumps(cfg))
             with self.assertRaisesRegex(ValueError,'calibration'):read_config(path,'main',now=9999999999)
+    def test_rejects_bounded_profile_without_four_chunk_reserve(self):
+        frames=45;pixels=640*480;reserve=frames*pixels*3
+        cfg=dict(state_directory=str(Path(tempfile.gettempdir()).resolve()),
+            clocks={'main':dict(offset=0,error_bound=0,verified=True,epoch='e',valid_until='2030-01-01T00:00:00Z')},
+            capture={},mux={'max_frames':4*frames-1,'max_bytes':4*reserve},outbox={},delivery={},transport={},lifecycle={},
+            source={'reserve_chunk_frames':frames,'reserve_chunk_bytes':reserve},
+            decoder={'max_frames':frames,'max_frame_pixels':pixels},metadata_steps_per_pump=1,max_lag_seconds=1)
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/'config.json';path.write_text(json.dumps(cfg))
+            with self.assertRaisesRegex(ValueError,'bounded chunk reserve'):read_config(path,'main',now=0)
+            cfg['mux']['max_frames']=4*frames;cfg['mux']['max_bytes']=4*reserve-1
+            path.write_text(json.dumps(cfg))
+            with self.assertRaisesRegex(ValueError,'bounded chunk reserve'):read_config(path,'main',now=0)
+
     def test_invalid_person_geometry_cannot_create_violation(self):
         rows=[{'tracking_id':'t','person_bbox':None,'ppe':{'helmet':{'status':'suspected_no_helmet'}}}]
         result=policy_assessments(rows,{},(20,20,3),review_only=True)
