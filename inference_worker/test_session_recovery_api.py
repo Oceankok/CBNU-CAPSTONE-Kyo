@@ -256,13 +256,22 @@ class SettledProducerAPITests(unittest.TestCase):
         with get_connection() as conn:
             self.assertEqual(conn.execute("SELECT count(*) FROM event_review WHERE event_id=?",(self.event,)).fetchone()[0],1)
 
-    def test_normal_incomplete_producer_is_settled_but_review_policy_stays_closed_only(self):
+    def test_normal_incomplete_producer_is_settled_and_hold_does_not_confirm_unredacted_media(self):
         self.produce(incomplete=True)
         p=self.pipe
         response=p.client.post("/api/events/"+self.event+"/review",headers=p.admin,
-            json={"review_result":"hold","review_reason_code":"unclear"})
+            json={"review_result":"confirmed","review_reason_code":"confirmed_no_helmet"})
         self.assertEqual(response.status_code,409,response.text)
-        self.assertIn("continuous_event_not_closed",response.text)
+        self.assertIn("usable_redacted_media_required",response.text)
+        response=p.client.post("/api/events/"+self.event+"/review",headers=p.admin,
+            json={"review_result":"hold","review_reason_code":"unclear"})
+        self.assertEqual(response.status_code,200,response.text)
+        from backend.db.event_repository import get_connection
+        from backend.processing.lifecycle import require_finalizable
+        with get_connection() as conn:
+            self.assertEqual(conn.execute("SELECT review_result FROM event_review WHERE event_id=?",(self.event,)).fetchone()[0],"hold")
+            with self.assertRaisesRegex(ValueError,"continuous_event_not_closed"):
+                require_finalizable(conn,self.event)
         self.restart_without_io()
 
     def test_committed_lost_complete_recovers_then_reviewed_second_restart_is_a_noop(self):
