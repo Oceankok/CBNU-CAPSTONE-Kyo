@@ -213,6 +213,22 @@ class CaptureOutboxTests(unittest.TestCase):
         other=path.parent/(fresh.segment_id+'.mp4');other.write_bytes(b'test')
         with self.assertRaises(OutboxError):self.box.bind_segment('e',camera='main',segment=fresh,relative_path=folder+'/'+other.name)
 
+    def test_healthy_partial_report_needs_acknowledged_close_before_complete(self):
+        self.create();self.enqueue();self.box.begin_capture('e',camera='main',spool_directory=uuid4().hex)
+        with self.box.transaction():self.box.db.execute("INSERT INTO pending_closes VALUES(?,?,?,1,'pending')",('e',self.box.session,b'{}'))
+        self.box.mark_incomplete('e',reason='reference_failed')
+        first={'session_id':self.box.session,'sequence':1,'state':'collecting'}
+        final={'session_id':self.box.session,'sequence':2,'state':'complete'}
+        self.box.enqueue('e',seq=1,kind='capture_report',idempotency_key='main:e:report1',body=first)
+        with self.assertRaises(OutboxError):
+            self.box.enqueue('e',seq=2,kind='capture_report',idempotency_key='main:e:report2',body=final,_final_collecting_report=True)
+        self.box.acknowledge('e',0,receipt={});self.box.acknowledge('e',1,receipt={})
+        with self.assertRaises(OutboxError):
+            self.box.enqueue('e',seq=2,kind='capture_report',idempotency_key='main:e:report2',body=final,_final_collecting_report=True)
+        self.box.enqueue('e',seq=2,kind='incomplete',idempotency_key='final-close-test',body={})
+        self.box.acknowledge('e',2,receipt={})
+        self.box.enqueue('e',seq=3,kind='capture_report',idempotency_key='main:e:report2',body=final,_final_collecting_report=True)
+
     def test_partial_manifest_rejects_old_session_and_interrupted_owner(self):
         self.create();self.enqueue();folder=uuid4().hex
         self.box.begin_capture('e',camera='main',spool_directory=folder)

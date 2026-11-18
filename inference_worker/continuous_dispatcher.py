@@ -166,8 +166,6 @@ class ContinuousDispatcher:
                 route=base+'/'+event+'/updates'
             elif row['kind']=='manifest':route=base+'/'+event+'/segments'
             elif row['kind']=='capture_report':
-                if body.get('state')=='complete' and stored['state']!='closed':
-                    results.append((event,'capture_completion_blocked'));continue
                 # Camera route binding is not part of the API report body. Keep
                 # it in the durable idempotency key, prefixed by camera ID.
                 camera=row['idem'].split(':',1)[0]
@@ -176,6 +174,15 @@ class ContinuousDispatcher:
                 snapshot=json.loads(stored['snapshot'])
                 if camera not in self.outbox._camera_ids(snapshot):
                     results.append((event,'camera_binding_invalid'));continue
+                if body.get('state')=='complete' and stored['state']!='closed':
+                    first=self.outbox.db.execute("SELECT body,ack FROM requests WHERE event=? AND kind='capture_report' AND idem=?",
+                        (event,camera+':'+event+':report1')).fetchone()
+                    terminal=self.outbox.db.execute("SELECT 1 FROM requests WHERE event=? AND kind='incomplete' AND ack IS NOT NULL",(event,)).fetchone()
+                    allowed=(stored['state']=='incomplete' and body.get('sequence')==2
+                        and row['idem']==camera+':'+event+':report2' and first is not None and first['ack'] is not None
+                        and json.loads(first['body']).get('state')=='collecting' and terminal is not None)
+                    if not allowed:
+                        results.append((event,'capture_completion_blocked'));continue
                 route=base+'/'+event+'/cameras/'+camera+'/capture-reports'
             else:
                 results.append((event,'unsupported_kind'));continue

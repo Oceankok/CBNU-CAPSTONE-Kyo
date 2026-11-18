@@ -60,6 +60,42 @@ class MultiCameraTests(unittest.TestCase):
         late=self.c.discover('late',start=2,discovered_at=6,camera_snapshot=['main'])
         self.assertIn('late_discovery',late['cameras']['main']['reasons'])
 
+    def test_missing_preroll_preserves_both_cameras_as_incomplete(self):
+        self.build();self.feed(1,11);self.start()
+        self.c.end('e',violation_end=6);self.feed(11,17)
+        status=self.c.status('e');self.assertFalse(status['complete'])
+        for camera in ('main','ref'):
+            cap=status['cameras'][camera]
+            self.assertIn('missing_prebuffer_or_discovery_order',cap['reasons'])
+            self.assertTrue(cap['done']);self.assertTrue(cap['segments'])
+            self.assertEqual(cap['segments'][0].capture_start,.5)
+            self.assertGreater(cap['segments'][-1].capture_end,6)
+
+    def test_strict_input_gap_keeps_observed_ranges_separate(self):
+        self.build();self.feed(0,11);self.start()
+        self.c.ingest('main',6,self.frame);self.c.ingest('ref',16,self.frame)
+        self.c.end('e',violation_end=7)
+        self.feed(13,19)
+        status=self.c.status('e');self.assertFalse(status['complete'])
+        for camera in ('main','ref'):
+            cap=status['cameras'][camera]
+            self.assertIn('source_input_gap',cap['reasons'])
+            rows=cap['segments'];self.assertTrue(any(s.capture_end<=5.5 for s in rows))
+            self.assertTrue(any(s.capture_start>=6 for s in rows))
+            self.assertFalse(any(s.capture_start<5.5 and s.capture_end>6 for s in rows))
+
+    def test_strict_terminal_source_flushes_both_observed_tails_incomplete(self):
+        self.build();self.feed(0,11);self.start()
+        self.c.end('e',violation_end=5)
+        self.c.end_source('main','source_ended')
+        self.c.end_source('ref','source_failed')
+        status=self.c.status('e');self.assertFalse(status['complete'])
+        for camera in ('main','ref'):
+            cap=status['cameras'][camera]
+            self.assertTrue(cap['done']);self.assertIn('missing_post_roll',cap['reasons'])
+            self.assertEqual(cap['segments'][-1].capture_end,5.5)
+            self.assertLess(cap['segments'][-1].capture_end,status['end'])
+
     def test_clock_skew(self):
         self.build(cameras={'main':CameraClock(0,.5,True),'ref':CameraClock(-10,.01,False)})
         self.feed(0,11)

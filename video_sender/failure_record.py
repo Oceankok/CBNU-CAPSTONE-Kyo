@@ -12,9 +12,13 @@ source_clock_anchor_changed source_clock_observation_invalid source_clock_chunk_
 source_clock_fresh_sample_required clock_number_invalid clock_policy_invalid clock_anchor_invalid
 clock_monotonic_regressed clock_wall_step clock_sample_timing_invalid clock_sample_uncertain
 capture_stop_unconfirmed_context_kept_open capture_process_failed_context_kept_open
-capture_completion_unverified camera_reader_stop_unconfirmed archive_capacity_exceeded'''.split())
+capture_completion_unverified camera_reader_stop_unconfirmed archive_capacity_exceeded
+acknowledged_clip_cleanup_pending cleanup_pending'''.split())
 TYPES=(requests.exceptions.Timeout,requests.exceptions.ConnectionError,requests.exceptions.HTTPError,
-       ValueError,RuntimeError,TimeoutError,BrokenPipeError,OSError)
+       requests.exceptions.ChunkedEncodingError,requests.exceptions.ContentDecodingError,
+       requests.exceptions.RequestException,
+       ValueError,RuntimeError,TimeoutError,BrokenPipeError,PermissionError,FileNotFoundError,
+       FileExistsError,IsADirectoryError,NotADirectoryError,OSError)
 
 
 def record_failure(root,run_id,component,error):
@@ -26,6 +30,11 @@ def record_failure(root,run_id,component,error):
         name=next((cls.__name__ for cls in TYPES if isinstance(error,cls)),'OtherError')
         code=str(error);code=code if code in CODES else None
         result={'run_id':run_id,'component':component,'exception_type':name,'code':code}
+        if isinstance(error,OSError):
+            for field in ('errno','winerror'):
+                value=getattr(error,field,None)
+                if type(value) is int:result[field]=value
+            if getattr(error,'sender_stage',None) == 'atomic_json':result['stage']='atomic_json'
         if isinstance(error,requests.exceptions.HTTPError):
             status=getattr(error.response,'status_code',None)
             if type(status) is int and 100<=status<=599:result['http_status']=status

@@ -26,10 +26,26 @@ from video_sender.live_sender import get_video_duration_ms, delete_chunk_files
 
 
 def atomic_json(path, value):
-    temporary=path.with_suffix('.tmp')
-    with temporary.open('w',encoding='utf-8') as f:
-        json.dump(value,f);f.flush();os.fsync(f.fileno())
-    os.replace(temporary,path)
+    # Independent writers must never share a partially written temporary file.
+    temporary=path.with_name(f'.{path.name}.{uuid4().hex}.tmp')
+    try:
+        with temporary.open('x',encoding='utf-8') as f:
+            json.dump(value,f);f.flush();os.fsync(f.fileno())
+        for attempt in range(3):
+            try:
+                os.replace(temporary,path)
+                break
+            except OSError as error:
+                # Windows sharing/lock violations can clear when a reader closes.
+                if getattr(error,'winerror',None) not in (32,33) or attempt == 2:
+                    raise
+                time.sleep(.05 * (attempt+1))
+    except OSError as error:
+        error.sender_stage='atomic_json'
+        raise
+    finally:
+        try:temporary.unlink(missing_ok=True)
+        except OSError:pass  # Never mask the original failure.
 
 
 @contextmanager

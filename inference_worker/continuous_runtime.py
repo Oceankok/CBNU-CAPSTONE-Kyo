@@ -29,7 +29,7 @@ class ContinuousFrameRuntime:
         if capture.root.absolute()!=self.outbox.root:raise ValueError('private root mismatch')
         capture.before_spool_create=lambda event,camera,spool:self.outbox.begin_capture(
             event,camera=camera,spool_directory=spool)
-        self.bound=set();self.manifests={};self.reports=set();self.closed=False;self.media_watermark=None
+        self.bound=set();self.manifests={};self.reports=set();self.provisional_reports=set();self.closed=False;self.media_watermark=None
 
     def frame(self,camera,timestamp,frame,*,assessments=None):
         if self.closed:raise ValueError('runtime closed')
@@ -71,9 +71,9 @@ class ContinuousFrameRuntime:
                         relative_path=cap.spool.root.name+'/'+segment.segment_id+'.mp4')
                     self.bound.add(segment.segment_id)
 
-    def _enqueue(self,event,kind,key,body):
+    def _enqueue(self,event,kind,key,body,**kwargs):
         seq=self.outbox.event_status(event)['next_seq']
-        return self.outbox.enqueue(event,seq=seq,kind=kind,idempotency_key=key,body=body)
+        return self.outbox.enqueue(event,seq=seq,kind=kind,idempotency_key=key,body=body,**kwargs)
 
     def _drain_metadata(self):
         for _ in range(self.budget):
@@ -105,8 +105,8 @@ class ContinuousFrameRuntime:
                 if path is not None:result[camera].append(segment)
         return result
 
-    def _partial_manifests(self,event,status):
-        if self.capture.manual_review:
+    def _partial_manifests(self,event,status,*,scoped_partial=False):
+        if self.capture.manual_review or scoped_partial:
             rows=self.outbox.db.execute("SELECT body FROM requests WHERE event=? AND kind='manifest' ORDER BY seq",(event,)).fetchall()
             bodies=[json.loads(row['body']) for row in rows]
             known={(b['camera_id'],b['capture_start_at'],b['capture_end_at']) for b in bodies}
@@ -185,21 +185,49 @@ class ContinuousFrameRuntime:
             if intent['state']!='pending' or event not in self.capture.events:continue
             status=self.capture.status(event)
             if not all(row['done'] for row in status['cameras'].values()):continue
-            if self.capture.manual_review:
+            partial_strict=(not self.capture.manual_review and (not status['complete'] or self.outbox.event_status(event)['state']=='incomplete'))
+            if self.capture.manual_review or partial_strict:
                 self._reconcile_final_boundary(event,status)
                 status=self.capture.status(event)
-            if self.capture.manual_review or not status['complete'] or self.outbox.event_status(event)['state']=='incomplete':
+            if self.capture.manual_review or partial_strict:
                 if not status['complete'] or self.outbox.event_status(event)['state']=='incomplete':
                     self.outbox.mark_incomplete(event,reason='camera_capture_incomplete')
                 # No silently shortened success. Detailed raw/source failure is
                 # retained by capture/outbox; complete close is never fabricated.
-                self._partial_manifests(event,status)
+                if partial_strict:
+                    # Close intent persisted the final progress before this report.
+                    # Never submit ranges beyond the server's acknowledged end.
+                    if self.outbox.db.execute("SELECT 1 FROM requests WHERE event=? AND kind IN ('start','progress') AND ack IS NULL",(event,)).fetchone():continue
+                    safe=self._safe_segments(event,status)
+                    report_status=deepcopy(status)
+                    for camera in self.cameras:
+                        report_status['cameras'][camera]['segments']=safe[camera]
+                        cap_status=report_status['cameras'][camera]
+                        if not cap_status['reasons'] and len(safe[camera])!=len(status['cameras'][camera]['segments']):
+                            cap_status['reasons']=['source_segment_unavailable']
+                        key=(event,camera)
+                        if key not in self.reports and key not in self.provisional_reports:
+                            # Validate true full coverage before advertising a healthy
+                            # camera as collecting while the event is still open.
+                            report=capture_payload(report_status,camera_id=camera,clock=self.capture.cameras[camera],
+                                session_id=self.outbox.session,sequence=1,time_basis='source_utc_corrected',required_end=status['end'])
+                            if report['state']=='complete':
+                                cap_status['done']=False
+                                report=capture_payload(report_status,camera_id=camera,clock=self.capture.cameras[camera],
+                                    session_id=self.outbox.session,sequence=1,time_basis='source_utc_corrected',required_end=status['end'])
+                            self._enqueue(event,'capture_report',camera+':'+event+':report1',report)
+                            if report['state']=='collecting':self.provisional_reports.add(key)
+                            else:self.reports.add(key)
+                    self._drain_metadata()
+                    if self.outbox.db.execute("SELECT 1 FROM requests WHERE event=? AND kind='capture_report' AND ack IS NULL",(event,)).fetchone():continue
+                prior=self.outbox.db.execute("SELECT body FROM requests WHERE event=? AND kind='manifest' ORDER BY seq",(event,)).fetchall()
+                has_incomplete_report=any(json.loads(row['body']).get('state')=='incomplete' for row in self.outbox.db.execute("SELECT body FROM requests WHERE event=? AND kind='capture_report'",(event,)))
+                scoped_partial=partial_strict and has_incomplete_report and not any(json.loads(row['body']).get('camera_id') is None for row in prior)
+                count=self._partial_manifests(event,status,scoped_partial=scoped_partial)
                 self._drain_metadata()
                 existing=self.outbox.db.execute("SELECT ack FROM requests WHERE event=? AND kind='manifest'",(event,)).fetchall()
                 if any(row['ack'] is None for row in existing):continue
-                count=len(existing)
-                if self.capture.manual_review:
-                    count=self._partial_manifests(event,status)
+                if not (self.capture.manual_review or scoped_partial):count=len(existing)
                 complete=(self.capture.manual_review and status['complete']
                           and self.outbox.event_status(event)['state']!='incomplete')
                 self.outbox.finalize_pending_close(event,complete=complete,final_segment_count=count)
@@ -248,18 +276,34 @@ class ContinuousFrameRuntime:
             report_status=deepcopy(status)
             for camera in self.cameras:
                 report_status['cameras'][camera]['segments']=safe[camera]
-                if partial and not report_status['cameras'][camera]['reasons']:
+                if partial and self.capture.manual_review and not report_status['cameras'][camera]['reasons']:
                     report_status['cameras'][camera]['reasons']=['event_capture_incomplete']
+                if partial and not self.capture.manual_review and not report_status['cameras'][camera]['reasons'] and len(safe[camera])!=len(status['cameras'][camera]['segments']):
+                    report_status['cameras'][camera]['reasons']=['source_segment_unavailable']
             for camera,cap in record['captures'].items():
                 key=(event,camera)
                 if key not in self.reports:
-                    self._enqueue(event,'capture_report',camera+':'+event+':report1',
-                        capture_payload(report_status,camera_id=camera,clock=self.capture.cameras[camera],
-                            session_id=self.outbox.session,sequence=1,time_basis='source_utc_unverified' if self.capture.manual_review else 'source_utc_corrected',required_end=status['end']))
+                    provisional=key in self.provisional_reports
+                    sequence=2 if provisional else 1
+                    report=capture_payload(report_status,camera_id=camera,clock=self.capture.cameras[camera],
+                        session_id=self.outbox.session,sequence=sequence,time_basis='source_utc_unverified' if self.capture.manual_review else 'source_utc_corrected',required_end=status['end'])
+                    if provisional and report['state']=='incomplete':
+                        first=self.outbox.db.execute("SELECT body FROM requests WHERE event=? AND idem=? AND kind='capture_report'",(event,camera+':'+event+':report1')).fetchone()
+                        if first is None:raise ValueError('provisional capture report missing')
+                        historical=json.loads(first['body'])
+                        # The capture report is cumulative: preserve prior observed
+                        # ranges while reporting now-unavailable source as missing.
+                        report['captured_ranges']=historical['captured_ranges']
+                        report['earliest_available_at']=historical['earliest_available_at']
+                        for missing in report['missing_ranges']:
+                            missing['reason']='source_segment_unavailable'
+                    self._enqueue(event,'capture_report',camera+':'+event+':report'+str(sequence),report,
+                        **({'_final_collecting_report':True} if provisional else {}))
                     self.reports.add(key)
                 for segment in safe[camera]:
                     from inference_worker.continuous_payloads import _time
-                    sequence=intervals.get((camera if self.capture.manual_review else None,_time(segment.capture_start),_time(segment.capture_end)))
+                    a,b=_time(segment.capture_start),_time(segment.capture_end)
+                    sequence=intervals.get((camera,a,b),intervals.get((None,a,b)))
                     if sequence is None:continue
                     if segment.segment_id in planned:continue
                     binding=requests.get((camera,sequence))
@@ -287,6 +331,7 @@ class ContinuousFrameRuntime:
             except ValueError:continue  # source/receipt obligations still pending
             self.bound.difference_update(ids);self.manifests.pop(event,None)
             self.reports={key for key in self.reports if key[0]!=event}
+            self.provisional_reports={key for key in self.provisional_reports if key[0]!=event}
             released.append(event)
         return released
 

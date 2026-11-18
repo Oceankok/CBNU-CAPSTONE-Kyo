@@ -253,6 +253,11 @@ def start(body, node_id):
     return {'created':created,**result}
 
 
+def _has_incomplete_capture(conn, event_id):
+    return any(json.loads(r['payload']).get('state') == 'incomplete' for r in
+               conn.execute('SELECT payload FROM processing_camera_capture WHERE event_id=?', (event_id,)))
+
+
 def update(event_id, body, node_id):
     enabled()
     raw=canonical(body)
@@ -293,6 +298,8 @@ def update(event_id, body, node_id):
             if body.final_segment_count!=count:
                 raise HTTPException(409,'segment_manifest_incomplete')
             if body.complete:
+                if _has_incomplete_capture(conn,event_id):
+                    raise HTTPException(409,'continuous_capture_incomplete')
                 bounds=conn.execute('SELECT MIN(capture_start_at) AS first,MAX(capture_end_at) AS last FROM processing_event_segment WHERE event_id=?',(event_id,)).fetchone()
                 if (count==0
                         or dt(bounds['first'])>dt(event['timestamp_start'])-timedelta(seconds=2)+WIRE_TIME_EPSILON
@@ -318,7 +325,15 @@ def segment(event_id, body, node_id):
         row=_owner(conn,event_id,node_id,body.session_id)
         scoped=body.camera_id is not None
         if scoped and json.loads(row['start_payload']).get('evidence_mode')!='manual_review':
-            raise HTTPException(422,'camera_manifest_requires_manual_evidence')
+            report=conn.execute('SELECT payload FROM processing_camera_capture WHERE event_id=? AND camera_id=? ORDER BY sequence DESC LIMIT 1',
+                                (event_id,body.camera_id)).fetchone()
+            if (not report or json.loads(report['payload']).get('state') not in {'incomplete','collecting'}
+                    or not _has_incomplete_capture(conn,event_id)):
+                raise HTTPException(422,'camera_manifest_requires_manual_evidence')
+            from backend.processing.capture import Report, _covers
+            captured=Report.model_validate_json(report['payload']).captured_ranges
+            if not _covers(captured,body.capture_start_at,body.capture_end_at):
+                raise HTTPException(422,'segment_outside_captured_ranges')
         selected=conn.execute('SELECT camera_id,role FROM processing_event_camera WHERE event_id=? ORDER BY camera_id',(event_id,)).fetchall()
         if scoped:
             selected=[camera for camera in selected if camera['camera_id']==body.camera_id]
@@ -362,11 +377,13 @@ def segment(event_id, body, node_id):
 
 
 def require_finalizable(conn,event_id, *, manual_review=False):
-    """Fail closed for new continuous events only; partial-evidence policy is unresolved."""
+    """Keep automatic finalization strict while permitting human review of partial evidence."""
     row=conn.execute('SELECT phase,start_payload FROM processing_event_lifecycle WHERE event_id=?',(event_id,)).fetchone()
     if row is None:
         return
-    manual = manual_review and json.loads(row['start_payload']).get('evidence_mode') == 'manual_review'
+    incomplete = _has_incomplete_capture(conn,event_id)
+    manual = manual_review and (json.loads(row['start_payload']).get('evidence_mode') == 'manual_review'
+                                or row['phase']=='interrupted')
     if row['phase']!='closed' and not (manual and row['phase']=='interrupted'):
         raise ValueError('continuous_event_not_closed')
     retention=conn.execute('SELECT decision,retain_until FROM event_retention WHERE event_id=?',(event_id,)).fetchone()
@@ -385,7 +402,7 @@ def require_finalizable(conn,event_id, *, manual_review=False):
     if not parts:
         raise ValueError('continuous_evidence_incomplete')
     from backend.processing.capture import cameras
-    if any(not camera['capture_report'] or camera['capture_report']['state']!='complete' for camera in cameras(conn,event_id)):
+    if incomplete or any(not camera['capture_report'] or camera['capture_report']['state']!='complete' for camera in cameras(conn,event_id)):
         raise ValueError('continuous_evidence_incomplete')
     from backend.media.paths import owned_path
     for part in parts:

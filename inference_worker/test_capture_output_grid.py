@@ -75,7 +75,11 @@ class CaptureOutputGridTests(unittest.TestCase):
         self.c.ingest('main',8.5,self.frame)
         status=self.c.status('e')
         self.assertFalse(status['complete'])
-        self.assertIn('capture_failure:source_end_gap',status['cameras']['main']['reasons'])
+        cap=status['cameras']['main']
+        self.assertIn('source_input_gap',cap['reasons'])
+        self.assertTrue(cap['segments'])
+        self.assertLessEqual(max(segment.capture_end for segment in cap['segments']),8+1/15+1e-6)
+        self.assertLess(max(segment.capture_end for segment in cap['segments']),8.5)
 
 
 @unittest.skipUnless(shutil.which('ffmpeg'), 'ffmpeg required')

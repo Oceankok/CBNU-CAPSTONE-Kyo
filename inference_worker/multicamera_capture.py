@@ -33,6 +33,7 @@ class Capture:
     done: bool = False
     seed: dict = field(default_factory=dict)
     last_source_at: float = None
+    partial: bool = False
 
 
 class MultiCameraCapture:
@@ -87,8 +88,10 @@ class MultiCameraCapture:
         if reason not in cap.reasons:
             cap.reasons.append(reason)
         cap.done = True
+        if reason in ('source_ended','reference_drain_cutoff','source_failed','coordinator_shutdown'):
+            cap.partial=True
         if cap.writer and not cap.writer.closed:
-            if self.manual_review:
+            if self.manual_review or cap.partial:
                 try:
                     self._manual_flush(cap)
                     if reason in ('source_ended','reference_drain_cutoff','source_failed','coordinator_shutdown'):
@@ -107,7 +110,11 @@ class MultiCameraCapture:
     def _feed(self, event, cap, timestamp, frame):
         if cap.done:
             return
-        if self.manual_review:
+        if self.manual_review or cap.partial:
+            return self._manual_feed(event,cap,timestamp,frame)
+        if cap.last_source_at is not None and timestamp-cap.last_source_at>self.wc['max_input_gap_seconds']:
+            cap.partial=True
+            if 'source_input_gap' not in cap.reasons:cap.reasons.append('source_input_gap')
             return self._manual_feed(event,cap,timestamp,frame)
         try:
             boundary = event['end']
@@ -141,6 +148,16 @@ class MultiCameraCapture:
     def _manual_feed(self,event,cap,timestamp,frame):
         try:
             boundary=event['end']
+            gap=(cap.last_source_at is not None and timestamp-cap.last_source_at>(1.5/self.wc['output_fps'] if self.manual_review else self.wc['max_input_gap_seconds']))
+            if gap:
+                # Never extend a stale observed frame across the unknown gap,
+                # even when the new frame falls after the final boundary.
+                self._manual_flush(cap,boundary)
+                if 'source_input_gap' not in cap.reasons:cap.reasons.append('source_input_gap')
+                if boundary is not None and timestamp>=boundary:
+                    cap.done=True
+                    return
+                cap.writer=TimestampSegmentWriter(cap.spool,**self.wc)
             if boundary is not None and cap.writer.origin is not None:
                 # An encoded frame is indivisible. Seal on this run's actual
                 # output grid before the shared obligation, reporting the short
@@ -151,11 +168,6 @@ class MultiCameraCapture:
                     if boundary-grid_end>1e-6 and 'missing_post_roll' not in cap.reasons:cap.reasons.append('missing_post_roll')
                     cap.done=True
                     return
-            gap=(cap.last_source_at is not None and timestamp-cap.last_source_at>1.5/self.wc['output_fps'])
-            if gap:
-                self._manual_flush(cap,boundary)
-                if 'source_input_gap' not in cap.reasons:cap.reasons.append('source_input_gap')
-                cap.writer=TimestampSegmentWriter(cap.spool,**self.wc)
             if boundary is not None and timestamp>=boundary:
                 if not gap and cap.writer.last_timestamp is not None:
                     cap.segments.extend(cap.writer.finish(boundary))
@@ -241,7 +253,16 @@ class MultiCameraCapture:
                     event['start']-seed[0] > self.wc['max_input_gap_seconds'] or
                     (buffered and buffered[-1][0] > discovered_at + 1e-8)):
                 if not self.manual_review:
-                    reason = 'missing_prebuffer_or_discovery_order'
+                    cap.partial=True
+                    cap.reasons.append('missing_prebuffer_or_discovery_order')
+                    # Admit only genuinely observed frames at/after required
+                    # start, never manufacture a predecessor or future frame.
+                    usable=[(t,f) for t,f in buffered if event['start']<=t<=discovered_at]
+                    if seed is not None and event['start']-seed[0]<=self.wc['max_input_gap_seconds']:
+                        frames=usable
+                    else:
+                        seed=usable[0] if usable else None
+                        frames=usable[1:] if usable else []
                 elif not buffered:
                     reason='missing_prebuffer'
                 elif seed is None:
@@ -257,10 +278,12 @@ class MultiCameraCapture:
                     self.before_spool_create(event_id,camera,spool_id)
                 cap.spool = SegmentSpool(self.root / spool_id, **self.sc)
                 cap.writer = TimestampSegmentWriter(cap.spool, **self.wc)
-                cap.seed = dict(source_sample_at=seed[0], output_sample_at=event['start'],
-                                hold_seconds=event['start']-seed[0], clock_error_bound=clock.error_bound)
-                self._feed(event, cap, max(event['start'],seed[0]) if self.manual_review else event['start'], seed[1])
-                cap.last_source_at = seed[0]
+                if seed is not None:
+                    output_start=max(event['start'],seed[0]) if self.manual_review or cap.partial else event['start']
+                    cap.seed = dict(source_sample_at=seed[0], output_sample_at=output_start,
+                                    hold_seconds=output_start-seed[0], clock_error_bound=clock.error_bound)
+                    self._feed(event, cap, output_start, seed[1])
+                    cap.last_source_at = seed[0]
                 for t, frame in frames:
                     self._feed(event, cap, t, frame)
             except Exception as exc:
@@ -283,7 +306,7 @@ class MultiCameraCapture:
             raise ValueError('invalid or repeated end')
         event['end'] = boundary
         for cap in event['captures'].values():
-            if not cap.done and cap.writer.last_timestamp >= boundary:
+            if not cap.done and cap.writer.last_timestamp is not None and cap.writer.last_timestamp >= boundary:
                 self._fail(cap, 'end_arrived_after_capture_boundary')
         return self.status(event_id)
 
@@ -301,8 +324,14 @@ class MultiCameraCapture:
                             self._fail(cap, 'source_discarded_or_expired')
                     except Exception as exc:
                         self._fail(cap, 'maintenance_failure:' + str(exc)[:100])
-                if not self.manual_review and not cap.done and now-cap.last_source_at > self.wc['max_input_gap_seconds']:
-                    self._fail(cap, 'source_gap_or_missing_postbuffer')
+                if not self.manual_review and not cap.partial and not cap.done and cap.last_source_at is not None and now-cap.last_source_at > self.wc['max_input_gap_seconds']:
+                    cap.partial=True
+                    if 'source_gap_or_missing_postbuffer' not in cap.reasons:cap.reasons.append('source_gap_or_missing_postbuffer')
+                    try:
+                        self._manual_flush(cap)
+                        cap.writer=TimestampSegmentWriter(cap.spool,**self.wc)
+                    except Exception:
+                        self._fail(cap,'capture_flush_failed')
 
     def status(self, event_id):
         event = self.events[event_id]
