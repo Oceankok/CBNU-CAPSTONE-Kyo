@@ -28,6 +28,21 @@ def helmet_in_head_region(person_bbox, helmet_bbox):
     )
 
 
+def nested_person_boxes(first, second):
+    """Identify two detections that differ mainly in horizontal box extent."""
+    a, b = sorted((first, second), key=lambda box: box[2] - box[0])
+    width = a[2] - a[0]
+    height = a[3] - a[1]
+    wider = b[2] - b[0]
+    if not .60 * wider <= width <= .82 * wider:
+        return False
+    if max(abs(a[1] - b[1]), abs(a[3] - b[3])) > .05 * height:
+        return False
+    left_overlap = min(a[2], b[2]) - max(a[0], b[0])
+    shared_edge = min(abs(a[0] - b[0]), abs(a[2] - b[2]))
+    return left_overlap >= .94 * width and shared_edge <= .08 * width
+
+
 def assess_helmets(detections):
     try:
         validate_detections(detections)
@@ -110,8 +125,31 @@ def assess_ppe(detections, frame_shape, supported_ppe=("helmet", "vest")):
         return (box[2]-box[0])*(box[3]-box[1])
 
     height, width = frame_shape[:2]
-    people = [d for d in detections if d.get("class_name") == "person"
-              and valid_box(d.get("bbox"))]
+    candidates = [d for d in detections if d.get("class_name") == "person"
+                  and valid_box(d.get("bbox"))]
+    # Collapse only a unique, strongly nested pair. Retain uncertainty in PPE
+    # evidence on this frame rather than treating a merge as identity proof.
+    neighbors = [[] for _ in candidates]
+    for i, first in enumerate(candidates):
+        if not valid_ppe_confidence(first["confidence"]):
+            continue
+        for j in range(i + 1, len(candidates)):
+            second = candidates[j]
+            if (valid_ppe_confidence(second["confidence"])
+                    and nested_person_boxes(first["bbox"], second["bbox"])):
+                neighbors[i].append(j)
+                neighbors[j].append(i)
+    retained_uncertain, suppressed = set(), set()
+    for i, matches in enumerate(neighbors):
+        if len(matches) != 1:
+            continue
+        j = matches[0]
+        if i >= j or len(neighbors[j]) != 1:
+            continue
+        retain, suppress = sorted((i, j), key=lambda idx: (-candidates[idx]["confidence"], idx))
+        retained_uncertain.add(id(candidates[retain]))
+        suppressed.add(suppress)
+    people = [row for i, row in enumerate(candidates) if i not in suppressed]
     rows = [{"person_bbox": p["bbox"], "person_confidence": p["confidence"],
              "ppe": {}} for p in people]
     for ppe_type in ("helmet", "vest"):
@@ -144,6 +182,10 @@ def assess_ppe(detections, frame_shape, supported_ppe=("helmet", "vest")):
                 coverage = overlap(region, box) / area(box)
                 eligible = (region[0] <= cx <= region[2] and region[1] <= cy <= region[3]
                             and coverage >= .5 and area(box) <= 2*area(region))
+                if ppe_type == "helmet":
+                    # The broad region admits small detector-box errors, but
+                    # a helmet centered near the chest can be held by hand.
+                    eligible = eligible and cy <= py1 + .22*h
                 if eligible:
                     expected_y = py1 + h*(.12 if ppe_type == "helmet" else .425)
                     distance = abs(cx-(px1+px2)/2)/w + abs(cy-expected_y)/h
@@ -173,6 +215,8 @@ def assess_ppe(detections, frame_shape, supported_ppe=("helmet", "vest")):
                 status, reason = "unknown", "unsupported_ppe"
             elif not valid_person:
                 status, reason = "unknown", "person_not_observable"
+            elif id(person) in retained_uncertain:
+                status, reason = "unknown", "nested_person_detections"
             elif i in uncertain:
                 status, reason = "unknown", "ambiguous_ppe_association"
             elif i in matches:

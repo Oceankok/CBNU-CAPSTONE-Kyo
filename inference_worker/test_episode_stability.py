@@ -232,6 +232,31 @@ class ByteTrackTests(unittest.TestCase):
 
 
 class AssociationTests(unittest.TestCase):
+    def test_nested_person_boxes_keep_one_track_through_posture_change(self):
+        tracker = PersonTracker(max_missing_seconds=2)
+        lifecycle = EventLifecycle("CAM", missing_grace_seconds=2, rewear_seconds=.5)
+        narrow = {**PERSON, "bbox": [221, 103, 419, 434], "confidence": .8}
+        wide = {**PERSON, "bbox": [230, 103, 500, 435], "confidence": .7}
+        transitions = []
+        for i in range(121):
+            detections = [narrow] if i < 60 else [wide] if i >= 63 else [narrow, wide]
+            rows = tracker.update(assess_ppe(detections, (480, 640, 3)), i / 15)
+            self.assertEqual([row["tracking_id"] for row in rows], ["track-1"])
+            if 60 <= i < 63:
+                self.assertEqual(rows[0]["ppe"]["helmet"]["reason"], "nested_person_detections")
+            helmet_rows = [{**row, "ppe": {"helmet": row["ppe"]["helmet"]}} for row in rows]
+            transitions += lifecycle.update(helmet_rows, i / 15)
+        self.assertEqual(sum(row["kind"] == "start" for row in transitions), 1)
+        close = lifecycle.close_all("operator_stop")
+        self.assertGreater(close[0]["observation_gap_count"], 0)
+
+    def test_helmet_near_chest_does_not_establish_wear(self):
+        person = {**PERSON, "bbox": [163, 60, 352, 455]}
+        held = {**HELMET, "bbox": [290, 123, 356, 205]}
+        worn = {**HELMET, "bbox": [217, 53, 298, 126]}
+        self.assertEqual(assess_ppe([person, held], (480, 640, 3))[0]["ppe"]["helmet"]["status"], "unknown")
+        self.assertEqual(assess_ppe([person, worn], (480, 640, 3))[0]["ppe"]["helmet"]["status"], "helmet")
+
     def test_helmet_above_person_box_is_associated(self):
         helmet={**HELMET,"bbox":[60,8,90,35]}
         row=assess_ppe([PERSON,helmet],SHAPE)[0]
