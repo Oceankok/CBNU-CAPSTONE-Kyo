@@ -38,7 +38,7 @@ export default function HomePage() {
 
   return (
     <div className={styles.page}>
-      {error && <p style={{ color: '#e53e3e' }}>⚠ API 오류: {error}</p>}
+      {error && <p style={{ color: '#e53e3e' }}>대시보드 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.</p>}
       {loading && <p style={{ color: 'var(--text-muted)' }}>데이터를 불러오는 중...</p>}
 
       {/* Primary action: events waiting for a human decision */}

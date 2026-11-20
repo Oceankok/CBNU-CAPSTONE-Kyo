@@ -17,16 +17,13 @@ const ERRORS: Record<string, string> = {
   camera_has_equipment_links:
     '장비가 연결된 카메라는 구역을 바꿀 수 없습니다. 장비 관리에서 연결을 먼저 해제하세요.',
   capture_session_stop_required:
-    '���� �߿� �̹� ������ �����Դϴ�. ������ �����ϰ� ���� ������ ���� �۽� ���� ACK�� Ȯ���� �� �������� ������ �ٲپ� �ֽ��ϴ�.',
+    '촬영을 중지한 뒤 송신기에서 종료 확인이 표시되면 구역을 변경하세요.',
   active_capture_context:
-    '���� �߿� �̹� ������ �����Դϴ�. ������ �����ϰ� ���� ������ ���� ACK�� Ȯ���� �� �������� ������ �ٲپ� �ֽ��ϴ�.',
+    '촬영을 중지한 뒤 송신기에서 종료 확인이 표시되면 구역을 변경하세요.',
 };
-const msg = (e: unknown) => {
-  const m = e instanceof Error ? e.message : String(e);
-  if (m === 'capture_session_stop_required' || m === 'active_capture_context') {
-    return 'Capture is active. Stop capture, confirm delivery and the server stop ACK, then change the zone.';
-  }
-  return ERRORS[m] ?? m;
+const msg = (error: unknown) => {
+  const code = error instanceof Error ? error.message : String(error);
+  return ERRORS[code] ?? '카메라 정보를 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.';
 };
 
 const STATUS: Record<Camera['status'], { label: string; cls: string }> = {

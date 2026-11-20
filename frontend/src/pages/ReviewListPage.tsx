@@ -156,7 +156,7 @@ export default function ReviewListPage() {
 
   return (
     <div className={styles.page}>
-      {error && <div className={styles.pendingBanner}>⚠ API 오류: {error}</div>}
+      {error && <div className={styles.pendingBanner}>사건 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.</div>}
       {loading && (
         <div className={styles.pendingBanner}>이벤트 목록을 불러오는 중...</div>
       )}

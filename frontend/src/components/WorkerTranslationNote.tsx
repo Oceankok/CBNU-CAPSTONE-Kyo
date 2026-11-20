@@ -1,11 +1,11 @@
 import type { WorkerTranslationFields } from '../api/workerTranslation';
 
 const STATUS = {
-  missing: '요청 언어의 번역이 아직 없어 한국어 원문을 표시합니다.',
-  pending: '한국어 원문을 표시합니다. 번역 준비 중입니다.',
+  missing: '이 언어의 번역이 아직 없습니다. 한국어 원문을 표시합니다.',
+  pending: '번역 준비 중입니다. 한국어 원문을 먼저 볼 수 있습니다.',
   failed: '번역을 준비하지 못했습니다. 한국어 원문을 확인하거나 관리자에게 문의하세요.',
-  disabled: '자동 번역이 제공되지 않아 한국어 원문을 표시합니다.',
-  ineligible: '이 자료는 자동 번역 대상이 아닙니다. 한국어 원문을 확인하세요.',
+  disabled: '자동 번역이 꺼져 있어 한국어 원문을 표시합니다.',
+  ineligible: '이 자료는 한국어 원문으로 제공됩니다.',
 };
 export default function WorkerTranslationNote({ item }: { item: WorkerTranslationFields }) {
   const meta = item.translation;
