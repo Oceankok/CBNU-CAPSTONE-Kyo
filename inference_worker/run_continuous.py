@@ -124,7 +124,7 @@ def read_config(path,primary,*,now):
             (SegmentSpool,dict(root=None),config['capture'].get('spool_config',{})),
             (TimestampSegmentWriter,dict(spool=None),config['capture'].get('writer_config',{}))]
     for cls,fixed,values in checks:
-        if not isinstance(values,dict) or set(values)&({'clock','transport','decoder','downloader','before_spool_create','capture_output_fps','clock_verifier','allow_unverified_clock_proofs'}|set(fixed)):
+        if not isinstance(values,dict) or set(values)&({'clock','transport','decoder','downloader','before_spool_create','capture_output_fps','clock_verifier','allow_unverified_clock_proofs','startup_preroll_seconds'}|set(fixed)):
             raise ValueError('configuration cannot override dependencies')
         try:inspect.signature(cls).bind(**fixed,**values)
         except TypeError as exc:raise ValueError('incomplete or unknown configuration fields') from exc
@@ -185,9 +185,11 @@ def run(args):
         mux=SourceMux(camera_ids=ids,primary_camera=args.camera_id,
             clock_error_by_camera={c:r['error_bound'] for c,r in clocks.items()},**config['mux'])
         decoder=PrivateChunkDecoder(box,**config['decoder'])
+        preroll_seconds=capture.pre+capture.wc['max_input_gap_seconds'] if leases and not manual else 0
         reader=ContinuousSourceReader(client,mux,decoder=decoder,offsets={c:r['offset'] for c,r in clocks.items()},
             clock_verifier=leases.validate_chunk if leases else None,
             allow_unverified_clock_proofs=manual,
+            startup_preroll_seconds=preroll_seconds,
             **{**config['source'],'degrade_references':True})
         def sync_clock_failures():
             if leases:
@@ -266,13 +268,14 @@ def run(args):
                         remaining[camera]-=1
                         continue
                 assessments=None
-                if runtime.observing(camera,timestamp):
+                startup_evidence=reader.is_startup_evidence(camera,timestamp)
+                if not startup_evidence and runtime.observing(camera,timestamp):
                     priority.refresh()
                     rows=tracker.update(detect_assess(detector,frame,
                         mode="review" if review else "verified_helmet"),timestamp)
                     assessments=policy_assessments(rows,policy,frame.shape,review_only=review)
                 if leases:leases.check();sync_clock_failures()
-                runtime.frame(camera,timestamp,frame,assessments=assessments)
+                runtime.frame(camera,timestamp,frame,assessments=assessments,startup_evidence=startup_evidence)
                 remaining[camera]-=1
                 if camera in ended and not remaining[camera]:runtime.end_source(camera,reader.end_reasons[camera])
             had_frames=bool(batch)
@@ -284,6 +287,8 @@ def run(args):
             CleanupSupervisor(box,spools=spools,verified_receipt=dispatcher.cleanup_receipt_verified).run_once()
             runtime.release_finished()
             current=reader.sequence.get(args.camera_id)
+            if current is not None:
+                current=max(current,reader.live_boundaries.get(args.camera_id,-1))
             if current!=primary_sequence:
                 if primary_sequence is not None:processed+=1
                 primary_sequence=current

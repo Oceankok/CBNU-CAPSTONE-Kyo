@@ -46,7 +46,7 @@ class ContinuousFrameRuntime:
     def observing(self,camera,timestamp):
         return camera==self.journal.lifecycle.camera_id and timestamp<self.observation_cutoffs.get(camera,math.inf)
 
-    def frame(self,camera,timestamp,frame,*,assessments=None):
+    def frame(self,camera,timestamp,frame,*,assessments=None,startup_evidence=False):
         if self.closed:raise ValueError('runtime closed')
         # Reader/mux already corrected the timestamp. Capture applies its own
         # immutable offset, so undo it here rather than double-correcting.
@@ -58,7 +58,7 @@ class ContinuousFrameRuntime:
         self.capture.ingest(camera,timestamp-self.capture.cameras[camera].offset,capture_frame)
         self.media_watermark=max(timestamp,self.media_watermark) if self.media_watermark is not None else timestamp
         transitions=[]
-        if self.observing(camera,timestamp):
+        if not startup_evidence and self.observing(camera,timestamp):
             if assessments is None:raise ValueError('primary assessments required')
             transitions=self.journal.update(assessments,timestamp)
             self.last_observation_timestamp=timestamp
@@ -67,7 +67,7 @@ class ContinuousFrameRuntime:
                     self.capture.discover(row['event_id'],start=row['start_time'],
                         discovered_at=timestamp,camera_snapshot=self.cameras)
                 elif row['kind']=='close':self.capture.end(row['event_id'],violation_end=row['end_time'])
-        elif camera==self.journal.lifecycle.camera_id and not self.observation_closed:
+        elif not startup_evidence and camera==self.journal.lifecycle.camera_id and not self.observation_closed:
             transitions=self.journal.close_all('operator_stop')
             for row in transitions:
                 if row['kind']=='close':self.capture.end(row['event_id'],violation_end=row['end_time'])

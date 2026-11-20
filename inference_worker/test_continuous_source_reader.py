@@ -84,6 +84,31 @@ class ReaderTests(TestCase):
         self.assertEqual(r.poll(),[])
         c.seq=1;self.assertEqual(len(r.poll()),4)
 
+    def test_verified_startup_preroll_only_reads_a_bounded_suffix(self):
+        c,r,_=self.stop_fixture()
+        del c.streams[0]['observation_stop']
+        r.require_capture_context=True
+        r.startup_preroll_seconds=2.25
+        for stream in c.streams:
+            stream['last_sequence']=4
+        def chunks(stream,after):
+            row=next(s for s in c.streams if s['stream_id']==stream)
+            return [dict(sequence=i,chunk_id=stream+str(i),duration_ms=1000,
+                         capture_start_at=f'2026-01-01T00:00:0{i}Z',
+                         **{k:row[k] for k in ('capture_context_id','capture_session_id','assignment_version')})
+                    for i in range(after+1,row['last_sequence']+1)]
+        c.list_chunks=chunks
+        for second in (2,3,4):
+            batch=r.poll()
+            self.assertEqual(len(batch),4)
+            self.assertEqual(batch[0][1],1767225600+second)
+            self.assertTrue(all(r.is_startup_evidence(cam,t) for cam,t,_ in batch))
+        for stream in c.streams:
+            stream['last_sequence']=5
+        batch=r.poll()
+        self.assertEqual(len(batch),4)
+        self.assertFalse(any(r.is_startup_evidence(cam,t) for cam,t,_ in batch))
+
     def test_pressure_fails_only_blocking_reference_preserves_buffer_and_capacity(self):
         for kind in ('frames','bytes'):
             with self.subTest(kind=kind):

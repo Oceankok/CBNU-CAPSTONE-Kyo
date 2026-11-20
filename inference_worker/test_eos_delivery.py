@@ -89,7 +89,8 @@ class RunnerEOSBoundaryTests(unittest.TestCase):
         mux.drained_sources.return_value=set(mux.ended)
         reader=Mock(); reader.reference_failures={}; reader.poll.side_effect=[[],runner.SourceMuxError(reason)]
         reader.observation_cutoffs={}
-        reader.sequence={'main':4}; reader.end_reasons={'main':'source_ended','ref':'source_ended'}
+        reader.sequence={'main':4}; reader.live_boundaries={'main':2,'ref':2}
+        reader.end_reasons={'main':'source_ended','ref':'source_ended'}
         reader.streams={'main':'stream-main','ref':'stream-ref'}
         reader.primary_capture_context.return_value='ctx-main'
         detector=Mock(); detector.supports_no_helmet=False

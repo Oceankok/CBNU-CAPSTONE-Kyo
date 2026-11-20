@@ -43,8 +43,9 @@ class RuntimeTests(TestCase):
         self.frame=np.zeros((16,16,3),np.uint8)
         # Explicit synthetic pre-roll, independent of whether a person appears.
         for timestamp in (-2,-1.5,-1,-.5):
-            if 'ref' in self.capture.cameras:self.runtime.frame('ref',timestamp,self.frame)
-            self.runtime.frame('main',timestamp,self.frame,assessments=[])
+            if 'ref' in self.capture.cameras:self.runtime.frame('ref',timestamp,self.frame,startup_evidence=True)
+            self.runtime.frame('main',timestamp,self.frame,startup_evidence=True)
+        self.assertIsNone(self.runtime.last_observation_timestamp)
 
     def tearDown(self):
         self.runtime.stop('test_stop');self.dispatcher.close();self.transport.client.close();self.box.close();self.temp.cleanup()
