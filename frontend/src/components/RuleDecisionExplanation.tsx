@@ -8,6 +8,7 @@ export function RuleObservations({ rule }: { rule: RuleEvaluation }) {
       <dt>최소 관측 시간 / 실제</dt><dd>{rule.criteria?.minimum_observed_seconds ?? '미설정'}초 / {rule.observed_seconds ?? '미확인'}초</dd>
       <dt>최소 샘플 / 실제</dt><dd>{rule.criteria?.minimum_frame_samples ?? '미설정'} / {rule.frame_sample_count ?? '미확인'}</dd>
       <dt>관측 공백</dt><dd>{rule.gap_count ?? '미확인'}회 · {rule.gap_seconds ?? '미확인'}초</dd>
+      {rule.allowed_rewear_gap && <><dt>재착용 공백 예외</dt><dd>공백 전 미착용 샘플 {rule.allowed_rewear_gap.samples_before}개 · 공백은 관측 시간에서 제외</dd></>}
       <dt>종료 사유</dt><dd>{rule.close_reason ?? '미확인'}</dd>
     </dl>
     <p>제외 사유: {rule.blocking_reasons?.length ? rule.blocking_reasons.join(', ') : '기록 없음'}</p>

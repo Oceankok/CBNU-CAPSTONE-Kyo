@@ -99,7 +99,12 @@ class EventLifecycle:
         if state['event_id'] is not None:
             if state['unresolved_gap'] and reason in ('ppe_present', 'track_departed', 'primary_source_ended'):
                 reason += '_after_unknown'
-            output.append(self._snapshot(key, state, 'close', reason))
+            closed = self._snapshot(key, state, 'close', reason)
+            if key[1] == 'helmet' and reason == 'ppe_present' and state['gap_count'] == 1:
+                closed['rewear_gap'] = {
+                    **state['first_gap'], 'rewear_at': state['present_last'],
+                }
+            output.append(closed)
 
     def close_all(self, reason):
         """Explicit stream/policy reset. Never reconnect identities across resets."""
@@ -232,6 +237,11 @@ class EventLifecycle:
                     self._close(key, 'observation_gap', output)
                     state = None
                 elif gap:
+                    if state['gap_count'] == 0:
+                        state['first_gap'] = {
+                            'start_at': state['last_positive'], 'end_at': timestamp,
+                            'samples_before': state['samples'],
+                        }
                     state['gap_count'] += 1
                     state['gap_seconds'] += delta
                 else:

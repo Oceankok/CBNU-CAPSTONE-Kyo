@@ -1,9 +1,20 @@
 """Future-only finalization using observed frames, real CPU H264, fake HTTP."""
 from unittest import TestCase
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from inference_worker import test_connected_manual_incident as fixtures
 from inference_worker.eos_delivery import drain_delivery
+from inference_worker.final_capture_boundary import frame_overlap
+
+
+class FrameOverlapTests(TestCase):
+    def test_exact_grid_edge_uses_utc_sample_times(self):
+        start=1795169011.780430
+        segment=SimpleNamespace(capture_start=start, fps=15, frame_count=21)
+        end=start+16/15
+        self.assertEqual(frame_overlap(segment,start,end),(0,16))
+        self.assertEqual(frame_overlap(segment,start,end-.001),(0,15))
 
 
 class FinalCaptureBoundaryTests(TestCase):

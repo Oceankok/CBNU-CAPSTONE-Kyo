@@ -1,13 +1,18 @@
 """Trim only unadvertised provisional evidence; no historical event recovery."""
-import math
+from bisect import bisect_left, bisect_right
 import time
 import cv2
 
 
 def frame_overlap(segment, start, end):
     """Conservative whole source-frame interval, with no padding/resampling."""
-    first=max(0, math.ceil((start-segment.capture_start)*segment.fps))
-    stop=min(segment.frame_count, math.floor((end-segment.capture_start)*segment.fps))
+    # Compare grid edges directly. Subtracting UTC timestamps can shift an
+    # exact frame boundary to the wrong side of an integer.
+    def edge(index):
+        return segment.capture_start + index / segment.fps
+
+    first=bisect_left(range(segment.frame_count),start,key=edge)
+    stop=bisect_right(range(segment.frame_count+1),end,key=edge)-1
     return first, max(first, stop)
 
 

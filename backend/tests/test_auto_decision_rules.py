@@ -122,7 +122,8 @@ class ContinuousRuleTests(TestCase):
                 JOIN auto_decision_shadow_item i ON i.run_id=r.run_id WHERE i.event_id=?''',
                 (self.ident,)).fetchone()[0])
         self.assertEqual(saved['decision_method'],'continuous_rules_v1')
-        self.assertEqual(saved['rule_criteria'],self.body_policy()['rule_criteria'])
+        self.assertEqual(saved['rule_criteria'],{**self.body_policy()['rule_criteria'],
+                                                'allow_terminal_helmet_rewear_gap':False})
         self.assert_no_review()
 
     def test_old_client_cannot_silently_replace_rule_policy_but_can_switch_off(self):
@@ -180,6 +181,43 @@ class ContinuousRuleTests(TestCase):
             return {**original(conn,event_id),'saved_record_count':1}
         with patch.object(service,'automatic_tag',side_effect=saved):
             self.assertIn('suspected_duplicate_requires_review',self.preview()['blocking_reasons'])
+
+    def test_terminal_helmet_gap_can_be_previewed_and_enforced_only_when_enabled(self):
+        criteria={**self.body_policy()['rule_criteria'],'allow_terminal_helmet_rewear_gap':True}
+        self.save('shadow',rule_criteria=criteria).raise_for_status()
+        self.start().raise_for_status()
+        self.progress(end=4,observed_seconds=3.733,gap_seconds=.267,gap_count=1).raise_for_status()
+        self.segments=self.segment(end=6).raise_for_status().json()['segments']
+        gap=dict(start_at=self.ts(3.3),end_at=self.ts(3.567),rewear_at=self.ts(4.5),samples_before=50)
+        close=dict(kind='close',end=4,observed_seconds=3.733,gap_seconds=.267,gap_count=1,
+                   close_reason='ppe_present',complete=True,final_segment_count=1)
+        bad={**gap,'end_at':self.ts(3.6)}
+        self.assertEqual(self.progress(sequence=2,**close,rewear_gap=bad).status_code,422)
+        self.progress(sequence=2,**close,rewear_gap=gap).raise_for_status()
+        self.progress(sequence=2,**close,rewear_gap=gap).raise_for_status()
+        self.folder=Path(self.enterContext(TemporaryDirectory()))
+        self.files={}
+        for target in ('backend.media.paths.owned_path','backend.media.service.owned_path',
+                       'backend.auto_decision.routes.owned_path'):
+            self.enterContext(patch(target,side_effect=self.files.__getitem__))
+        self.enterContext(patch.dict(os.environ,{'PPE_CONTINUOUS_MAX_CLOCK_UNCERTAINTY_SECONDS':'0'}))
+        self.ready_media()
+        with get_connection() as conn:
+            conn.execute('UPDATE processing_segment_validation SET frame_count=120,duration_seconds=8')
+        for camera in ('CAM_001','CAM_002'):
+            self.capture_report(camera,state='complete',
+                captured_ranges=[dict(start_at=self.ts(-2),end_at=self.ts(6))]).raise_for_status()
+        self.assert_no_review()
+        self.assertIn('continuous_observation_incomplete',self.preview()['blocking_reasons'])
+        self.assertIsNotNone(self.preview(rule_criteria=criteria)['rule_evaluation']['allowed_rewear_gap'])
+        self.assertTrue(self.preview(rule_criteria=criteria)['threshold_candidate'])
+        from backend.event_relations import service
+        with patch.object(service,'automatic_tag',return_value={'candidate_count':1,'saved_record_count':0}):
+            self.assertIn('suspected_duplicate_requires_review',
+                          self.preview(rule_criteria=criteria)['blocking_reasons'])
+        self.save(version=1,rule_criteria=criteria).raise_for_status()
+        self.assertTrue(self.hook()['applied'])
+        self.assertEqual(self.review()['review_reason_code'],'automatic_policy_confirmed')
 
     def test_admin_correction_preserves_auto_history_and_recounts_false_positive(self):
         self.prepare();self.complete('CAM_001');self.complete('CAM_002');self.ready_media()
