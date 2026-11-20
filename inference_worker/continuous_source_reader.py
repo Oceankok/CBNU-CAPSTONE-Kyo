@@ -8,7 +8,7 @@ import re
 import time
 from uuid import UUID
 import httpx
-from inference_worker.time_utils import frame_timestamp,is_continuous_chunk
+from inference_worker.time_utils import frame_timestamp,is_continuous_chunk,parse_capture_time
 from inference_worker.video_decoder import decode_mp4
 from inference_worker.continuous_source_mux import SourceMuxError
 
@@ -43,7 +43,7 @@ def bounded_chunk(client,chunk_id,maximum):
 
 
 class ContinuousSourceReader:
-    def __init__(self,client,mux,*,offsets,decoder=decode_mp4,max_chunk_bytes,max_chunk_gap_seconds,downloader=None,require_capture_context=False,degrade_references=False,tolerate_source_gaps=False,clock_verifier=None,allow_unverified_clock_proofs=False,reserve_chunk_frames=None,reserve_chunk_bytes=None):
+    def __init__(self,client,mux,*,offsets,decoder=decode_mp4,max_chunk_bytes,max_chunk_gap_seconds,downloader=None,require_capture_context=False,degrade_references=False,tolerate_source_gaps=False,clock_verifier=None,allow_unverified_clock_proofs=False,reserve_chunk_frames=None,reserve_chunk_bytes=None,startup_preroll_seconds=0):
         if set(offsets)!=set(mux.cameras) or any(not math.isfinite(v) for v in offsets.values()):raise ValueError('camera clock mappings')
         if not math.isfinite(max_chunk_gap_seconds) or max_chunk_gap_seconds<0:raise ValueError('chunk gap policy')
         if type(degrade_references) is not bool:raise ValueError('reference failure mode')
@@ -62,12 +62,54 @@ class ContinuousSourceReader:
         self.require_capture_context=require_capture_context
         self.contexts={};self.finals={};self.cutoffs={};self.end_reasons={}
         self.streams={};self.sequence={};self.previous={}
+        if not math.isfinite(startup_preroll_seconds) or startup_preroll_seconds<0:
+            raise ValueError('startup preroll')
+        if startup_preroll_seconds and (not require_capture_context or clock_verifier is None):
+            raise ValueError('startup preroll requires a verified capture context')
+        self.startup_preroll_seconds=startup_preroll_seconds
+        self.live_boundaries={}
+        self.last_startup_frame={}
         self.pending_decode=None
         self.observation_stops={};self.observation_cutoffs={}
         if clock_verifier is not None and not callable(clock_verifier):raise ValueError('clock verifier required')
         self.clock_verifier=clock_verifier
         if type(allow_unverified_clock_proofs) is not bool:raise ValueError('invalid unverified proof mode')
         self.allow_unverified_clock_proofs=allow_unverified_clock_proofs
+
+    def _startup_cursor(self,stream,context,boundary):
+        if not self.startup_preroll_seconds or boundary<0:
+            return boundary
+        # Only a bounded, contiguous suffix of this session can seed evidence.
+        chunks=self.client.list_chunks(stream,max(-1,boundary-8))
+        retained={c['sequence']:c for c in chunks
+                  if type(c.get('sequence')) is int and c['sequence']<=boundary}
+        latest=retained.get(boundary)
+        if latest is None:
+            return boundary
+        latest_end=parse_capture_time(latest['capture_start_at']).timestamp()+latest['duration_ms']/1000
+        oldest=boundary+1
+        for sequence in range(boundary,max(-1,boundary-8),-1):
+            chunk=retained.get(sequence)
+            if chunk is None or self._context(chunk)!=context:
+                break
+            if sequence<boundary and not is_continuous_chunk(
+                    chunk['capture_start_at'],chunk['duration_ms'],
+                    retained[sequence+1]['capture_start_at'],max_gap_seconds=self.gap):
+                break
+            oldest=sequence
+            if latest_end-parse_capture_time(chunk['capture_start_at']).timestamp()>=self.startup_preroll_seconds:
+                break
+        return oldest-1
+
+    def is_startup_evidence(self,camera,timestamp):
+        return timestamp<=self.last_startup_frame.get(camera,-math.inf)
+
+    def _skip_expired_preroll(self,camera,expected):
+        if expected>self.live_boundaries.get(camera,-1):
+            return False
+        self.sequence[camera]=self.live_boundaries[camera]
+        self.previous.pop(camera,None)
+        return True
 
     def poll(self):
         """At most one new chunk per camera; caller handles empty polls/stall TTL."""
@@ -208,7 +250,8 @@ class ContinuousSourceReader:
                 if camera not in self.sequence:
                     boundary=row.get('last_sequence')
                     if type(boundary) is not int or boundary < -1:raise SourceMuxError('invalid_live_boundary')
-                    self.sequence[camera]=boundary
+                    self.live_boundaries[camera]=boundary
+                    self.sequence[camera]=self._startup_cursor(stream,context,boundary)
                 self._observation_stop(camera,row)
                 boundary=row.get('last_sequence')
                 if type(boundary) is not int or boundary < -1:
@@ -217,11 +260,13 @@ class ContinuousSourceReader:
                 chunks=sorted(self.client.list_chunks(stream,self.sequence[camera]),key=lambda c:c['sequence'])
                 if not chunks:
                     if boundary>=expected:
+                        if self._skip_expired_preroll(camera,expected):continue
                         self._availability(camera)
                         raise SourceUnavailableError('source_chunk_unavailable',camera=camera,
                             stream=stream,expected_sequence=expected)
                     continue
                 if not self.tolerate_source_gaps and type(chunks[0]['sequence']) is int and chunks[0]['sequence']>expected:
+                    if self._skip_expired_preroll(camera,expected):continue
                     raise SourceUnavailableError('source_chunk_unavailable',camera=camera,
                         stream=stream,expected_sequence=expected)
                 chunk=chunks[0]
@@ -249,6 +294,7 @@ class ContinuousSourceReader:
                     raw=self.downloader(chunk['chunk_id'])
                 except SourceMuxError as error:
                     if str(error) not in ('chunk_http_404','chunk_http_410'):raise
+                    if self._skip_expired_preroll(camera,expected):continue
                     raise SourceUnavailableError('source_chunk_unavailable',camera=camera,
                         stream=stream,expected_sequence=expected) from error
                 if not raw or len(raw)>self.maximum:raise SourceMuxError('chunk_size_limit')
@@ -305,6 +351,8 @@ class ContinuousSourceReader:
                     if not batch:raise SourceMuxError('mux_budget_exhausted')
                     return batch
                 self.mux.push(camera,stamp,frame);pending['count']+=1;pending['frame']=None
+                if chunk['sequence']<=self.live_boundaries.get(camera,-1):
+                    self.last_startup_frame[camera]=stamp
         except BaseException:
             self.pending_decode=None
             if hasattr(frames,'close'):frames.close()
