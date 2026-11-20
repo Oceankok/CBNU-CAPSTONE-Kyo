@@ -3,7 +3,8 @@ from io import StringIO
 from contextlib import nullcontext, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from uuid import uuid4
 from video_sender.automatic_archive import archive_chunk
 from video_sender.automatic_dual import AutomaticDual
 
@@ -91,5 +92,56 @@ class Tests(unittest.TestCase):
             with patch.object(dual,'start',side_effect=[None,ValueError('failed')]), patch.object(dual,'stop',side_effect=lambda item, **kwargs:stopped.append((item, kwargs))):
                 with self.assertRaisesRegex(RuntimeError,'partial_start_stopping'):dual.start_all()
             self.assertEqual(stopped,[(slot, {'immediate': True})])
+
+    def test_local_start_failure_keeps_last_session_across_restarts(self):
+        for failure_stage in ('token', 'spawn'):
+            for previous_ack in (False, True):
+                with self.subTest(stage=failure_stage, previous_ack=previous_ack), tempfile.TemporaryDirectory() as temp:
+                    root = Path(temp)
+                    entries = [
+                        dict(repo=temp, config=str(root / f'cfg{i}'), output=str(root / f'out{i}'),
+                             index=i, retain_source=True)
+                        for i in (1, 2)
+                    ]
+                    settings = root / 'dual.json'
+                    settings.write_text(json.dumps(entries))
+                    policy = root / 'policy.json'
+                    policy.write_text(json.dumps(POLICY))
+
+                    def validate(entry):
+                        camera = {'camera_id': f"cam{entry['index']}", 'server_url': 'https://example.test'}
+                        return root, Path(entry['config']), Path(entry['output']), camera, 'PATHVALUE'
+
+                    loader = SimpleNamespace(validate=validate, read_token=Mock(return_value='test-token'))
+                    dual = AutomaticDual(settings, loader, policy, repository=root)
+                    slot = dual.slots[0]
+                    starter = slot['starter']
+                    prior = None
+                    if previous_ack:
+                        prior = starter.root / str(uuid4())
+                        prior.mkdir(parents=True)
+                        journal = {key: str(uuid4()) for key in ('run_id', 'session_id', 'stream_id')}
+                        journal.update(closed=True, capture_started=True)
+                        (prior / 'session.json').write_text(json.dumps(journal))
+                        slot['state_path'].write_text(json.dumps({'directory': str(prior), 'camera_id': 'cam1', 'index': 1}))
+                        starter.directory = prior
+
+                    failure = OSError('local start failed')
+                    starter.spawn = Mock(side_effect=failure)
+                    if failure_stage == 'token':
+                        loader.read_token.side_effect = failure
+                    with self.assertRaisesRegex(OSError, 'local start failed'):
+                        dual.start(slot)
+                    self.assertEqual(starter.directory, prior)
+                    self.assertEqual(starter.spawn.call_count, int(failure_stage == 'spawn'))
+
+                    loader.read_token.side_effect = None
+                    restarted = AutomaticDual(settings, loader, policy, repository=root)
+                    recovered = restarted.slots[0]
+                    self.assertEqual(recovered['starter'].directory, prior)
+                    recovered['starter'].spawn = Mock()
+                    restarted.start(recovered)
+                    recovered['starter'].spawn.assert_called_once()
+                    self.assertNotEqual(recovered['starter'].directory, prior)
 
 if __name__=='__main__':unittest.main()
