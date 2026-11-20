@@ -206,10 +206,11 @@ class ContinuousFrameRuntime:
             if intent['state']!='pending' or event not in self.capture.events:continue
             status=self.capture.status(event)
             if not all(row['done'] for row in status['cameras'].values()):continue
-            partial_strict=(not self.capture.manual_review and (not status['complete'] or self.outbox.event_status(event)['state']=='incomplete'))
-            if self.capture.manual_review or partial_strict:
+            if (self.capture.manual_review or not status['complete']
+                    or self.outbox.event_status(event)['state']=='incomplete'):
                 self._reconcile_final_boundary(event,status)
                 status=self.capture.status(event)
+            partial_strict=(not self.capture.manual_review and (not status['complete'] or self.outbox.event_status(event)['state']=='incomplete'))
             if self.capture.manual_review or partial_strict:
                 if not status['complete'] or self.outbox.event_status(event)['state']=='incomplete':
                     self.outbox.mark_incomplete(event,reason='camera_capture_incomplete')

@@ -42,6 +42,19 @@ class LifecycleTests(TestCase):
         self.assertAlmostEqual(continued['observation_gap_seconds'], .2)
         self.assertAlmostEqual(continued['observed_seconds'], 3)
 
+    def test_helmet_rewear_records_first_gap_and_prefix_without_counting_gap(self):
+        tracker=EventLifecycle('CAM',missing_grace_seconds=2,rewear_seconds=.5)
+        self.continuous(tracker,50)
+        tracker.update([],5.1)
+        tracker.update([observation()],5.2)
+        for step in range(53,58):
+            self.assertEqual(tracker.update([observation(status='helmet')],step/10),[])
+        close,=tracker.update([observation(status='helmet')],5.8)
+        self.assertEqual(close['rewear_gap'],dict(start_at=5,end_at=5.2,rewear_at=5.8,samples_before=51))
+        self.assertEqual(close['observation_gap_count'],1)
+        self.assertAlmostEqual(close['observation_gap_seconds'],.2)
+        self.assertAlmostEqual(close['observed_seconds'],5)
+
     def test_prequalification_gap_does_not_count_as_three_seconds(self):
         tracker = EventLifecycle('CAM', missing_grace_seconds=5)
         self.assertEqual(self.continuous(tracker, 29), [])

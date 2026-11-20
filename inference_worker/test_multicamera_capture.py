@@ -108,11 +108,12 @@ class MultiCameraTests(unittest.TestCase):
         self.assertIn('global_spool_admission',second['cameras']['main']['reasons'])
         self.assertEqual(self.c.reserved,200_000)
 
-    def test_late_end_never_claims_complete(self):
+    def test_late_end_preserves_tail_without_claiming_complete_before_trim(self):
         self.build(); self.feed(0,11); self.start(); self.feed(11,19)
         result=self.c.end('e',violation_end=6)
         self.assertFalse(result['complete'])
-        self.assertIn('end_arrived_after_capture_boundary',result['cameras']['main']['reasons'])
+        self.assertTrue(any(segment.capture_end>result['end']
+                            for segment in result['cameras']['main']['segments']))
 
     def test_source_gap_and_ttl(self):
         self.build(); self.feed(0,11); self.start()

@@ -1,10 +1,15 @@
 import { apiFetch } from './client';
 
-export interface RuleCriteria { minimum_observed_seconds: number; minimum_frame_samples: number }
+export interface RuleCriteria {
+  minimum_observed_seconds: number;
+  minimum_frame_samples: number;
+  allow_terminal_helmet_rewear_gap?: boolean;
+}
 export interface RuleEvaluation {
   method: 'continuous_rules_v1'; eligible?: boolean; criteria?: RuleCriteria | null;
   observed_seconds?: number | null; frame_sample_count?: number | null; gap_count?: number | null;
   gap_seconds?: number | null; close_reason?: string | null; score?: null;
+  allowed_rewear_gap?: { start_at: string; end_at: string; rewear_at: string; samples_before: number } | null;
   blocking_reasons?: string[]; limitations?: string[];
 }
 export interface DecisionDiagnostic {

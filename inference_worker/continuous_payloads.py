@@ -70,6 +70,11 @@ def update_payload(transition, *, session_id, sequence, complete=None,
             raise ValueError('explicit close manifest required')
         body.update(close_reason=transition['close_reason'], complete=complete,
                     final_segment_count=final_segment_count)
+        if complete and (gap := transition.get('rewear_gap')) is not None:
+            body['rewear_gap'] = {
+                key: _time(value) if key.endswith('_at') else value
+                for key, value in gap.items()
+            }
     elif complete is not None or final_segment_count is not None:
         raise ValueError('progress cannot carry close manifest')
     return body

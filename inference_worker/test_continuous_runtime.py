@@ -82,6 +82,33 @@ class RuntimeTests(TestCase):
         self.runtime.set_observation_cutoff('main',1)
         self.runtime.set_observation_cutoff('main',1)
         with self.assertRaisesRegex(ValueError,'changed'):self.runtime.set_observation_cutoff('main',2)
+
+    def test_strict_capture_keeps_tail_when_observation_timeout_closes_late(self):
+        self.runtime.journal.lifecycle.grace=2.0
+        starts=[]
+        for step in range(17):
+            self.now=step/2
+            self.runtime.frame('ref',self.now,self.frame)
+            assessments=[{'tracking_id':'t','ppe':{'vest':{'status':'suspected_no_vest'}}}] if self.now<=5 else []
+            rows=self.runtime.frame('main',self.now,self.frame,assessments=assessments)
+            starts.extend(row for row in rows if row['kind']=='start')
+            self.runtime.pump(now=self.now)
+        self.assertEqual(len(starts),1)
+        event=starts[0]['event_id']
+        for _ in range(20):self.runtime.pump(now=self.now)
+        rows=self.box.db.execute("SELECT kind,body FROM requests WHERE event=? ORDER BY seq",(event,)).fetchall()
+        close=json.loads(next(row['body'] for row in rows if row['kind']=='incomplete'))
+        self.assertEqual(close['close_reason'],'observation_gap')
+        self.assertFalse(close['complete'])
+        reports=[json.loads(row['body']) for row in rows if row['kind']=='capture_report']
+        reports=[report for report in reports if report['sequence']==2]
+        self.assertEqual(len(reports),2)
+        for report in reports:
+            self.assertEqual(report['state'],'complete')
+            self.assertFalse(report['missing_ranges'])
+            self.assertEqual(report['captured_ranges'][-1]['end_at'],'1970-01-01T00:00:07.000000+00:00')
+        self.assertTrue(all(row['state']=='accepted' for row in self.dispatcher.status()))
+
     def feed(self,fail_ref=False):
         starts=[]
         for step in range(18):

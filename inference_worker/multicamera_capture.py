@@ -307,7 +307,13 @@ class MultiCameraCapture:
         event['end'] = boundary
         for cap in event['captures'].values():
             if not cap.done and cap.writer.last_timestamp is not None and cap.writer.last_timestamp >= boundary:
-                self._fail(cap, 'end_arrived_after_capture_boundary')
+                # Keep the encoded tail so the runtime can trim the sealed
+                # segment before declaring or uploading the final interval.
+                try:
+                    self._manual_flush(cap)
+                    cap.done = True
+                except (OSError, RuntimeError, ValueError):
+                    self._fail(cap, 'capture_flush_failed')
         return self.status(event_id)
 
     def maintain(self, *, now):
@@ -337,7 +343,10 @@ class MultiCameraCapture:
         event = self.events[event_id]
         details = {c:dict(done=p.done, reasons=list(p.reasons), segments=list(p.segments), seed=dict(p.seed))
                    for c,p in event['captures'].items()}
-        complete = event['end'] is not None and all(p.done and not p.reasons for p in event['captures'].values())
+        complete = event['end'] is not None and all(
+            cap.done and not cap.reasons
+            and all(segment.capture_end<=event['end'] for segment in cap.segments)
+            for cap in event['captures'].values())
         return dict(start=event['start'], end=event['end'], complete=complete, cameras=details)
 
     def release(self, event_id):

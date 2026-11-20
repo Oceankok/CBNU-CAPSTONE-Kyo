@@ -47,6 +47,7 @@ def canonical(body):
     # Preserve the pre-context serialized form for legacy start retries.
     if payload.get('capture_context_id') is None:payload.pop('capture_context_id',None)
     if payload.get('capture_output_fps') is None:payload.pop('capture_output_fps',None)
+    if payload.get('rewear_gap') is None:payload.pop('rewear_gap',None)
     if payload.get('evidence_mode') == 'verified_continuous':payload.pop('evidence_mode',None)
     return json.dumps(payload, sort_keys=True, separators=(',', ':'))
 
@@ -78,6 +79,14 @@ class Start(EventSubmission, Observation):
         return self
 
 
+class RewearGap(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    start_at: AwareDatetime
+    end_at: AwareDatetime
+    rewear_at: AwareDatetime
+    samples_before: int = Field(ge=1, le=100000, strict=True)
+
+
 class Update(Observation):
     session_id: str = Field(pattern=r'^[0-9a-f]{32}$')
     sequence: int = Field(ge=1, le=2147483647)
@@ -88,14 +97,18 @@ class Update(Observation):
     close_reason: str | None = Field(default=None, min_length=1, max_length=100)
     complete: bool | None = None
     final_segment_count: int | None = Field(default=None, ge=0, le=10000)
+    rewear_gap: RewearGap | None = None
 
     @model_validator(mode='after')
     def close_fields(self):
         if self.kind == 'close':
             if self.close_reason is None or self.complete is None or self.final_segment_count is None:
                 raise ValueError('close_manifest_required')
-        elif any(x is not None for x in (self.close_reason,self.complete,self.final_segment_count)):
+        elif any(x is not None for x in (self.close_reason,self.complete,self.final_segment_count,self.rewear_gap)):
             raise ValueError('progress_close_fields_forbidden')
+        if self.rewear_gap is not None and (
+                not self.complete or self.close_reason!='ppe_present' or self.gap_count!=1):
+            raise ValueError('invalid_rewear_gap_close')
         return self
 
 
@@ -292,6 +305,12 @@ def update(event_id, body, node_id):
             raise HTTPException(422,'invalid_continuous_progress')
         if body.observed_seconds+body.gap_seconds>span+1e-6 or any(getattr(body,k)<row[k] for k in ('observed_seconds','gap_seconds','gap_count')):
             raise HTTPException(422,'invalid_continuous_observation')
+        if gap := body.rewear_gap:
+            if (event['ppe_type']!='helmet'
+                    or not dt(event['timestamp_start']) <= gap.start_at < gap.end_at <= body.timestamp_end < gap.rewear_at
+                    or gap.samples_before >= body.frame_sample_count
+                    or abs((gap.end_at-gap.start_at).total_seconds()-body.gap_seconds)>OBSERVATION_EPSILON_SECONDS):
+                raise HTTPException(422,'invalid_rewear_gap_evidence')
         phase='open'
         if body.kind=='close':
             count=conn.execute("SELECT COUNT(*) FROM processing_event_segment s JOIN processing_event_camera c ON c.event_id=s.event_id AND c.camera_id=s.camera_id WHERE s.event_id=? AND c.role='clip'",(event_id,)).fetchone()[0]
