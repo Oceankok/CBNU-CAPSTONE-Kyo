@@ -183,15 +183,25 @@ class ContinuousRuleTests(TestCase):
             self.assertIn('suspected_duplicate_requires_review',self.preview()['blocking_reasons'])
 
     def test_terminal_helmet_gap_can_be_previewed_and_enforced_only_when_enabled(self):
+        self.check_terminal_helmet_gap(.267, eligible=True)
+
+    def test_terminal_helmet_gap_uses_300ms_wire_boundary(self):
+        # A nine-frame gap at 30 fps can round above 300 ms in epoch floats.
+        self.check_terminal_helmet_gap(.3000001907348633, eligible=True)
+
+    def test_terminal_helmet_gap_rejects_one_microsecond_over_wire_boundary(self):
+        self.check_terminal_helmet_gap(.300001, eligible=False)
+
+    def check_terminal_helmet_gap(self, gap_seconds, *, eligible):
         criteria={**self.body_policy()['rule_criteria'],'allow_terminal_helmet_rewear_gap':True}
         self.save('shadow',rule_criteria=criteria).raise_for_status()
         self.start().raise_for_status()
-        self.progress(end=4,observed_seconds=3.733,gap_seconds=.267,gap_count=1).raise_for_status()
+        observed=dict(end=4,observed_seconds=4-gap_seconds,gap_seconds=gap_seconds,gap_count=1)
+        self.progress(**observed).raise_for_status()
         self.segments=self.segment(end=6).raise_for_status().json()['segments']
-        gap=dict(start_at=self.ts(3.3),end_at=self.ts(3.567),rewear_at=self.ts(4.5),samples_before=50)
-        close=dict(kind='close',end=4,observed_seconds=3.733,gap_seconds=.267,gap_count=1,
-                   close_reason='ppe_present',complete=True,final_segment_count=1)
-        bad={**gap,'end_at':self.ts(3.6)}
+        gap=dict(start_at=self.ts(3.3),end_at=self.ts(3.3+gap_seconds),rewear_at=self.ts(4.5),samples_before=50)
+        close=dict(kind='close',close_reason='ppe_present',complete=True,final_segment_count=1,**observed)
+        bad={**gap,'end_at':self.ts(3.3+gap_seconds+.01)}
         self.assertEqual(self.progress(sequence=2,**close,rewear_gap=bad).status_code,422)
         self.progress(sequence=2,**close,rewear_gap=gap).raise_for_status()
         self.progress(sequence=2,**close,rewear_gap=gap).raise_for_status()
@@ -209,15 +219,18 @@ class ContinuousRuleTests(TestCase):
                 captured_ranges=[dict(start_at=self.ts(-2),end_at=self.ts(6))]).raise_for_status()
         self.assert_no_review()
         self.assertIn('continuous_observation_incomplete',self.preview()['blocking_reasons'])
-        self.assertIsNotNone(self.preview(rule_criteria=criteria)['rule_evaluation']['allowed_rewear_gap'])
-        self.assertTrue(self.preview(rule_criteria=criteria)['threshold_candidate'])
+        preview=self.preview(rule_criteria=criteria)
+        self.assertEqual(preview['rule_evaluation']['allowed_rewear_gap'] is not None,eligible)
+        self.assertEqual(preview['threshold_candidate'],eligible)
         from backend.event_relations import service
         with patch.object(service,'automatic_tag',return_value={'candidate_count':1,'saved_record_count':0}):
             self.assertIn('suspected_duplicate_requires_review',
                           self.preview(rule_criteria=criteria)['blocking_reasons'])
         self.save(version=1,rule_criteria=criteria).raise_for_status()
-        self.assertTrue(self.hook()['applied'])
-        self.assertEqual(self.review()['review_reason_code'],'automatic_policy_confirmed')
+        self.assertEqual(self.hook()['applied'],eligible)
+        review=self.review()
+        self.assertEqual(review['review_reason_code'] if review else None,
+                         'automatic_policy_confirmed' if eligible else None)
 
     def test_admin_correction_preserves_auto_history_and_recounts_false_positive(self):
         self.prepare();self.complete('CAM_001');self.complete('CAM_002');self.ready_media()

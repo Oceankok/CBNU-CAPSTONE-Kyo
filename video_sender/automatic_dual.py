@@ -110,14 +110,31 @@ class AutomaticDual:
                 else:
                     if not closed:raise ValueError('prior_session_unresolved')
             target=starter.root/str(uuid4())
-            slot['output'].mkdir(parents=True,exist_ok=True)
-            atomic_json(slot['state_path'],{'directory':str(target),'camera_id':slot['camera'],'index':int(entry['index'])})
         elif mode=='resume-drain':
             target=starter.directory
             if target is None:raise ValueError('no_recovery_session')
         else:raise ValueError('unsupported_mode')
+
         with child_environment(self.environment(slot)):
-            starter.start(target,mode=mode,camera_index=int(entry['index']))
+            if mode == 'resume-drain':
+                starter.start(target, mode=mode, camera_index=int(entry['index']))
+                return
+
+            state_path = slot['state_path']
+            previous_state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else None
+            slot['output'].mkdir(parents=True, exist_ok=True)
+            # Persist the pointer before spawn so a GUI restart can find a live child.
+            atomic_json(state_path, {'directory': str(target), 'camera_id': slot['camera'],
+                                     'index': int(entry['index'])})
+            try:
+                starter.start(target, mode=mode, camera_index=int(entry['index']))
+            except Exception:
+                # No child started. Keep the last usable pointer for the next launch.
+                if previous_state is None:
+                    state_path.unlink()
+                else:
+                    atomic_json(state_path, previous_state)
+                raise
 
     def start_all(self):
         started=[]

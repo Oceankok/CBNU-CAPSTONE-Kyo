@@ -4,7 +4,7 @@ The producer's absence heuristic can be wrong. These rules check persistence and
 evidence completeness; shadow comparison with labelled footage remains necessary.
 """
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -22,7 +22,7 @@ class Criteria(BaseModel):
 def _terminal_rewear_gap(lifecycle, event, whole, criteria):
     if (not criteria or not criteria.allow_terminal_helmet_rewear_gap
             or event['ppe_type'] != 'helmet' or whole.get('close_reason') != 'ppe_present'
-            or whole.get('gap_count') != 1 or not 0 < (whole.get('gap_seconds') or 0) <= 0.3):
+            or whole.get('gap_count') != 1 or not (whole.get('gap_seconds') or 0) > 0):
         return None
     gap = json.loads(lifecycle['close_payload'] or '{}').get('rewear_gap') if lifecycle else None
     if not gap:
@@ -31,7 +31,10 @@ def _terminal_rewear_gap(lifecycle, event, whole, criteria):
     gap_end = datetime.fromisoformat(gap['end_at'])
     rewear = datetime.fromisoformat(gap['rewear_at'])
     start = datetime.fromisoformat(event['timestamp_start'])
-    if ((gap_start-start).total_seconds() >= criteria.minimum_observed_seconds
+    # These timestamps are validated on close. Compare their wire precision
+    # directly instead of subtracting large floating-point epoch values.
+    if (timedelta(0) < gap_end - gap_start <= timedelta(milliseconds=300)
+            and (gap_start-start).total_seconds() >= criteria.minimum_observed_seconds
             and gap['samples_before'] >= max(46, criteria.minimum_frame_samples)
             and 0 < (rewear-gap_end).total_seconds() <= 1):
         return gap
