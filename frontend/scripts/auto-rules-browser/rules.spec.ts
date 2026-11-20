@@ -16,7 +16,7 @@ async function setup(page: Page, handler?: (route: Route, url: URL) => Promise<u
 }
 const open = (page: Page, query = '') => page.goto('/scripts/auto-rules-browser/index.html' + query);
 const reason = (page: Page) => page.getByRole('textbox', { name: '변경 사유', exact: true });
-const save = (page: Page) => page.getByRole('button', { name: 'OFF·shadow 설정 저장', exact: true });
+const save = (page: Page) => page.getByRole('button', { name: '설정 저장', exact: true });
 
 test('rule settings round-trip both explicit criteria; saving locks fields and sends no activation fields', async ({ page }) => {
   const deferred = gate(); let payload: Record<string, unknown> | undefined;
@@ -25,12 +25,12 @@ test('rule settings round-trip both explicit criteria; saving locks fields and s
     return json(route, policy());
   });
   await open(page);
-  await page.getByRole('spinbutton', { name: /최소 실제 관측 시간/ }).fill('7');
-  await page.getByRole('spinbutton', { name: /최소 프레임 샘플/ }).fill('14');
+  await page.getByRole('spinbutton', { name: /최소 미착용 관측 시간/ }).fill('7');
+  await page.getByRole('spinbutton', { name: /최소 관측 프레임 수/ }).fill('14');
   await reason(page).fill('shadow test');
   await save(page).evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
   await expect(reason(page)).toBeDisabled();
-  await expect(page.getByRole('spinbutton', { name: /최소 실제 관측 시간/ })).toBeDisabled();
+  await expect(page.getByRole('spinbutton', { name: /최소 미착용 관측 시간/ })).toBeDisabled();
   await expect.poll(() => payload).toMatchObject({ expected_version: 1, mode: 'shadow', decision_method: 'continuous_rules_v1', rule_criteria: { minimum_observed_seconds: 7, minimum_frame_samples: 14 }, threshold: 0.9 });
   expect(payload).not.toHaveProperty('activation_blockers');
   deferred.resolve(); await expect(reason(page)).toHaveValue('');
@@ -46,13 +46,13 @@ test('version409 preserves draft and retries only after explicit latest-version 
     return json(route, server);
   });
   await open(page); await reason(page).fill('Preserved reason');
-  await page.getByRole('spinbutton', { name: /최소 실제 관측 시간/ }).fill('12');
+  await page.getByRole('spinbutton', { name: /최소 미착용 관측 시간/ }).fill('12');
   await save(page).click();
-  await expect(page.getByRole('region', { name: '최신 서버 설정' })).toContainText('v2');
+  await expect(page.getByRole('region', { name: '최신 설정' })).toContainText('v2');
   await expect(save(page)).toBeDisabled(); await expect(reason(page)).toHaveValue('Preserved reason');
   expect(versions).toEqual([1]);
-  await page.getByRole('button', { name: '입력 유지·최신 버전 선택' }).click();
-  await expect(page.getByRole('spinbutton', { name: /최소 실제 관측 시간/ })).toHaveValue('12');
+  await page.getByRole('button', { name: '현재 입력 유지' }).click();
+  await expect(page.getByRole('spinbutton', { name: /최소 미착용 관측 시간/ })).toHaveValue('12');
   await save(page).click(); await expect.poll(() => versions).toEqual([1, 2]);
 });
 test('failed latest fetch stays recoverable and latest-server selection explicitly replaces the draft', async ({ page }) => {
@@ -62,11 +62,11 @@ test('failed latest fetch stays recoverable and latest-server selection explicit
     reads++; return reads === 2 ? json(route, { detail: 'offline' }, 503) : json(route, policy(reads > 2 ? 3 : 1));
   });
   await open(page); await reason(page).fill('Keep until choice'); await save(page).click();
-  await expect(page.getByText(/최신 설정 조회에 실패/)).toBeVisible();
+  await expect(page.getByText(/최신 설정을 불러오지 못했습니다/)).toBeVisible();
   await expect(reason(page)).toHaveValue('Keep until choice'); await expect(save(page)).toBeDisabled();
-  await page.getByRole('button', { name: '최신 설정 조회', exact: true }).click();
-  await page.getByRole('button', { name: '입력 취소·최신 설정으로 시작' }).click();
-  await expect(reason(page)).toHaveValue(''); await expect(page.getByText('정책 입력 · 기준 버전 3')).toBeVisible();
+  await page.getByRole('button', { name: '최신 설정 불러오기', exact: true }).click();
+  await page.getByRole('button', { name: '입력을 버리고 최신 설정 사용' }).click();
+  await expect(reason(page)).toHaveValue(''); await expect(page.getByText('자동 확정 설정 · v3')).toBeVisible();
 });
 test('current preview uses edited method and criteria and is separate from saved blockers and history', async ({ page }) => {
   let body: Record<string, unknown> | undefined;
@@ -74,16 +74,16 @@ test('current preview uses edited method and criteria and is separate from saved
     if (url.pathname.endsWith('/preview')) { body = route.request().postDataJSON(); return json(route, { persisted: false, automatic_confirmation_enabled: false, items: [diagnostic] }); }
     return json(route, policy());
   });
-  await open(page); await page.getByRole('textbox', { name: '이벤트 ID (1~20개, 한 줄에 하나)' }).fill('E1');
-  await page.getByRole('spinbutton', { name: /최소 실제 관측 시간/ }).fill('6');
-  await page.getByRole('button', { name: '현재 입력 읽기 전용 진단' }).click();
-  await expect(page.getByRole('region', { name: '현재 입력 진단' })).toContainText('확률 점수 없음');
-  await expect(page.getByRole('region', { name: '현재 입력 진단' })).toContainText('continuous_observation_incomplete');
+  await open(page); await page.getByRole('textbox', { name: '사건 ID (최대 20개, 한 줄에 하나)' }).fill('E1');
+  await page.getByRole('spinbutton', { name: /최소 미착용 관측 시간/ }).fill('6');
+  await page.getByRole('button', { name: '판정 미리보기 실행' }).click();
+  await expect(page.getByRole('region', { name: '판정 미리보기' })).toContainText('자동 확정 조건 미충족');
+  await expect(page.getByRole('region', { name: '판정 미리보기' })).toContainText('미착용 판정이 중간에 끊긴 구간이 있습니다.');
   expect(body).toMatchObject({ decision_method: 'continuous_rules_v1', rule_criteria: { minimum_observed_seconds: 6, minimum_frame_samples: 10 } });
   expect(body).not.toHaveProperty('expected_version');
-  await page.getByRole('spinbutton', { name: /최소 프레임 샘플/ }).fill('11');
-  await expect(page.getByRole('region', { name: '현재 입력 진단' }).locator('article')).toHaveCount(0);
-  await expect(page.getByRole('region', { name: '저장된 설정의 활성화 차단 사유' })).toContainText('approved_validation_reference_required');
+  await page.getByRole('spinbutton', { name: /최소 관측 프레임 수/ }).fill('11');
+  await expect(page.getByRole('region', { name: '판정 미리보기' }).locator('article')).toHaveCount(0);
+  await expect(page.getByRole('region', { name: '자동 확정 준비 상태' })).toContainText('승인된 검증 기록이 필요합니다.');
 });
 test('saved enforce is display-only and must be changed to OFF before any PUT or preview', async ({ page }) => {
   let payload: Record<string, unknown> | undefined;
@@ -92,19 +92,19 @@ test('saved enforce is display-only and must be changed to OFF before any PUT or
     return json(route, { ...policy(1, 'enforce'), activation_blockers: [] });
   });
   await open(page); await reason(page).fill('disable'); await expect(save(page)).toBeDisabled();
-  await expect(page.getByRole('option', { name: /enforce/ })).toBeDisabled();
-  await page.getByRole('combobox', { name: '모드', exact: true }).selectOption('off'); await save(page).click();
+  await expect(page.getByRole('option', { name: '자동 확정 중 · 조회 전용' })).toBeDisabled();
+  await page.getByRole('combobox', { name: '운영 모드', exact: true }).selectOption('off'); await save(page).click();
   await expect.poll(() => payload?.mode).toBe('off');
 });
 test('rule method requires explicit criteria for shadow and rejects fractional samples', async ({ page }) => {
   await setup(page, route => json(route, { ...policy(), decision_method: 'validated_model', rule_criteria: null }));
   await open(page); await reason(page).fill('scope');
   await page.getByRole('combobox', { name: '판단 방법' }).selectOption('continuous_rules_v1');
-  await expect(page.getByRole('spinbutton', { name: /최소 실제 관측 시간/ })).toHaveValue('');
+  await expect(page.getByRole('spinbutton', { name: /최소 미착용 관측 시간/ })).toHaveValue('');
   await expect(save(page)).toBeDisabled();
-  await page.getByRole('spinbutton', { name: /최소 실제 관측 시간/ }).fill('3');
-  await page.getByRole('spinbutton', { name: /최소 프레임 샘플/ }).fill('2.5'); await expect(save(page)).toBeDisabled();
-  await page.getByRole('spinbutton', { name: /최소 프레임 샘플/ }).fill('2'); await expect(save(page)).toBeEnabled();
+  await page.getByRole('spinbutton', { name: /최소 미착용 관측 시간/ }).fill('3');
+  await page.getByRole('spinbutton', { name: /최소 관측 프레임 수/ }).fill('2.5'); await expect(save(page)).toBeDisabled();
+  await page.getByRole('spinbutton', { name: /최소 관측 프레임 수/ }).fill('2'); await expect(save(page)).toBeEnabled();
 });
 test('persisted shadow shows historical version/method/evidence/exclusions and tolerates old diagnostics', async ({ page }) => {
   const deferred = gate();
@@ -115,12 +115,13 @@ test('persisted shadow shows historical version/method/evidence/exclusions and t
     ] }); }
     return json(route, policy());
   });
-  await open(page); await page.getByRole('textbox', { name: 'shadow 조회 이벤트 ID' }).fill('E1');
-  await page.getByRole('button', { name: '저장된 shadow 조회' }).click();
-  await expect(page.getByRole('textbox', { name: 'shadow 조회 이벤트 ID' })).toBeDisabled(); deferred.resolve();
-  const section = page.getByRole('region', { name: '저장된 shadow 이력' });
-  await expect(section).toContainText('정책 버전 4'); await expect(section).toContainText('이전/수동 진단');
-  await expect(section).toContainText('fingerprint'); await expect(section).toContainText('continuous_observation_incomplete');
+  await open(page); await page.getByRole('textbox', { name: '조회할 사건 ID' }).fill('E1');
+  await page.getByRole('button', { name: '시험 기록 조회' }).click();
+  await expect(page.getByRole('textbox', { name: '조회할 사건 ID' })).toBeDisabled(); deferred.resolve();
+  const section = page.getByRole('region', { name: '시험 모드 기록' });
+  await expect(section).toContainText('정책 버전 4'); await expect(section).toContainText('기록 없음');
+  await section.getByText('판정 세부 기록', { exact: true }).first().click();
+  await expect(section.getByText(/fingerprint/).first()).toBeVisible(); await expect(section).toContainText('미착용 판정이 중간에 끊긴 구간이 있습니다.');
 });
 test('recognized system audit is structured; malformed/manual/older comments remain safe text', async ({ page }) => {
   await setup(page); await open(page, '?kind=audit');
@@ -163,8 +164,8 @@ test('late preview from an unmounted settings page cannot overwrite the next dra
     if (url.pathname.endsWith('/preview')) { await deferred.promise; return json(route, { items: [diagnostic], persisted: false }); }
     reads++; return json(route, policy(reads));
   });
-  await open(page); await page.getByRole('textbox', { name: '이벤트 ID (1~20개, 한 줄에 하나)' }).fill('E1');
-  await page.getByRole('button', { name: '현재 입력 읽기 전용 진단' }).click();
+  await open(page); await page.getByRole('textbox', { name: '사건 ID (최대 20개, 한 줄에 하나)' }).fill('E1');
+  await page.getByRole('button', { name: '판정 미리보기 실행' }).click();
   await expect(reason(page)).toBeDisabled();
   await page.getByRole('button', { name: '설정 화면 전환' }).click();
   await page.getByRole('button', { name: '설정 화면 전환' }).click();
@@ -172,22 +173,33 @@ test('late preview from an unmounted settings page cannot overwrite the next dra
   const complete = page.waitForResponse(response => response.url().endsWith('/preview'));
   deferred.resolve(); await (await complete).finished();
   await expect(reason(page)).toHaveValue('New draft');
-  await expect(page.getByRole('region', { name: '현재 입력 진단' }).locator('article')).toHaveCount(0);
+  await expect(page.getByRole('region', { name: '판정 미리보기' }).locator('article')).toHaveCount(0);
 });
 test('non-version save rejection preserves fields without creating a version-conflict retry loop', async ({ page }) => {
   await setup(page, route => route.request().method() === 'PUT' ? json(route, { detail: 'offline' }, 503) : json(route, policy()));
   await open(page); await reason(page).fill('Keep input'); await save(page).click();
   await expect(page.getByText(/저장하지 못했습니다/)).toBeVisible();
   await expect(reason(page)).toHaveValue('Keep input'); await expect(save(page)).toBeEnabled();
-  await expect(page.getByRole('button', { name: '최신 설정 조회', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '최신 설정 불러오기', exact: true })).toHaveCount(0);
 });
 
 test('incomplete persisted rule row tolerates missing observations and retains exclusions', async ({ page }) => {
   await setup(page, async (route, url) => url.pathname.endsWith('/shadow') ? json(route, { event_id: 'E1', limit: 20, offset: 0, items: [{ run_id: 'incomplete', actor_id: 'admin', created_at: '2026-11-15', policy: policy(), result: { event_id: 'E1', settings_version: 2, decision_method: 'continuous_rules_v1', blocking_reasons: ['evidence_incomplete'], rule_evaluation: { method: 'continuous_rules_v1', eligible: false, score: null } } }] }) : json(route, policy()));
-  await open(page); await page.getByRole('textbox', { name: 'shadow 조회 이벤트 ID' }).fill('E1');
-  await page.getByRole('button', { name: '저장된 shadow 조회' }).click();
-  const section = page.getByRole('region', { name: '저장된 shadow 이력' });
-  await expect(section).toContainText('evidence_incomplete');
+  await open(page); await page.getByRole('textbox', { name: '조회할 사건 ID' }).fill('E1');
+  await page.getByRole('button', { name: '시험 기록 조회' }).click();
+  const section = page.getByRole('region', { name: '시험 모드 기록' });
+  await expect(section).toContainText('영상 근거가 충분하지 않습니다.');
   await expect(section).toContainText('미확인');
-  await expect(section).toContainText('규칙 조건 미충족');
+  await expect(section).toContainText('자동 확정 조건 미충족');
+});
+
+test('settings remain usable on a narrow screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await setup(page);
+  await open(page);
+  const checkbox = page.getByRole('checkbox', { name: '안전모 재착용 직전의 짧은 탐지 공백 허용' });
+  await expect(checkbox).toHaveAccessibleDescription(/0.3초 이하/);
+  await checkbox.check();
+  await expect(checkbox).toBeChecked();
+  expect(await page.locator('main').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
 });

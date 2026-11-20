@@ -7,19 +7,19 @@ export function maySelectEnforce(settings: AutoDecisionSettings | null): boolean
 }
 
 export function settingsSaveBlocker(settings: AutoDecisionSettings, conflict: boolean, reason: string): string | null {
-  if (conflict) return '최신 서버 설정을 명시적으로 선택한 뒤 다시 편집해 주세요.';
-  if (settings.mode === 'enforce') return '현재 활성 상태는 조회만 가능합니다. 저장하려면 OFF 또는 shadow를 선택하세요.';
-  if (!reason.trim()) return '변경 사유가 필요합니다.';
+  if (conflict) return '최신 설정을 확인하고 현재 입력을 유지할지 선택하세요.';
+  if (settings.mode === 'enforce') return '이 화면에서 저장하려면 꺼짐 또는 시험 모드를 선택하세요.';
+  if (!reason.trim()) return '변경 사유를 입력하세요.';
   if (!Number.isFinite(settings.threshold) || settings.threshold < 0 || settings.threshold > 1)
-    return '임계값은 0~1의 유한수여야 합니다.';
+    return '판정에 사용할 점수를 0부터 1까지 입력하세요.';
   if (settings.decision_method === 'continuous_rules_v1') {
     const criteria = settings.rule_criteria;
     if ((!criteria && settings.mode !== 'off') || (criteria && (!Number.isFinite(criteria.minimum_observed_seconds) || criteria.minimum_observed_seconds < 3 || criteria.minimum_observed_seconds > 3600 || !Number.isInteger(criteria.minimum_frame_samples) || criteria.minimum_frame_samples < 2 || criteria.minimum_frame_samples > 100000)))
-      return '규칙의 관측 시간(3~3600초)과 샘플 수(2~100000 정수)를 명시하세요.';
-    if (settings.ppe_types.some(value => !['helmet', 'vest'].includes(value))) return '연속 관측 규칙은 helmet/vest만 지원합니다.';
+      return '관측 시간은 3~3600초, 프레임 수는 2~100,000 사이의 정수로 입력하세요.';
+    if (settings.ppe_types.some(value => !['helmet', 'vest'].includes(value))) return '연속 관측 규칙에는 안전모(helmet)와 조끼(vest)를 지정할 수 있습니다.';
   }
   if (settings.mode !== 'off' && (!settings.model_versions.length || !settings.ppe_types.length || !settings.camera_ids.length))
-    return '모델·PPE·카메라 적용 대상을 지정해 주세요.';
+    return '적용할 모델, 보호구, 카메라를 지정하세요.';
   return null;
 }
 

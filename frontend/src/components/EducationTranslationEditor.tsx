@@ -127,7 +127,7 @@ export default function EducationTranslationEditor({ kind, sourceId, sourceVersi
       {conflictId && <div role="alert">
         <strong>최신 번역 확인이 필요합니다</strong>
         {latest && <><p>{latest.title}</p><p>{latest.body}</p><ul>{latest.checklist.map((line, i) => <li key={i}>{line}</li>)}</ul>
-          <p>서버 v{latest.version} · {latest.status}{latest.stale ? ' · 원본 변경됨' : ''}</p></>}
+          <p>최신 버전 {latest.version} · {latest.status === 'published' ? '게시됨' : latest.status === 'draft' ? '초안' : '교체됨'}{latest.stale ? ' · 원본 변경됨' : ''}</p></>}
         {draft?.editing && latest && <button type="button" disabled={locked || !published || latest.source_version !== sourceVersion || latest.stale || latest.status !== 'draft'} onClick={() => { setDraft({ ...draft, editing: latest }); setConflictId(null); setReviewed(false); }}>입력 유지·최신 번역 버전 선택</button>}
         {!draft && latest && <button type="button" disabled={locked} onClick={() => { setConflictId(null); setError(null); }}>최신 번역 확인 완료</button>}
         {draft && <p>원본이 변경된 경우 입력을 복사한 뒤 편집을 종료하고 최신 원본에서 새 번역을 작성하세요.</p>}

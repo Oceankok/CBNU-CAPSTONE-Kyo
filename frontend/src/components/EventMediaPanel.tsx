@@ -40,26 +40,26 @@ const STATUS: Record<EventMedia['status'], string> = {
 };
 const ERRORS: Record<string, string> = {
   scrfd_model_missing:
-    '서버에 SCRFD 모델이 설치되지 않았습니다. 관리자에게 모델 설치를 요청하거나 YuNet 방식을 선택해 주세요.',
+    '얼굴 가림 기능을 사용할 수 없습니다. 시스템 관리자에게 문의하세요.',
   scrfd_manifest_missing:
-    'SCRFD 모델 등록 정보가 없습니다. 개발 안내 문서의 모델 등록 절차를 확인해 주세요.',
+    '얼굴 가림에 필요한 설정을 확인할 수 없습니다. 시스템 관리자에게 문의하세요.',
   scrfd_model_incompatible:
-    '지원하는 SCRFD 10G ONNX 형식이 아닙니다. 모델 파일을 확인해 주세요.',
+    '얼굴 가림에 필요한 모델을 사용할 수 없습니다. 시스템 관리자에게 문의하세요.',
   gpu_runtime_missing:
-    'GPU 처리에 필요한 onnxruntime-gpu가 설치되지 않았습니다. 개발 안내 문서를 확인해 주세요.',
+    '얼굴 가림 기능을 시작할 수 없습니다. 시스템 관리자에게 문의하세요.',
   gpu_provider_unavailable:
-    'CUDA 추론을 사용할 수 없습니다. GPU 런타임과 CUDA/cuDNN 구성을 확인해 주세요.',
+    '얼굴 가림 기능을 시작할 수 없습니다. 시스템 관리자에게 문의하세요.',
   gpu_runtime_initialization_failed:
-    'GPU 모델 초기화에 실패했습니다. 서버 로그와 CUDA/cuDNN 버전을 확인해 주세요.',
-  gpu_inference_failed: 'GPU 추론에 실패했습니다. 서버 로그를 확인해 주세요.',
+    '얼굴 가림 기능을 시작할 수 없습니다. 시스템 관리자에게 문의하세요.',
+  gpu_inference_failed: '얼굴 가림을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.',
   face_model_missing: '얼굴 처리 모델이 준비되지 않았습니다.',
   face_model_checksum_mismatch: '얼굴 처리 모델 파일을 확인해 주세요.',
-  video_too_long: '짧은 이벤트 클립을 사용해 주세요.',
+  video_too_long: '영상이 너무 깁니다. 필요한 구간만 잘라 다시 올려 주세요.',
   final_review_required: '최종 검토를 완료한 뒤 보관 여부를 결정해 주세요.',
   retention_version_conflict:
     '다른 관리자가 설정을 변경했습니다. 새로고침 후 다시 선택해 주세요.',
   file_delete_failed:
-    '파일 삭제에 실패했습니다. 재시도하거나 서버의 파일 상태를 확인해 주세요.',
+    '파일을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.',
   ...CONSENT_ERRORS,
 };
 // Why the reprocess button is unavailable (reprocess_unavailable_reason, #116)
@@ -67,7 +67,7 @@ const REPROCESS_BLOCKED: Record<string, string> = {
   deletion_requested: '삭제가 결정된 자료입니다.',
   processing_in_progress: '처리 중입니다.',
   source_expired:
-    '원본 보관 기간(기본 24시간)이 지나 재처리할 수 없습니다. 클립을 다시 받아야 합니다.',
+    '원본 영상의 보관 기간이 지났습니다. 다시 처리하려면 영상이 필요합니다.',
   source_file_missing:
     '원본 파일이 없어 재처리할 수 없습니다. 클립을 다시 받아야 합니다.',
   source_invalid:
@@ -216,7 +216,7 @@ function clipRequestStatus(
     return '영상 수신 · 얼굴 가림 처리 중';
   }
   if (media.some((item) => item.status === 'failed'))
-    return '영상 처리 실패 · 복구 확인 필요';
+    return '영상 처리 실패 · 관리자 확인 필요';
   if (request.status === 'pending') {
     const missing = missingRequest(request, collection);
     if (!media.length && missing) {
@@ -811,7 +811,7 @@ export default function EventMediaPanel({
       {/* Manual upload / model comparison is a backend verification flow — dev server only */}
       {import.meta.env.DEV && retention?.decision !== 'delete' && (
         <details className={styles.details}>
-          <summary>개발용 · 참고 자료 업로드</summary>
+          <summary>참고 자료 업로드</summary>
           <label className={styles.field}>
             비식별 처리 방식
             <select
@@ -850,7 +850,7 @@ export default function EventMediaPanel({
                 )
               }
             >
-              {busy ? '처리 중…' : '업로드 후 얼굴 처리'}
+              {busy ? '처리 중…' : '자료 올리기 및 얼굴 가림'}
             </button>
             <button
               className={styles.btn}
