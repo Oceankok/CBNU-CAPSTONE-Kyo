@@ -1509,7 +1509,8 @@ def get_broadcast_settings() -> dict[str, Any]:
                 setting_id,
                 enabled,
                 default_language,
-                cooldown_sec
+                cooldown_sec,
+                additional_languages_json
             FROM broadcast_setting
             WHERE setting_id = 'DEFAULT';
             """
@@ -1519,6 +1520,7 @@ def get_broadcast_settings() -> dict[str, Any]:
             return {
                 "enabled": True,
                 "default_language": "ko",
+                "additional_languages": [],
                 "cooldown_sec": 30,
                 "templates": [],
             }
@@ -1540,6 +1542,7 @@ def get_broadcast_settings() -> dict[str, Any]:
     return {
         "enabled": bool(setting["enabled"]),
         "default_language": setting["default_language"],
+        "additional_languages": json.loads(setting["additional_languages_json"]),
         "cooldown_sec": setting["cooldown_sec"],
         "templates": [dict(row) for row in templates],
     }
@@ -1559,6 +1562,7 @@ def save_broadcast_settings(settings: dict[str, Any]) -> dict[str, Any]:
     """
     updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     templates = settings.get("templates", [])
+    additional_languages = json.dumps(settings["additional_languages"]) if "additional_languages" in settings else None
 
     with get_connection() as conn:
         conn.execute(
@@ -1568,20 +1572,24 @@ def save_broadcast_settings(settings: dict[str, Any]) -> dict[str, Any]:
                 enabled,
                 default_language,
                 cooldown_sec,
+                additional_languages_json,
                 updated_at
             )
-            VALUES ('DEFAULT', ?, ?, ?, ?)
+            VALUES ('DEFAULT', ?, ?, ?, COALESCE(?, '[]'), ?)
             ON CONFLICT(setting_id) DO UPDATE SET
                 enabled = excluded.enabled,
                 default_language = excluded.default_language,
                 cooldown_sec = excluded.cooldown_sec,
+                additional_languages_json = COALESCE(?, broadcast_setting.additional_languages_json),
                 updated_at = excluded.updated_at;
             """,
             (
                 1 if settings.get("enabled", True) else 0,
                 settings.get("default_language", "ko"),
                 settings.get("cooldown_sec", 30),
+                additional_languages,
                 updated_at,
+                additional_languages,
             ),
         )
 

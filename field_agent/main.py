@@ -25,8 +25,26 @@ def execute(command, allow_language_install=False):
     if command["kind"] != "broadcast":
         return {"status": "failed", "result": {"reason": "unsupported_command"}}
     payload = command["payload"]
-    result = speak_message(payload["message"], payload["language"], payload.get("voice_id"))
-    return {"status": "completed" if result["spoken"] else "failed", "result": result}
+    announcements = [payload, *payload.get("additional_announcements", [])]
+    if len(announcements) == 1:
+        result = speak_message(payload["message"], payload["language"], payload.get("voice_id"))
+        return {"status": "completed" if result["spoken"] else "failed", "result": result}
+
+    results = []
+    for item in announcements:
+        language = item["language"]
+        if time.time() >= command["expires_at"]:
+            results.append({"language": language, "spoken": False, "reason": "expired"})
+            continue
+        result = speak_message(item["message"], language, item.get("voice_id"))
+        results.append({"language": language, "spoken": result["spoken"], "reason": result.get("reason")})
+    spoken = any(item["spoken"] for item in results)
+    complete = all(item["spoken"] for item in results)
+    return {
+        "status": "completed" if complete else "failed",
+        "result": {"spoken": spoken, "reason": "tts_completed" if complete else "tts_sequence_incomplete",
+                   "announcements": results},
+    }
 
 
 def save_state(path, state):

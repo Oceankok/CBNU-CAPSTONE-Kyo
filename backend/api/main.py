@@ -16,7 +16,7 @@ import os
 from backend.auth.service import require_admin, decode_user
 from backend.auth.routes import router as auth_router
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.db.event_repository import (
     get_candidate_events_page,
@@ -157,6 +157,16 @@ class BroadcastSettingsRequest(BaseModel):
     default_language: str = Field(default="ko", example="ko")
     cooldown_sec: int = Field(default=30, example=30)
     templates: list[BroadcastTemplate] = Field(default_factory=list)
+    additional_languages: list[str] = Field(default_factory=list, max_length=6)
+
+    @field_validator("additional_languages")
+    @classmethod
+    def validate_additional_languages(cls, languages):
+        from backend.field.constants import INSTALL_LANGUAGES
+        supported = {code.split("-", 1)[0] for code in INSTALL_LANGUAGES}
+        if len(set(languages)) != len(languages) or not set(languages) <= supported:
+            raise ValueError("Use distinct supported broadcast languages")
+        return languages
 
 
 @app.get("/")
@@ -527,7 +537,7 @@ def update_broadcast_settings(request: BroadcastSettingsRequest) -> dict:
         dict:
             저장된 경고 방송 설정.
     """
-    return save_broadcast_settings(request.model_dump())
+    return save_broadcast_settings(request.model_dump(exclude_unset=True))
 
 app.include_router(admin_router)
 

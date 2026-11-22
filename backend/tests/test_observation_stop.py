@@ -82,7 +82,7 @@ class ObservationStopTests(unittest.TestCase):
         else:
             with get_connection() as conn:apply_migrations(conn)
         with get_connection() as conn:
-            self.assertEqual(schema_version(conn),LATEST_VERSION);self.assertEqual(LATEST_VERSION,38)
+            self.assertEqual(schema_version(conn),LATEST_VERSION)
             for name in tables:self.assertEqual(sorted(repr(tuple(row)) for row in conn.execute('SELECT * FROM '+name)),before[name],name)
             self.assertEqual(conn.execute('SELECT count(*) FROM capture_observation_stop').fetchone()[0],0)
 
