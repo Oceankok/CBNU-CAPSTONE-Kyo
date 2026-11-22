@@ -65,6 +65,28 @@ class LocaleQueueTests(unittest.TestCase):
         self.assertEqual(result['status'], 'completed')
         self.assertIsNone(self.client.post('/api/field/commands/claim', headers=self.node).json()['command'])
 
+    def test_schema_38_preserves_existing_broadcast_settings(self):
+        from backend.db.connection import is_postgres, schema_version
+        from backend.db.migrations import LATEST_VERSION, apply_migrations
+
+        before = get_broadcast_settings()
+        postgres = is_postgres()
+        with get_connection() as conn:
+            conn.execute('ALTER TABLE broadcast_setting DROP COLUMN additional_languages_json')
+            if postgres:
+                conn.execute('UPDATE app_schema_version SET version=38 WHERE singleton=1')
+            else:
+                conn.execute('PRAGMA user_version=38')
+        if postgres:
+            from backend.db.postgres import initialize
+            initialize(seed=False)
+        else:
+            with get_connection() as conn:
+                apply_migrations(conn)
+        with get_connection() as conn:
+            self.assertEqual(schema_version(conn), LATEST_VERSION)
+        self.assertEqual(get_broadcast_settings(), before)
+
 
 class SequencePlaybackTests(unittest.TestCase):
     def test_one_unavailable_voice_does_not_skip_the_next_language(self):
