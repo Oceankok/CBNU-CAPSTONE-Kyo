@@ -300,6 +300,7 @@ export interface BroadcastTemplate {
 export interface BroadcastSettings {
   enabled: boolean;
   default_language: BroadcastLanguage;
+  additional_languages: BroadcastLanguage[];
   cooldown_sec: number;
   templates: BroadcastTemplate[];
 }

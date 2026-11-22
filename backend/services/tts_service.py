@@ -12,6 +12,7 @@ tts_service.py
 현재 구현은 pyttsx3를 사용하며, Windows에서는 설치된 시스템 음성을 사용함.
 """
 
+import re
 from typing import Any, Optional
 
 
@@ -78,12 +79,16 @@ def _select_voice(voices: list[Any], language: str) -> Optional[Any]:
         Optional[Any]:
             선택된 음성 객체. 찾지 못하면 None.
     """
-    keywords = VOICE_KEYWORDS.get(language, [])
+    primary = language.lower().replace('_', '-').split('-', 1)[0]
+    keywords = VOICE_KEYWORDS.get(primary, [])
 
     for voice in voices:
         description = _get_voice_description(voice)
+        if re.search(rf'(?<![a-z]){re.escape(primary)}[-_][a-z]{{2}}(?![a-z])', description):
+            return voice
 
-        if any(keyword in description for keyword in keywords):
+    for voice in voices:
+        if any(keyword in _get_voice_description(voice) for keyword in keywords):
             return voice
 
     return None

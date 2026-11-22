@@ -28,6 +28,7 @@ const BLANK_TEMPLATE: BroadcastTemplate = {
 const DEFAULT_SETTINGS: BroadcastSettings = {
   enabled: false,
   default_language: 'ko',
+  additional_languages: [],
   cooldown_sec: 30,
   templates: [
     {
@@ -75,19 +76,17 @@ export default function BroadcastPage() {
   const handleSave = useCallback(() => {
     setSaving(true);
     setError(null);
+    setSuccessMsg(null);
     saveBroadcastSettings(settings)
-      .then(setSettings)
-      .catch(() => {
-        // Show a warning but keep edits so the user doesn't lose work
-        setError(
-          '저장 실패: 백엔드 API가 아직 구현 중입니다. 설정은 로컬에서만 유지됩니다.',
-        );
-      })
-      .finally(() => {
-        setSaving(false);
+      .then((saved) => {
+        setSettings(saved);
         setSuccessMsg('설정이 저장되었습니다.');
         setTimeout(() => setSuccessMsg(null), 3000);
-      });
+      })
+      .catch(() => {
+        setError('방송 설정을 저장하지 못했습니다. 입력값을 확인하고 다시 시도해 주세요.');
+      })
+      .finally(() => setSaving(false));
   }, [settings]);
 
   function updateField<K extends keyof BroadcastSettings>(
@@ -193,6 +192,30 @@ export default function BroadcastPage() {
               </option>
             ))}
           </select>
+        </div>
+
+        <div className={styles.fieldRow}>
+          <span className={styles.fieldLabel}>추가 방송 언어</span>
+          <div role="group" aria-label="추가 방송 언어">
+            {BROADCAST_LANGS.map(({ code, label }) => (
+              <label key={code}>
+                <input
+                  type="checkbox"
+                  checked={(settings.additional_languages ?? []).includes(code)}
+                  onChange={(event) => {
+                    const existing = settings.additional_languages ?? [];
+                    updateField('additional_languages', event.target.checked
+                      ? [...existing, code]
+                      : existing.filter((language) => language !== code));
+                  }}
+                />
+                {label}{' '}
+              </label>
+            ))}
+          </div>
+          <span className={styles.fieldHint}>
+            현장 PC 언어 뒤에 선택한 언어를 순서대로 방송합니다. 업데이트된 현장 방송 프로그램과 각 언어의 문구·음성이 필요합니다.
+          </span>
         </div>
 
         <div className={styles.fieldRow}>

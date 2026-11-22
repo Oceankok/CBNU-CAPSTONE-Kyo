@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-LATEST_VERSION = 38
+LATEST_VERSION = 39
 
 
 def _now() -> str:
@@ -619,6 +619,18 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
             for statement in script.split(';'):
                 if statement.strip():conn.execute(statement)
             conn.execute('PRAGMA user_version=38')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    if version < 39:
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            columns = {row[1] for row in conn.execute('PRAGMA table_info(broadcast_setting)')}
+            if 'additional_languages_json' not in columns:
+                conn.execute("ALTER TABLE broadcast_setting ADD COLUMN additional_languages_json TEXT NOT NULL DEFAULT '[]'")
+            conn.execute('PRAGMA user_version=39')
             conn.commit()
         except Exception:
             conn.rollback()

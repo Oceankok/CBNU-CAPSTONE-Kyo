@@ -71,8 +71,15 @@ def enqueue_event_broadcast(event_id):
         if old:
             return {"queued": False, "reason": "already_requested", **dict(old)}
         language = node["language"] or settings["default_language"]
-        message = _select_broadcast_message(settings["templates"], event["ppe_type"], event["zone_name"] or "", language)
-        if not message:
+        primary = language.strip().lower().replace('_', '-').split('-', 1)[0]
+        languages = [language, *(extra for extra in settings.get("additional_languages", []) if extra != primary)]
+        announcements = []
+        for code in languages:
+            message = _select_broadcast_message(settings["templates"], event["ppe_type"], event["zone_name"] or "", code)
+            if message:
+                announcements.append({"message": message, "language": code,
+                                      "voice_id": node["voice_id"] if code == language else None})
+        if not announcements:
             return {"queued": False, "reason": "template_not_found"}
         if not node["last_seen_at"] or now-node["last_seen_at"] > 30:
             return {"queued": False, "reason": "node_offline"}
@@ -80,7 +87,9 @@ def enqueue_event_broadcast(event_id):
         previous = conn.execute("SELECT MAX(created_at) FROM field_command WHERE cooldown_key=?", (key,)).fetchone()[0]
         if previous is not None and now-previous < max(0, settings["cooldown_sec"]):
             return {"queued": False, "reason": "cooldown_active"}
-        payload = {"message": message, "language": language, "voice_id": node["voice_id"]}
+        payload = announcements[0]
+        if len(announcements) > 1:
+            payload = {**payload, "additional_announcements": announcements[1:]}
         command_id = str(uuid4())
         conn.execute("""INSERT INTO field_command(command_id,node_id,kind,payload,event_id,cooldown_key,created_at,expires_at)
                         VALUES(?,?,'broadcast',?,?,?,?,?)""",

@@ -152,3 +152,7 @@ def initialize(*, seed=False):
         if row is None or row[0] < 38:
             conn.execute((root.parent / 'capture_context' / 'observation_stop_schema.sql').read_text(encoding='utf-8-sig'))
             conn.execute('UPDATE app_schema_version SET version=? WHERE singleton=1', (LATEST_VERSION,))
+
+        if row is None or row[0] < 39:
+            conn.execute("ALTER TABLE broadcast_setting ADD COLUMN IF NOT EXISTS additional_languages_json TEXT NOT NULL DEFAULT '[]'")
+            conn.execute('UPDATE app_schema_version SET version=? WHERE singleton=1', (LATEST_VERSION,))
