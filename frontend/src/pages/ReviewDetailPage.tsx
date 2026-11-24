@@ -31,7 +31,7 @@ import type {
 import { formatEventTime, formatSeoul } from '../time';
 import { markEventsSeen } from '../seenEvents';
 import {
-  REVIEW_NEEDED_HINT,
+  confidenceHint,
   confidenceLevel,
   formatConfidence,
   isReviewOnly,
@@ -460,7 +460,7 @@ function ReviewDetail({ event_id }: { event_id: string | undefined }) {
               <dd>{event.process_type}</dd>
             </dl>
             {isReviewOnly(event) && (
-              <p className={styles.reviewNote}>{REVIEW_NEEDED_HINT}</p>
+              <p className={styles.reviewNote}>{confidenceHint(event)}</p>
             )}
             {/* Technical metadata — rarely needed for the decision */}
             <details className={styles.techDetails}>

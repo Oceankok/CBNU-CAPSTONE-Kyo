@@ -7,22 +7,31 @@ export const isReviewOnly = (
 ): boolean => e.review_only === true || e.ai_confidence == null;
 
 export const REVIEW_NEEDED_LABEL = '검토 필요';
-export const REVIEW_NEEDED_HINT =
+const REVIEW_NEEDED_HINT =
   'AI가 미착용을 확정하지 못해 관리자 판단이 필요한 후보입니다. 신뢰도는 산정하지 않았습니다.';
+const CONFIDENCE_UNAVAILABLE_LABEL = '점수 없음';
+const CONFIDENCE_UNAVAILABLE_HINT = '이 사건의 AI 신뢰도 점수는 산정하지 않았습니다.';
+
+type EventConfidence = Pick<CandidateEvent, 'review_only' | 'ai_confidence' | 'event_status'>;
+
+export function confidenceHint(event: EventConfidence): string {
+  return event.event_status === 'pending' ? REVIEW_NEEDED_HINT : CONFIDENCE_UNAVAILABLE_HINT;
+}
 
 export type ConfidenceLevel = 'high' | 'mid' | 'low';
 
 export const confidenceLevel = (c: number): ConfidenceLevel =>
   c >= 0.85 ? 'high' : c >= 0.7 ? 'mid' : 'low';
 
-// "90%", or the review-needed label when there is no measured value
+// The label for an unmeasured value follows the current review status.
 export function formatConfidence(
-  e: Pick<CandidateEvent, 'review_only' | 'ai_confidence'>,
+  e: EventConfidence,
   digits = 0,
 ): string {
-  return isReviewOnly(e) || e.ai_confidence == null
-    ? REVIEW_NEEDED_LABEL
-    : `${(e.ai_confidence * 100).toFixed(digits)}%`;
+  if (isReviewOnly(e) || e.ai_confidence == null) {
+    return e.event_status === 'pending' ? REVIEW_NEEDED_LABEL : CONFIDENCE_UNAVAILABLE_LABEL;
+  }
+  return `${(e.ai_confidence * 100).toFixed(digits)}%`;
 }
 
 // Confidence slider: an unmeasured event is never hidden by a threshold, because a

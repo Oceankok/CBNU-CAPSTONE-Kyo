@@ -17,7 +17,7 @@ import type {
 import { formatEventTime } from '../time';
 import { useSeenEvents } from '../seenEvents';
 import {
-  REVIEW_NEEDED_HINT,
+  confidenceHint,
   confidenceLevel,
   formatConfidence,
   isReviewOnly,
@@ -248,7 +248,7 @@ export default function ReviewListPage() {
                     {isReviewOnly(event) || event.ai_confidence == null ? (
                       <span
                         className={`${styles.confidence} ${styles.reviewNeeded}`}
-                        title={REVIEW_NEEDED_HINT}
+                        title={confidenceHint(event)}
                       >
                         {formatConfidence(event)}
                       </span>
