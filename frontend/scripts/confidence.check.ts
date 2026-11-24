@@ -2,14 +2,16 @@
 import assert from 'node:assert/strict';
 import {
   confidenceLevel,
+  confidenceHint,
   formatConfidence,
   isReviewOnly,
   passesConfidenceFilter,
 } from '../src/confidence.ts';
 
-const normal = { review_only: false, ai_confidence: 0.9 };
-const zero = { review_only: false, ai_confidence: 0 }; // a measured 0 is still a number
-const reviewOnly = { review_only: true, ai_confidence: null };
+const normal = { review_only: false, ai_confidence: 0.9, event_status: 'pending' } as const;
+const zero = { review_only: false, ai_confidence: 0, event_status: 'pending' } as const;
+const reviewOnly = { review_only: true, ai_confidence: null, event_status: 'pending' } as const;
+const confirmed = { ...reviewOnly, event_status: 'confirmed' } as const;
 const legacy = { ai_confidence: 0.82 }; // old rows without the flag
 
 assert.equal(isReviewOnly(normal), false);
@@ -23,6 +25,9 @@ assert.equal(formatConfidence(normal, 1), '90.0%');
 assert.equal(formatConfidence(zero), '0%');
 assert.equal(formatConfidence(reviewOnly), '검토 필요');
 assert.notEqual(formatConfidence(reviewOnly), '0%');
+assert.equal(formatConfidence(confirmed), '점수 없음');
+assert.match(confidenceHint(reviewOnly), /관리자 판단/);
+assert.doesNotMatch(confidenceHint(confirmed), /관리자 판단/);
 
 assert.equal(passesConfidenceFilter(normal, 0.8), true);
 assert.equal(passesConfidenceFilter(legacy, 0.9), false);
